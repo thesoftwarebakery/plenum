@@ -1,0 +1,11 @@
+overlay: 1.1.0
+info:
+  title: Fix up API description
+  version: 1.0.1
+actions:
+  - target: $.info
+    update:
+      title: Public-facing API title
+      description: >-
+        Description fields allow for longer explanations and support Markdown
+        so that you can add links or formatting where it's useful.
