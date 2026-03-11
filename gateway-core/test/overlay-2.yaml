@@ -3,7 +3,6 @@ info:
   title: Add x-opengateway extension
   version: 1.0.1
 actions:
-  - target: $
+  - target: $.info
     update:
-      x-opengateway: 
-        test: value
+      title: OpenGateway

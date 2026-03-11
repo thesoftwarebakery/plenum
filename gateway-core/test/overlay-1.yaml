@@ -3,9 +3,13 @@ info:
   title: Fix up API description
   version: 1.0.1
 actions:
-  - target: $.info
+  - target: $
     update:
-      title: Public-facing API title
-      description: >-
-        Description fields allow for longer explanations and support Markdown
-        so that you can add links or formatting where it's useful.
+      x-opengateway-upstreams:
+        - name: "default"
+          kind: "HTTP"
+          address: 0.0.0.0
+          port: 8000
+  - target: $.paths[*]
+    update:
+      x-opengateway-upstream: "default"
