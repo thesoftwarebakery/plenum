@@ -1,6 +1,7 @@
 use serde::Deserialize;
 
 fn default_threads() -> usize { 1 }
+fn default_listen() -> String { "0.0.0.0:6188".to_string() }
 
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {
@@ -8,6 +9,8 @@ pub struct ServerConfig {
     pub threads: usize,
     #[serde(default)]
     pub daemon: bool,
+    #[serde(default = "default_listen")]
+    pub listen: String,
 }
 
 impl Default for ServerConfig {
@@ -15,6 +18,7 @@ impl Default for ServerConfig {
         ServerConfig {
             threads: default_threads(),
             daemon: false,
+            listen: default_listen(),
         }
     }
 }
@@ -28,10 +32,12 @@ mod tests {
         let json = serde_json::json!({
             "threads": 4,
             "daemon": true,
+            "listen": "127.0.0.1:8080",
         });
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.threads, 4);
         assert!(config.daemon);
+        assert_eq!(config.listen, "127.0.0.1:8080");
     }
 
     #[test]
@@ -40,6 +46,7 @@ mod tests {
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.threads, 1);
         assert!(!config.daemon);
+        assert_eq!(config.listen, "0.0.0.0:6188");
     }
 
     #[test]
@@ -47,5 +54,6 @@ mod tests {
         let config = ServerConfig::default();
         assert_eq!(config.threads, 1);
         assert!(!config.daemon);
+        assert_eq!(config.listen, "0.0.0.0:6188");
     }
 }
