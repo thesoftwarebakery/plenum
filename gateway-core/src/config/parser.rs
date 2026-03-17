@@ -44,6 +44,11 @@ impl Config {
             .ok_or_else(|| format!("$ref '{}' not found", path).into())
     }
 
+    pub fn from_value(doc: serde_json::Value) -> Result<Self, Box<dyn Error>> {
+        let spec: Spec = serde_json::from_value(doc.clone())?;
+        Ok(Config { spec, raw_doc: doc })
+    }
+
     pub fn parse(config_base: &str, path: &str, overlays: &[String]) -> Result<Self, Box<dyn Error>> {
         let yaml = read_to_string(
                 canonicalize(Path::new(config_base).join(path))?
