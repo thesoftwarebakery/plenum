@@ -5,6 +5,9 @@ info:
 actions:
   - target: $
     update:
+      x-opengateway-config:
+        threads: 2
+        daemon: false
       x-opengateway-upstreams:
         - name: "default"
           kind: "HTTP"

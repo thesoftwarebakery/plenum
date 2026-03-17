@@ -1,90 +1,47 @@
-use log::warn;
 use serde::Deserialize;
+use serde::de::DeserializeOwned;
 use serde_json::Value;
-use super::upstreams::*;
 use oas3::Spec;
-use oas3::spec::{Operation, PathItem};
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs::{read_to_string,canonicalize};
 use std::path::Path;
-use http::Method;
 
 #[derive(Debug)]
 pub struct Config {
-    pub raw_spec: Spec,
-    pub upstreams: Upstreams,
-    pub paths: PathConfig,
+    pub spec: Spec,
+    raw_doc: Value,
 }
-
-type PathsConfig = BTreeMap<String, PathConfig>;
-type PathConfig = BTreeMap<Method, Option<PathMethodConfig>>;
 
 #[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum UpstreamConfigOrReference {
-    Reference(String),
-    Inline(Upstream),
-}
-
-#[derive(Debug)]
-struct PathMethodConfig {
-    oas_path_item: PathItem,
-    upstream: Upstream,
+struct ExtensionRef {
+    #[serde(rename(deserialize = "$ref"))]
+    path: String,
 }
 
 impl Config {
-    fn resolve_upstream(spec: &Spec, path_item: &PathItem, operation: &Operation) -> Result<Upstream, Box<dyn Error>> {
-        let operation_upstream = match operation.extensions.get("opengateway-upstream") {
-            Some(upstream) => {
-                let upstream_value: UpstreamConfigOrReference = serde_json::from_value(upstream.clone())?;
-                match upstream_value {
-                    UpstreamConfigOrReference::Inline(upstream_value) => {
-                        upstream_value
-                    },
-                    UpstreamConfigOrReference::Reference(name) => {
-                        let upstream: Upstream = serde_json::from_value(path_item.extensions.get(&name).unwrap().clone()).unwrap();
-                        upstream
-                    }
-                }
-            },
-            None => {
-
-            }
-        }
+    pub fn extension<T: DeserializeOwned>(
+        &self,
+        extensions: &BTreeMap<String, Value>,
+        key: &str,
+    ) -> Result<T, Box<dyn Error>> {
+        let value = extensions.get(key)
+            .ok_or_else(|| format!("extension '{}' not found", key))?;
+        self.resolve_value(value)
     }
 
-    fn get_paths_config(spec: &Spec) -> Result<PathsConfig, Box<dyn std::error::Error>> {
-        let path_method_config: PathsConfig = match spec.paths {
-            Some(paths) => {
-                paths.into_iter()
-                    .map(|(path, path_item)| {
-                          let methods: BTreeMap<String, PathMethodConfig> = [
-                              ("get", &path_item.get),
-                              ("post", &path_item.post),
-                              ("put", &path_item.put),
-                              ("delete", &path_item.delete),
-                              ("patch", &path_item.patch),
-                              ("head", &path_item.head),
-                              ("options", &path_item.options),
-                          ]
-                          .into_iter()
-                          .filter_map(|(method, op)| {
-                              (op.as_ref().map(|operation| {
-                                  (method.to_string(), PathMethodConfig {
-                                      oas_path_item: path_item,
-                                      upstream: Config::resolve_upstream(spec, &path_item, operation).unwrap()
-                                  })
-                              }))
-                          })
-                          .collect();
-                    }).collect()
-            },
-            None => {
-                return Err("No paths in spec".into())
-            }
-        };
-        Ok(path_method_config)
+    fn resolve_value<T: DeserializeOwned>(&self, value: &Value) -> Result<T, Box<dyn Error>> {
+        if let Ok(ext_ref) = serde_json::from_value::<ExtensionRef>(value.clone()) {
+            let resolved = self.follow_ref(&ext_ref.path)?;
+            return self.resolve_value(resolved);
+        }
+        Ok(serde_json::from_value(value.clone())?)
+    }
+
+    fn follow_ref(&self, path: &str) -> Result<&Value, Box<dyn Error>> {
+        let pointer = path.trim_start_matches('#');
+        self.raw_doc.pointer(pointer)
+            .ok_or_else(|| format!("$ref '{}' not found", path).into())
     }
 
     pub fn parse(config_base: &str, path: &str, overlays: &[String]) -> Result<Self, Box<dyn Error>> {
@@ -102,8 +59,104 @@ impl Config {
             )?;
             oapi_overlay::apply_overlay(&mut doc, &overlay_doc)?
         }
-        let spec: Spec = serde_json::from_value(doc)?;
-        let upstreams = Upstream::from_spec(&spec);
-        Ok(Config { raw_spec: spec, upstreams })
+        let spec: Spec = serde_json::from_value(doc.clone())?;
+        Ok(Config { spec, raw_doc: doc })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn make_config(doc: Value) -> Config {
+        let spec: Spec = serde_json::from_value(doc.clone()).unwrap();
+        Config { spec, raw_doc: doc }
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct TestUpstream {
+        address: String,
+        port: u16,
+    }
+
+    #[test]
+    fn extension_resolves_inline_value() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {},
+            "x-opengateway-upstream": {
+                "address": "api.example.com",
+                "port": 443
+            }
+        });
+        let config = make_config(doc);
+
+        let upstream: TestUpstream = config.extension(&config.spec.extensions, "opengateway-upstream").unwrap();
+
+        assert_eq!(upstream, TestUpstream {
+            address: "api.example.com".into(),
+            port: 443,
+        });
+    }
+
+    #[test]
+    fn extension_resolves_ref() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {},
+            "x-opengateway-upstreams": {
+                "my-api": {
+                    "address": "api.example.com",
+                    "port": 8080
+                }
+            },
+            "x-opengateway-upstream": {
+                "$ref": "#/x-opengateway-upstreams/my-api"
+            }
+        });
+        let config = make_config(doc);
+
+        let upstream: TestUpstream = config.extension(&config.spec.extensions, "opengateway-upstream").unwrap();
+
+        assert_eq!(upstream, TestUpstream {
+            address: "api.example.com".into(),
+            port: 8080,
+        });
+    }
+
+    #[test]
+    fn extension_returns_error_for_missing_key() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        });
+        let config = make_config(doc);
+
+        let result = config.extension::<TestUpstream>(&config.spec.extensions, "nonexistent");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn extension_returns_error_for_broken_ref() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {},
+            "x-opengateway-upstream": {
+                "$ref": "#/x-opengateway-upstreams/does-not-exist"
+            }
+        });
+        let config = make_config(doc);
+
+        let result = config.extension::<TestUpstream>(&config.spec.extensions, "opengateway-upstream");
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("not found"));
     }
 }
