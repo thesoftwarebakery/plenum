@@ -12,6 +12,7 @@ use pingora_proxy::{ProxyHttp, Session};
 pub mod config;
 pub mod upstream_http;
 pub mod path_match;
+pub mod validation;
 
 pub struct GatewayCtx {
     matched_route: Option<Arc<RouteEntry>>,
