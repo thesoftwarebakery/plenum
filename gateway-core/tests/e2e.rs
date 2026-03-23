@@ -25,21 +25,20 @@ fn start_gateway(upstream_host: &str, upstream_port: u16) -> String {
         "paths": {
             "/products": {
                 "get": { "responses": { "200": { "description": "ok" } } },
-                "x-opengateway-upstream": "test-upstream"
+                "x-opengateway-upstream": { "$ref": "#/x-opengateway-upstreams/default" }
             },
             "/products/{id}": {
                 "get": { "responses": { "200": { "description": "ok" } } },
-                "x-opengateway-upstream": "test-upstream"
+                "x-opengateway-upstream": { "$ref": "#/x-opengateway-upstreams/default" }
             }
         },
-        "x-opengateway-upstreams": [
-            {
-                "name": "test-upstream",
+        "x-opengateway-upstreams": {
+            "default": {
                 "kind": "http",
                 "address": upstream_host,
                 "port": upstream_port
             }
-        ]
+        }
     });
 
     let config = Config::from_value(doc).unwrap();

@@ -9,10 +9,11 @@ actions:
         threads: 2
         daemon: false
       x-opengateway-upstreams:
-        - name: "default"
+        default:
           kind: "HTTP"
           address: 0.0.0.0
           port: 8000
   - target: $.paths[*]
     update:
-      x-opengateway-upstream: "default"
+      x-opengateway-upstream:
+        $ref: "#/x-opengateway-upstreams/default"

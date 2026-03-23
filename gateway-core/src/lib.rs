@@ -1,9 +1,8 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::error::Error;
 
-use config::{Config, UpstreamConfig};
+use config::Config;
 use path_match::build_router;
-use upstream_http::make_peer;
 
 use async_trait::async_trait;
 use pingora_core::upstreams::peer::HttpPeer;
@@ -15,7 +14,6 @@ pub mod path_match;
 
 pub struct OpenGateway {
     router: path_match::OpenGatewayRouter,
-    peers: HashMap<String, HttpPeer>,
 }
 
 #[async_trait]
@@ -38,12 +36,7 @@ impl ProxyHttp for OpenGateway {
                 e,
             )
         })?;
-        let upstream_name = matched.value;
-        let peer = self.peers.get(upstream_name.as_str()).ok_or_else(|| {
-            log::error!("Upstream '{}' not found in peer registry", upstream_name);
-            pingora_core::Error::new(pingora_core::ErrorType::InternalError)
-        })?;
-        Ok(Box::new(peer.clone()))
+        Ok(Box::new(matched.value.clone()))
     }
 }
 
@@ -53,18 +46,5 @@ pub fn build_gateway(config: &Config) -> Result<OpenGateway, Box<dyn Error>> {
 
     let router = build_router(config, paths)?;
 
-    let upstreams: Vec<UpstreamConfig> = config
-        .extension(&config.spec.extensions, "opengateway-upstreams")
-        .unwrap_or_else(|err| {
-            log::warn!("No upstreams defined: {}", err);
-            Vec::new()
-        });
-
-    let mut peers = HashMap::new();
-    for upstream in &upstreams {
-        let peer = make_peer(upstream);
-        peers.insert(upstream.name.clone(), peer);
-    }
-
-    Ok(OpenGateway { router, peers })
+    Ok(OpenGateway { router })
 }

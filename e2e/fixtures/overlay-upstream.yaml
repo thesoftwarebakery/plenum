@@ -6,10 +6,11 @@ actions:
   - target: $
     update:
       x-opengateway-upstreams:
-        - name: "default"
+        default:
           kind: "HTTP"
           address: "wiremock"
           port: 8080
   - target: $.paths[*]
     update:
-      x-opengateway-upstream: "default"
+      x-opengateway-upstream:
+        $ref: "#/x-opengateway-upstreams/default"
