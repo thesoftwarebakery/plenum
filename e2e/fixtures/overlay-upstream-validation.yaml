@@ -1,0 +1,20 @@
+overlay: 1.1.0
+info:
+  title: Wire upstream for validation tests
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-opengateway-config:
+        threads: 1
+        daemon: false
+        listen: "0.0.0.0:6188"
+      x-opengateway-upstreams:
+        default:
+          kind: "HTTP"
+          address: "wiremock"
+          port: 8080
+  - target: $.paths[*]
+    update:
+      x-opengateway-upstream:
+        $ref: "#/x-opengateway-upstreams/default"
