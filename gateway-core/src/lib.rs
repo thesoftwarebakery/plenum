@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::error::Error;
+use std::sync::Arc;
 
 use config::Config;
-use path_match::build_router;
+use path_match::{build_router, RouteEntry};
 
 use async_trait::async_trait;
 use pingora_core::upstreams::peer::HttpPeer;
@@ -12,21 +13,32 @@ pub mod config;
 pub mod upstream_http;
 pub mod path_match;
 
+pub struct GatewayCtx {
+    matched_route: Option<Arc<RouteEntry>>,
+}
+
 pub struct OpenGateway {
     router: path_match::OpenGatewayRouter,
 }
 
 #[async_trait]
 impl ProxyHttp for OpenGateway {
-    type CTX = ();
+    type CTX = GatewayCtx;
 
-    fn new_ctx(&self) -> Self::CTX {}
+    fn new_ctx(&self) -> Self::CTX {
+        GatewayCtx {
+            matched_route: None,
+        }
+    }
 
-    async fn upstream_peer(
+    async fn request_filter(
         &self,
         session: &mut Session,
-        _ctx: &mut Self::CTX,
-    ) -> pingora_core::Result<Box<HttpPeer>> {
+        ctx: &mut Self::CTX,
+    ) -> pingora_core::Result<bool>
+    where
+        Self::CTX: Send + Sync,
+    {
         let path = session.req_header().uri.path();
         let matched = self.router.at(path).map_err(|e| {
             log::warn!("No route matched for path: {}", path);
@@ -36,7 +48,19 @@ impl ProxyHttp for OpenGateway {
                 e,
             )
         })?;
-        Ok(Box::new(matched.value.clone()))
+        ctx.matched_route = Some(matched.value.clone());
+        Ok(false)
+    }
+
+    async fn upstream_peer(
+        &self,
+        _session: &mut Session,
+        ctx: &mut Self::CTX,
+    ) -> pingora_core::Result<Box<HttpPeer>> {
+        let route = ctx.matched_route.as_ref().ok_or_else(|| {
+            pingora_core::Error::new(pingora_core::ErrorType::InternalError)
+        })?;
+        Ok(Box::new(route.peer.clone()))
     }
 }
 
