@@ -1,0 +1,13 @@
+{
+  "tasks": {
+    "test": "deno test --allow-net --allow-read --allow-env --allow-run --allow-sys --allow-write tests/"
+  },
+  "compilerOptions": {
+    "lib": ["deno.ns", "deno.unstable", "esnext"]
+  },
+  "imports": {
+    "testcontainers": "npm:testcontainers@^11",
+    "@std/assert": "jsr:@std/assert@^1",
+    "@std/path": "jsr:@std/path@^1"
+  }
+}

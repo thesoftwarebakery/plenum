@@ -1,0 +1,4 @@
+target/
+.git/
+e2e/
+gateway-core/target/
