@@ -1,20 +1,76 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::sync::Arc;
 
-use oas3::spec::PathItem;
+use http::Method;
+use oas3::spec::{Operation, PathItem, Spec};
 use matchit::Router;
 use pingora_core::upstreams::peer::HttpPeer;
 
-use crate::config::Config;
-use crate::config::UpstreamConfig;
+use crate::config::{Config, UpstreamConfig, ValidationOverride};
 use crate::upstream_http::make_peer;
+use crate::validation::schema::CompiledSchema;
 
+/// Compiled schemas for a single operation (method on a path).
+#[derive(Debug)]
+pub struct OperationSchemas {
+    pub request_body: Option<CompiledSchema>,
+    pub responses: HashMap<u16, CompiledSchema>,
+    pub default_response: Option<CompiledSchema>,
+    pub validation_override: Option<ValidationOverride>,
+}
+
+/// A route entry stored in the router, containing the upstream peer
+/// and per-operation schema information for validation.
+#[derive(Debug)]
 pub struct RouteEntry {
     pub peer: HttpPeer,
+    pub operations: HashMap<Method, OperationSchemas>,
+    pub validation_override: Option<ValidationOverride>,
 }
 
 pub type OpenGatewayRouter = Router<Arc<RouteEntry>>;
+
+/// Try to compile the JSON schema from an operation's request body (application/json only).
+fn compile_request_body_schema(operation: &Operation, spec: &Spec) -> Option<CompiledSchema> {
+    let req_body = operation.request_body(spec).ok()??;
+    let media_type = req_body.content.get("application/json")?;
+    let schema = media_type.schema(spec).ok()??;
+    let value = serde_json::to_value(&schema).ok()?;
+    CompiledSchema::compile(&value).ok()
+}
+
+/// Compile JSON schemas from an operation's responses, keyed by status code.
+fn compile_response_schemas(
+    operation: &Operation,
+    spec: &Spec,
+) -> (HashMap<u16, CompiledSchema>, Option<CompiledSchema>) {
+    let mut responses = HashMap::new();
+    let mut default_response = None;
+
+    for (status_key, response) in operation.responses(spec) {
+        let Some(media_type) = response.content.get("application/json") else {
+            continue;
+        };
+        let Some(schema) = media_type.schema(spec).ok().flatten() else {
+            continue;
+        };
+        let Some(value) = serde_json::to_value(&schema).ok() else {
+            continue;
+        };
+        let Some(compiled) = CompiledSchema::compile(&value).ok() else {
+            continue;
+        };
+
+        if status_key == "default" {
+            default_response = Some(compiled);
+        } else if let Ok(code) = status_key.parse::<u16>() {
+            responses.insert(code, compiled);
+        }
+    }
+
+    (responses, default_response)
+}
 
 pub fn build_router(
     config: &Config,
@@ -24,8 +80,158 @@ pub fn build_router(
     for (path, path_item) in paths {
         let upstream: UpstreamConfig = config.extension(&path_item.extensions, "opengateway-upstream")?;
         let peer = make_peer(&upstream);
-        let entry = Arc::new(RouteEntry { peer });
+
+        // Path-level validation override
+        let path_validation: Option<ValidationOverride> = config
+            .extension(&path_item.extensions, "opengateway-validation")
+            .ok();
+
+        // Build operation schemas for each method on this path
+        let mut operations = HashMap::new();
+        for (method, operation) in path_item.methods() {
+            let request_body = compile_request_body_schema(operation, &config.spec);
+            let (responses, default_response) = compile_response_schemas(operation, &config.spec);
+
+            // Operation-level validation override
+            let op_validation: Option<ValidationOverride> = operation
+                .extensions
+                .get("opengateway-validation")
+                .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            operations.insert(method, OperationSchemas {
+                request_body,
+                responses,
+                default_response,
+                validation_override: op_validation,
+            });
+        }
+
+        let entry = Arc::new(RouteEntry {
+            peer,
+            operations,
+            validation_override: path_validation,
+        });
         router.insert(path, entry)?;
     }
     Ok(router)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::Config;
+    use serde_json::json;
+
+    fn config_with_schema() -> Config {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/items": {
+                    "post": {
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "object",
+                                        "properties": {
+                                            "name": { "type": "string" }
+                                        },
+                                        "required": ["name"]
+                                    }
+                                }
+                            }
+                        },
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "id": { "type": "string" }
+                                            },
+                                            "required": ["id"]
+                                        }
+                                    }
+                                }
+                            },
+                            "default": {
+                                "description": "error",
+                                "content": {
+                                    "application/json": {
+                                        "schema": {
+                                            "type": "object",
+                                            "properties": {
+                                                "error": { "type": "string" }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "get": {
+                        "responses": {
+                            "200": { "description": "ok" }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        Config::from_value(doc).unwrap()
+    }
+
+    #[test]
+    fn extracts_request_body_schema() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths).unwrap();
+        let matched = router.at("/items").unwrap();
+        let post = matched.value.operations.get(&Method::POST).unwrap();
+        assert!(post.request_body.is_some());
+    }
+
+    #[test]
+    fn extracts_response_schema_by_status() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths).unwrap();
+        let matched = router.at("/items").unwrap();
+        let post = matched.value.operations.get(&Method::POST).unwrap();
+        assert!(post.responses.contains_key(&200));
+        assert!(post.default_response.is_some());
+    }
+
+    #[test]
+    fn no_schema_for_operations_without_body() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths).unwrap();
+        let matched = router.at("/items").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert!(get.request_body.is_none());
+        assert!(get.responses.is_empty());
+    }
+
+    #[test]
+    fn validates_extracted_request_schema() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths).unwrap();
+        let matched = router.at("/items").unwrap();
+        let post = matched.value.operations.get(&Method::POST).unwrap();
+        let schema = post.request_body.as_ref().unwrap();
+
+        // Valid
+        assert!(schema.validate(&json!({"name": "test"})).is_ok());
+        // Missing required field
+        assert!(schema.validate(&json!({})).is_err());
+    }
 }
