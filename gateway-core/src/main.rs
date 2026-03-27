@@ -38,7 +38,7 @@ fn main() {
         .extension(&config.spec.extensions, "opengateway-config")
         .unwrap_or_else(|_| ServerConfig::default());
 
-    let gateway = build_gateway(&config)
+    let gateway = build_gateway(&config, &args.config_path)
         .unwrap_or_else(|err| {
             eprintln!("Error building gateway: {}", err);
             std::process::exit(1);

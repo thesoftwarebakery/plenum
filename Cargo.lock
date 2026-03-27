@@ -1247,6 +1247,7 @@ dependencies = [
  "matchit",
  "oapi-overlay",
  "oas3",
+ "opengateway-js-runtime",
  "pingora-core",
  "pingora-http",
  "pingora-proxy",

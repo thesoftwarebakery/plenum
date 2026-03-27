@@ -155,11 +155,11 @@ impl ProxyHttp for OpenGateway {
     }
 }
 
-pub fn build_gateway(config: &Config) -> Result<OpenGateway, Box<dyn Error>> {
+pub fn build_gateway(config: &Config, config_path: &str) -> Result<OpenGateway, Box<dyn Error>> {
     let empty = BTreeMap::new();
     let paths = config.spec.paths.as_ref().unwrap_or(&empty);
 
-    let router = build_router(config, paths)?;
+    let router = build_router(config, paths, std::path::Path::new(config_path))?;
 
     Ok(OpenGateway { router })
 }

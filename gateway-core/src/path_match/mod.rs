@@ -1,28 +1,37 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use http::Method;
 use oas3::spec::{Operation, PathItem, Spec};
 use matchit::Router;
+use opengateway_js_runtime::JsRuntimeHandle;
 use pingora_core::upstreams::peer::HttpPeer;
 
-use crate::config::{Config, UpstreamConfig, ValidationOverride};
+use crate::config::{Config, InterceptorConfig, UpstreamConfig, ValidationOverride};
 use crate::upstream_http::make_peer;
 use crate::validation::schema::CompiledSchema;
 
+/// JS interceptor handles for a single operation, one per lifecycle hook.
+#[derive(Default)]
+pub struct OperationInterceptors {
+    pub on_request: Option<Arc<JsRuntimeHandle>>,
+    pub before_upstream: Option<Arc<JsRuntimeHandle>>,
+    pub on_response: Option<Arc<JsRuntimeHandle>>,
+}
+
 /// Compiled schemas for a single operation (method on a path).
-#[derive(Debug)]
 pub struct OperationSchemas {
     pub request_body: Option<CompiledSchema>,
     pub responses: HashMap<u16, CompiledSchema>,
     pub default_response: Option<CompiledSchema>,
     pub validation_override: Option<ValidationOverride>,
+    pub interceptors: OperationInterceptors,
 }
 
 /// A route entry stored in the router, containing the upstream peer
 /// and per-operation schema information for validation.
-#[derive(Debug)]
 pub struct RouteEntry {
     pub peer: HttpPeer,
     pub operations: HashMap<Method, OperationSchemas>,
@@ -72,11 +81,60 @@ fn compile_response_schemas(
     (responses, default_response)
 }
 
+/// Parse an operation's `x-opengateway-interceptor` extension and build interceptor handles.
+fn build_operation_interceptors(
+    operation: &Operation,
+    config_base: &Path,
+    runtime_cache: &mut HashMap<PathBuf, Arc<JsRuntimeHandle>>,
+) -> Result<OperationInterceptors, Box<dyn Error>> {
+    let interceptor_value = match operation.extensions.get("opengateway-interceptor") {
+        Some(v) => v,
+        None => return Ok(OperationInterceptors::default()),
+    };
+
+    let interceptor_config: InterceptorConfig = serde_json::from_value(interceptor_value.clone())?;
+
+    let module_path = config_base.join(&interceptor_config.module);
+    let canonical = module_path.canonicalize().map_err(|e| {
+        format!(
+            "interceptor module '{}' not found (resolved to '{}'): {e}",
+            interceptor_config.module,
+            module_path.display()
+        )
+    })?;
+
+    // Deduplicate: reuse handle if this module was already spawned.
+    let handle = match runtime_cache.entry(canonical) {
+        std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+        std::collections::hash_map::Entry::Vacant(e) => {
+            let h = Arc::new(opengateway_js_runtime::spawn_runtime_sync(e.key())?);
+            e.insert(h).clone()
+        }
+    };
+
+    let mut interceptors = OperationInterceptors::default();
+    for hook in &interceptor_config.hooks {
+        match hook.as_str() {
+            "on_request" => interceptors.on_request = Some(handle.clone()),
+            "before_upstream" => interceptors.before_upstream = Some(handle.clone()),
+            "on_response" => interceptors.on_response = Some(handle.clone()),
+            other => {
+                return Err(format!("unknown interceptor hook: '{other}'").into());
+            }
+        }
+    }
+
+    Ok(interceptors)
+}
+
 pub fn build_router(
     config: &Config,
     paths: &BTreeMap<String, PathItem>,
+    config_base: &Path,
 ) -> Result<OpenGatewayRouter, Box<dyn Error>> {
     let mut router = Router::new();
+    let mut runtime_cache: HashMap<PathBuf, Arc<JsRuntimeHandle>> = HashMap::new();
+
     for (path, path_item) in paths {
         let upstream: UpstreamConfig = config.extension(&path_item.extensions, "opengateway-upstream")?;
         let peer = make_peer(&upstream);
@@ -98,11 +156,19 @@ pub fn build_router(
                 .get("opengateway-validation")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
 
+            // Operation-level interceptor
+            let interceptors = build_operation_interceptors(
+                operation,
+                config_base,
+                &mut runtime_cache,
+            )?;
+
             operations.insert(method, OperationSchemas {
                 request_body,
                 responses,
                 default_response,
                 validation_override: op_validation,
+                interceptors,
             });
         }
 
@@ -121,6 +187,15 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use serde_json::json;
+
+    fn fixture_path(name: &str) -> String {
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join(name)
+            .to_string_lossy()
+            .to_string()
+    }
 
     fn config_with_schema() -> Config {
         let doc = json!({
@@ -188,11 +263,15 @@ mod tests {
         Config::from_value(doc).unwrap()
     }
 
+    fn dummy_config_base() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
     #[test]
     fn extracts_request_body_schema() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
         let matched = router.at("/items").unwrap();
         let post = matched.value.operations.get(&Method::POST).unwrap();
         assert!(post.request_body.is_some());
@@ -202,7 +281,7 @@ mod tests {
     fn extracts_response_schema_by_status() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
         let matched = router.at("/items").unwrap();
         let post = matched.value.operations.get(&Method::POST).unwrap();
         assert!(post.responses.contains_key(&200));
@@ -213,7 +292,7 @@ mod tests {
     fn no_schema_for_operations_without_body() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert!(get.request_body.is_none());
@@ -224,7 +303,7 @@ mod tests {
     fn validates_extracted_request_schema() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
         let matched = router.at("/items").unwrap();
         let post = matched.value.operations.get(&Method::POST).unwrap();
         let schema = post.request_body.as_ref().unwrap();
@@ -233,5 +312,53 @@ mod tests {
         assert!(schema.validate(&json!({"name": "test"})).is_ok());
         // Missing required field
         assert!(schema.validate(&json!({})).is_err());
+    }
+
+    #[test]
+    fn operations_without_interceptor_have_none() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/items").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert!(get.interceptors.on_request.is_none());
+        assert!(get.interceptors.before_upstream.is_none());
+        assert!(get.interceptors.on_response.is_none());
+    }
+
+    #[test]
+    fn parses_interceptor_config_and_spawns_runtime() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": {
+                            "module": &noop_path,
+                            "hooks": ["on_request"]
+                        },
+                        "responses": {
+                            "200": { "description": "ok" }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        // Use "/" as config_base since module path is absolute
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert!(get.interceptors.on_request.is_some());
+        assert!(get.interceptors.before_upstream.is_none());
+        assert!(get.interceptors.on_response.is_none());
     }
 }

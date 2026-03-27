@@ -84,6 +84,39 @@ pub async fn spawn_runtime(
     })
 }
 
+/// Like [`spawn_runtime`] but blocks the current thread until the module is loaded.
+///
+/// Use this when no tokio runtime is available (e.g. during synchronous startup).
+pub fn spawn_runtime_sync(
+    module_path: &Path,
+) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
+    let module_path = module_path
+        .canonicalize()
+        .map_err(|e| format!("cannot resolve module path '{}': {e}", module_path.display()))?;
+
+    let (tx, rx) = mpsc::channel::<JsCall>(32);
+    let (ready_tx, ready_rx) = oneshot::channel();
+
+    std::thread::Builder::new()
+        .name(format!(
+            "js-runtime-{}",
+            module_path.file_name().unwrap_or_default().to_string_lossy()
+        ))
+        .spawn(move || {
+            worker::run_worker(module_path, rx, ready_tx);
+        })?;
+
+    let ready = ready_rx
+        .blocking_recv()
+        .map_err(|_| "JS runtime worker thread exited before becoming ready")?
+        .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
+
+    Ok(JsRuntimeHandle {
+        tx,
+        isolate_handle: ready.isolate_handle,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,5 +237,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ok_result, serde_json::json!({"greeting": "hi world"}));
+    }
+
+    #[test]
+    fn test_spawn_runtime_sync() {
+        let handle = spawn_runtime_sync(&fixture_path("hello.js")).unwrap();
+        // Use a temporary tokio runtime to call the async method.
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt.block_on(handle.call(
+            "hello",
+            serde_json::json!({"name": "sync"}),
+            Duration::from_secs(5),
+        )).unwrap();
+        assert_eq!(result, serde_json::json!({"greeting": "hi sync"}));
     }
 }

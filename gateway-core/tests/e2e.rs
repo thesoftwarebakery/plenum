@@ -42,7 +42,7 @@ fn start_gateway(upstream_host: &str, upstream_port: u16) -> String {
     });
 
     let config = Config::from_value(doc).unwrap();
-    let gateway = build_gateway(&config).unwrap();
+    let gateway = build_gateway(&config, ".").unwrap();
 
     let conf = ServerConf {
         threads: 1,

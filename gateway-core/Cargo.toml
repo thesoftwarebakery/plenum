@@ -20,6 +20,7 @@ matchit = "0.9.1"
 http = "1.4.0"
 jsonschema = "0.45"
 bytes = "1"
+opengateway-js-runtime = { path = "../opengateway-js-runtime" }
 
 [dev-dependencies]
 wiremock = "0.6"
