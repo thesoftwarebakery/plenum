@@ -13,6 +13,7 @@ use pingora_core::upstreams::peer::HttpPeer;
 use pingora_proxy::{ProxyHttp, Session};
 
 pub mod config;
+pub mod interceptor;
 pub mod upstream_http;
 pub mod path_match;
 pub mod validation;
