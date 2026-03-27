@@ -2,5 +2,6 @@
 resolver="3"
 members = [
 	"gateway-core",
-	"openapi-overlay"
+	"openapi-overlay",
+	"opengateway-js-runtime"
 ]
