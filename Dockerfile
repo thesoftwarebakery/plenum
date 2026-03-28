@@ -1,4 +1,4 @@
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.93-bookworm AS builder
 
 RUN apt-get update && apt-get install -y cmake
 
@@ -7,6 +7,7 @@ WORKDIR /usr/src/opengateway
 COPY Cargo.toml Cargo.lock ./
 COPY gateway-core/ gateway-core/
 COPY openapi-overlay/ openapi-overlay/
+COPY opengateway-js-runtime/ opengateway-js-runtime/
 
 RUN cargo build --release -p gateway-core
 
