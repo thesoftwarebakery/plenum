@@ -39,7 +39,7 @@ E2E tests are written in TypeScript and run with Deno. They live in `e2e/` and u
 - **Container helpers**: reusable setup in `e2e/src/containers/`
 
 ```bash
-cd e2e && DOCKER_HOST=unix:///var/run/docker.sock deno test --allow-net --allow-read --allow-env --allow-run --allow-sys --allow-write tests/
+cd e2e && deno task test
 ```
 
 **All new features and changes must include e2e test coverage.** Rust unit/integration tests in `gateway-core/tests/` complement the e2e suite by testing library internals directly.

@@ -1,6 +1,16 @@
 {
   "tasks": {
-    "test": "deno test --allow-net --allow-read --allow-env --allow-run --allow-sys --allow-write tests/"
+    "test": "deno test -P tests/"
+  },
+  "test": {
+    "permissions": {
+      "net": true,
+      "read": true,
+      "env": true,
+      "run": true,
+      "sys": true,
+      "write": true
+    }
   },
   "compilerOptions": {
     "lib": ["deno.ns", "deno.unstable", "esnext"]
