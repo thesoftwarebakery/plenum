@@ -144,7 +144,7 @@ impl ProxyHttp for OpenGateway {
                         if let Some(h) = &headers {
                             let Ok(mut resp) = ResponseHeader::build(status, Some(h.len() + 1)) else {
                                 log::error!("on_request interceptor returned invalid status code: {}", status);
-                                session.respond_error_with_body(500, Bytes::from("{\"error\": \"interceptor returned invalid status\"}")).await.ok();
+                                session.respond_error_with_body(500, Bytes::from(serde_json::json!({"error": "interceptor returned invalid status"}).to_string())).await.ok();
                                 return Ok(true);
                             };
                             for (name, value) in h {
@@ -164,7 +164,7 @@ impl ProxyHttp for OpenGateway {
                         log::error!("on_request interceptor error: {}", e);
                         session.respond_error_with_body(
                             500,
-                            Bytes::from(format!("{{\"error\": \"interceptor error: {}\"}}", e)),
+                            Bytes::from(serde_json::json!({"error": format!("interceptor error: {}", e)}).to_string()),
                         ).await.ok();
                         return Ok(true);
                     }
