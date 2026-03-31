@@ -1,0 +1,12 @@
+overlay: 1.1.0
+info:
+  title: Attach invalid-return interceptor (before_upstream and on_response)
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-opengateway-interceptor:
+        module: "./interceptors/invalid-return.js"
+        hooks:
+          - before_upstream
+          - on_response

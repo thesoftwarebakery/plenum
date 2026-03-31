@@ -1,0 +1,13 @@
+overlay: 1.1.0
+info:
+  title: Attach all-hooks interceptor
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-opengateway-interceptor:
+        module: "./interceptors/all-hooks.js"
+        hooks:
+          - on_request
+          - before_upstream
+          - on_response

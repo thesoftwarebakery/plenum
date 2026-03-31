@@ -1,0 +1,11 @@
+overlay: 1.1.0
+info:
+  title: Attach sandbox-escape interceptor
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-opengateway-interceptor:
+        module: "./interceptors/sandbox-escape.js"
+        hooks:
+          - on_request
