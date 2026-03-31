@@ -361,4 +361,39 @@ mod tests {
         assert!(get.interceptors.before_upstream.is_none());
         assert!(get.interceptors.on_response.is_none());
     }
+
+    #[test]
+    fn overlay_applies_interceptor_extension() {
+        let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .parent().unwrap()
+            .join("e2e").join("fixtures");
+
+        let yaml = std::fs::read_to_string(fixtures.join("openapi-interceptor.yaml")).unwrap();
+        let mut doc: serde_json::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+
+        // Apply upstream overlay
+        let overlay_yaml = std::fs::read_to_string(fixtures.join("overlay-interceptor-upstream.yaml")).unwrap();
+        let overlay = oapi_overlay::from_yaml(&overlay_yaml).unwrap();
+        oapi_overlay::apply_overlay(&mut doc, &overlay).unwrap();
+
+        // Apply interceptor overlay
+        let overlay_yaml = std::fs::read_to_string(fixtures.join("overlay-interceptor-add-header.yaml")).unwrap();
+        let overlay = oapi_overlay::from_yaml(&overlay_yaml).unwrap();
+        oapi_overlay::apply_overlay(&mut doc, &overlay).unwrap();
+
+        // Check the interceptor extension landed on the operation
+        let get_op = &doc["paths"]["/products"]["get"];
+        let interceptor = &get_op["x-opengateway-interceptor"];
+        assert!(!interceptor.is_null(), "interceptor extension should be present after overlay");
+        assert_eq!(interceptor["hooks"][0], "on_request");
+
+        // Now verify oas3 parses it and our code can see the extension
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let products = paths.get("/products").unwrap();
+        let get_op = products.methods().into_iter().find(|(m, _)| *m == Method::GET).unwrap().1;
+        eprintln!("oas3 operation extensions: {:?}", get_op.extensions);
+        assert!(get_op.extensions.contains_key("opengateway-interceptor"),
+            "oas3 should preserve the extension (x- stripped)");
+    }
 }

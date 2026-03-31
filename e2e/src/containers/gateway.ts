@@ -32,6 +32,7 @@ export async function startGateway(opts: {
   fixtures?: {
     openapi?: string;
     overlays?: string[];
+    extraFiles?: { source: string; target: string }[];
   };
 }): Promise<GatewayContainer> {
   const openapiFile = opts.fixtures?.openapi ?? "openapi.yaml";
@@ -52,6 +53,12 @@ export async function startGateway(opts: {
     filesToCopy.push({
       source: resolve(FIXTURES_DIR, overlay),
       target: `/config/${overlay}`,
+    });
+  }
+  for (const extra of opts.fixtures?.extraFiles ?? []) {
+    filesToCopy.push({
+      source: resolve(FIXTURES_DIR, extra.source),
+      target: extra.target,
     });
   }
 

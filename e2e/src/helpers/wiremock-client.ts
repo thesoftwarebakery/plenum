@@ -40,4 +40,33 @@ export class WireMockClient {
     }
     await resp.body?.cancel();
   }
+
+  async getRequests(): Promise<WireMockRequest[]> {
+    const resp = await fetch(`${this.adminUrl}/requests`);
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`WireMock getRequests failed (${resp.status}): ${body}`);
+    }
+    const data = await resp.json() as { requests: WireMockRequest[] };
+    return data.requests;
+  }
+
+  async resetRequests(): Promise<void> {
+    const resp = await fetch(`${this.adminUrl}/requests`, {
+      method: "DELETE",
+    });
+    if (!resp.ok) {
+      const body = await resp.text();
+      throw new Error(`WireMock resetRequests failed (${resp.status}): ${body}`);
+    }
+    await resp.body?.cancel();
+  }
+}
+
+export interface WireMockRequest {
+  request: {
+    method: string;
+    url: string;
+    headers: Record<string, string>;
+  };
 }
