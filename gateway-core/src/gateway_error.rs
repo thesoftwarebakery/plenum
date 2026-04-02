@@ -1,0 +1,76 @@
+use bytes::Bytes;
+
+/// A gateway-level error: an HTTP status code paired with a JSON error body.
+///
+/// Use for unrecoverable errors in the gateway request lifecycle — situations where
+/// the gateway itself cannot proceed and needs to synthesize a 5xx response.
+/// Distinct from upstream errors and validation errors (which have their own formats).
+///
+/// Body format: `{"error": "<message>"}`
+pub struct GatewayError {
+    pub status: u16,
+    body: Bytes,
+}
+
+impl GatewayError {
+    fn new(status: u16, message: impl std::fmt::Display) -> Self {
+        let body = Bytes::from(serde_json::json!({"error": message.to_string()}).to_string());
+        Self { status, body }
+    }
+
+    /// 500 Internal Server Error — the gateway encountered an unexpected condition.
+    pub fn internal(message: impl std::fmt::Display) -> Self {
+        Self::new(500, message)
+    }
+
+    /// 502 Bad Gateway — the upstream returned an invalid or unrecognized response.
+    pub fn bad_gateway(message: impl std::fmt::Display) -> Self {
+        Self::new(502, message)
+    }
+
+    /// 503 Service Unavailable — the gateway cannot route the request right now.
+    pub fn service_unavailable(message: impl std::fmt::Display) -> Self {
+        Self::new(503, message)
+    }
+
+    /// 504 Gateway Timeout — the upstream did not respond in time.
+    pub fn gateway_timeout(message: impl std::fmt::Display) -> Self {
+        Self::new(504, message)
+    }
+
+    pub fn body(self) -> Bytes {
+        self.body
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_has_correct_status() {
+        let e = GatewayError::internal("something went wrong");
+        assert_eq!(e.status, 500);
+    }
+
+    #[test]
+    fn body_produces_valid_json() {
+        let e = GatewayError::internal("something went wrong");
+        let v: serde_json::Value = serde_json::from_slice(&e.body()).unwrap();
+        assert_eq!(v["error"], "something went wrong");
+    }
+
+    #[test]
+    fn body_escapes_special_characters() {
+        let e = GatewayError::internal(r#"error with "quotes" and \backslashes"#);
+        let v: serde_json::Value = serde_json::from_slice(&e.body()).unwrap();
+        assert!(v["error"].as_str().unwrap().contains("quotes"));
+    }
+
+    #[test]
+    fn status_codes() {
+        assert_eq!(GatewayError::bad_gateway("x").status, 502);
+        assert_eq!(GatewayError::service_unavailable("x").status, 503);
+        assert_eq!(GatewayError::gateway_timeout("x").status, 504);
+    }
+}

@@ -12,11 +12,13 @@ use path_match::{build_router, RouteEntry};
 use pingora_http::{RequestHeader, ResponseHeader};
 use validation::error::ValidationErrorResponse;
 
+use gateway_error::GatewayError;
 use async_trait::async_trait;
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_proxy::{ProxyHttp, Session};
 
 pub mod config;
+pub mod gateway_error;
 pub mod interceptor;
 pub mod upstream_http;
 pub mod path_match;
@@ -144,7 +146,8 @@ impl ProxyHttp for OpenGateway {
                         if let Some(h) = &headers {
                             let Ok(mut resp) = ResponseHeader::build(status, Some(h.len() + 1)) else {
                                 log::error!("on_request interceptor returned invalid status code: {}", status);
-                                session.respond_error_with_body(500, Bytes::from(serde_json::json!({"error": "interceptor returned invalid status"}).to_string())).await.ok();
+                                let e = GatewayError::internal("interceptor returned invalid status");
+                session.respond_error_with_body(e.status, e.body()).await.ok();
                                 return Ok(true);
                             };
                             for (name, value) in h {
@@ -164,7 +167,7 @@ impl ProxyHttp for OpenGateway {
                         log::error!("on_request interceptor error: {}", e);
                         session.respond_error_with_body(
                             500,
-                            Bytes::from(serde_json::json!({"error": format!("interceptor error: {}", e)}).to_string()),
+                            GatewayError::internal(format!("interceptor error: {}", e)).body(),
                         ).await.ok();
                         return Ok(true);
                     }
