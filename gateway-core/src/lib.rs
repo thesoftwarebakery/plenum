@@ -31,6 +31,9 @@ pub struct GatewayCtx {
     matched_method: Option<Method>,
     request_body_buf: BytesMut,
     request_body_validation_failed: bool,
+    response_body_buf: BytesMut,
+    upstream_response_status: Option<http::StatusCode>,
+    upstream_response_content_type: Option<String>,
 }
 
 pub struct OpenGateway {
@@ -71,13 +74,25 @@ fn js_body_from_content_type(content_type: Option<&str>, buf: &[u8]) -> Option<J
     }
 }
 
-/// Convert a JsBody back to raw bytes for upstream forwarding.
+/// Convert a JsBody back to raw bytes for forwarding.
 fn js_body_to_bytes(body: JsBody) -> Bytes {
     match body {
         JsBody::Json(v) => Bytes::from(serde_json::to_vec(&v).unwrap_or_default()),
         JsBody::Text(s) => Bytes::from(s.into_bytes()),
         JsBody::Bytes(b) => Bytes::from(b),
     }
+}
+
+/// Synchronous variant of call_interceptor for use from sync body filters.
+fn call_interceptor_blocking(
+    handle: &JsRuntimeHandle,
+    function_name: &str,
+    input: serde_json::Value,
+    body: Option<JsBody>,
+) -> Result<(InterceptorOutput, Option<JsBody>), Box<dyn Error + Send + Sync>> {
+    let result = handle.call_blocking(function_name, input, body, INTERCEPTOR_TIMEOUT)?;
+    let output: InterceptorOutput = serde_json::from_value(result.value)?;
+    Ok((output, result.body))
 }
 
 /// Apply header modifications to a pingora RequestHeader.
@@ -130,6 +145,9 @@ impl ProxyHttp for OpenGateway {
             matched_method: None,
             request_body_buf: BytesMut::new(),
             request_body_validation_failed: false,
+            response_body_buf: BytesMut::new(),
+            upstream_response_status: None,
+            upstream_response_content_type: None,
         }
     }
 
@@ -417,7 +435,89 @@ impl ProxyHttp for OpenGateway {
             }
         }
 
+        // When on_response_body is configured, strip Content-Length (body size may change)
+        // and store metadata in ctx for use in upstream_response_body_filter.
+        if op.interceptors.on_response_body.is_some() {
+            upstream_response.remove_header(&http::header::CONTENT_LENGTH);
+            ctx.upstream_response_status = Some(upstream_response.status);
+            ctx.upstream_response_content_type = upstream_response
+                .headers
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+        }
+
         Ok(())
+    }
+
+    fn upstream_response_body_filter(
+        &self,
+        _session: &mut Session,
+        body: &mut Option<Bytes>,
+        end_of_stream: bool,
+        ctx: &mut Self::CTX,
+    ) -> pingora_core::Result<Option<Duration>>
+    where
+        Self::CTX: Send + Sync,
+    {
+        let route = match ctx.matched_route.as_ref() {
+            Some(r) => r,
+            None => return Ok(None),
+        };
+        let method = match ctx.matched_method.as_ref() {
+            Some(m) => m,
+            None => return Ok(None),
+        };
+        let op = match route.operations.get(method) {
+            Some(o) => o,
+            None => return Ok(None),
+        };
+
+        if op.interceptors.on_response_body.is_none() {
+            return Ok(None);
+        }
+
+        // Buffer chunks, suppressing forwarding until end_of_stream
+        if let Some(b) = body {
+            ctx.response_body_buf.put(b.as_ref());
+            b.clear();
+        }
+
+        if end_of_stream {
+            let handle = op.interceptors.on_response_body.as_ref().unwrap();
+            let buf = ctx.response_body_buf.split().freeze();
+
+            let js_body = js_body_from_content_type(
+                ctx.upstream_response_content_type.as_deref(),
+                &buf,
+            );
+
+            let status = ctx.upstream_response_status.unwrap_or(http::StatusCode::OK);
+            let empty_headers = http::HeaderMap::new();
+            let input = response_input_from_parts(status, &empty_headers);
+            let input_json = serde_json::to_value(&input).unwrap();
+
+            let final_buf = match call_interceptor_blocking(handle, "onResponseBody", input_json, js_body) {
+                Ok((InterceptorOutput::Continue { .. }, body_out)) => {
+                    match body_out {
+                        Some(modified) => js_body_to_bytes(modified),
+                        None => buf,
+                    }
+                }
+                Ok((InterceptorOutput::Respond { .. }, _)) => {
+                    log::warn!("on_response_body interceptor returned 'respond' — ignoring");
+                    buf
+                }
+                Err(e) => {
+                    log::error!("on_response_body interceptor error: {}", e);
+                    buf
+                }
+            };
+
+            *body = Some(final_buf);
+        }
+
+        Ok(None)
     }
 
     async fn upstream_peer(

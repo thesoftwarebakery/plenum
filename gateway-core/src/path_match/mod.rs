@@ -19,6 +19,7 @@ pub struct OperationInterceptors {
     pub on_request: Option<Arc<JsRuntimeHandle>>,
     pub before_upstream: Option<Arc<JsRuntimeHandle>>,
     pub on_response: Option<Arc<JsRuntimeHandle>>,
+    pub on_response_body: Option<Arc<JsRuntimeHandle>>,
 }
 
 /// Compiled schemas for a single operation (method on a path).
@@ -118,6 +119,7 @@ fn build_operation_interceptors(
             "on_request" => interceptors.on_request = Some(handle.clone()),
             "before_upstream" => interceptors.before_upstream = Some(handle.clone()),
             "on_response" => interceptors.on_response = Some(handle.clone()),
+            "on_response_body" => interceptors.on_response_body = Some(handle.clone()),
             other => {
                 return Err(format!("unknown interceptor hook: '{other}'").into());
             }
