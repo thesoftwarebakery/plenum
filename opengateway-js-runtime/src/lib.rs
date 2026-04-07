@@ -108,6 +108,25 @@ impl JsRuntimeHandle {
     }
 }
 
+/// Spawn the worker thread and return the ready-signal receiver and the call sender.
+/// The caller is responsible for waiting on the receiver (async or blocking).
+fn start_worker(
+    module_path: std::path::PathBuf,
+) -> Result<
+    (oneshot::Receiver<Result<types::WorkerReady, JsError>>, mpsc::Sender<JsCall>),
+    Box<dyn std::error::Error>,
+> {
+    let (tx, rx) = mpsc::channel::<JsCall>(32);
+    let (ready_tx, ready_rx) = oneshot::channel();
+    std::thread::Builder::new()
+        .name(format!(
+            "js-runtime-{}",
+            module_path.file_name().unwrap_or_default().to_string_lossy()
+        ))
+        .spawn(move || worker::run_worker(module_path, rx, ready_tx))?;
+    Ok((ready_rx, tx))
+}
+
 /// Spawn a new JS runtime on a dedicated thread, loading the given ES module.
 ///
 /// The module must assign functions to `globalThis` (e.g. `globalThis.hello = function(input) { ... }`).
@@ -117,29 +136,12 @@ pub async fn spawn_runtime(
     let module_path = module_path
         .canonicalize()
         .map_err(|e| format!("cannot resolve module path '{}': {e}", module_path.display()))?;
-
-    let (tx, rx) = mpsc::channel::<JsCall>(32);
-    let (ready_tx, ready_rx) = oneshot::channel();
-
-    std::thread::Builder::new()
-        .name(format!(
-            "js-runtime-{}",
-            module_path.file_name().unwrap_or_default().to_string_lossy()
-        ))
-        .spawn(move || {
-            worker::run_worker(module_path, rx, ready_tx);
-        })?;
-
-    // Wait for the worker to finish loading the module and send back the isolate handle.
+    let (ready_rx, tx) = start_worker(module_path)?;
     let ready = ready_rx
         .await
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
         .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
-
-    Ok(JsRuntimeHandle {
-        tx,
-        isolate_handle: ready.isolate_handle,
-    })
+    Ok(JsRuntimeHandle { tx, isolate_handle: ready.isolate_handle })
 }
 
 /// Like [`spawn_runtime`] but blocks the current thread until the module is loaded.
@@ -151,28 +153,12 @@ pub fn spawn_runtime_sync(
     let module_path = module_path
         .canonicalize()
         .map_err(|e| format!("cannot resolve module path '{}': {e}", module_path.display()))?;
-
-    let (tx, rx) = mpsc::channel::<JsCall>(32);
-    let (ready_tx, ready_rx) = oneshot::channel();
-
-    std::thread::Builder::new()
-        .name(format!(
-            "js-runtime-{}",
-            module_path.file_name().unwrap_or_default().to_string_lossy()
-        ))
-        .spawn(move || {
-            worker::run_worker(module_path, rx, ready_tx);
-        })?;
-
+    let (ready_rx, tx) = start_worker(module_path)?;
     let ready = ready_rx
         .blocking_recv()
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
         .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
-
-    Ok(JsRuntimeHandle {
-        tx,
-        isolate_handle: ready.isolate_handle,
-    })
+    Ok(JsRuntimeHandle { tx, isolate_handle: ready.isolate_handle })
 }
 
 #[cfg(test)]

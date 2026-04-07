@@ -92,7 +92,7 @@ async fn execute_call(
     );
     let fn_val_global = runtime
         .execute_script("<get-fn>", fn_script)
-        .map_err(|e| classify_js_error(e, function_name))?;
+        .map_err(|e| classify_error(e, function_name))?;
 
     // Step 2: Build typed function reference and V8 arg object within a scope.
     // The scope borrow on runtime is released when this block ends.
@@ -141,7 +141,7 @@ async fn execute_call(
     let result_global = runtime
         .with_event_loop_promise(call_fut, PollEventLoopOptions::default())
         .await
-        .map_err(|e| classify_core_error(e, function_name))?;
+        .map_err(|e| classify_error(e, function_name))?;
 
     // Step 4: Extract the result. Body is extracted separately via V8 type inspection
     // so it can be typed correctly (Uint8Array -> Bytes, string -> Text, object -> Json).
@@ -203,17 +203,8 @@ async fn execute_call(
     })
 }
 
-fn classify_js_error(e: Box<deno_core::error::JsError>, function_name: &str) -> JsError {
-    let msg = format!("{e}");
-    if msg.contains("__FUNCTION_NOT_FOUND__:") {
-        JsError::FunctionNotFound(function_name.to_string())
-    } else {
-        JsError::ExecutionError(msg)
-    }
-}
-
-fn classify_core_error(e: deno_core::error::CoreError, function_name: &str) -> JsError {
-    let msg = format!("{e}");
+fn classify_error(e: impl std::fmt::Display, function_name: &str) -> JsError {
+    let msg = e.to_string();
     if msg.contains("__FUNCTION_NOT_FOUND__:") {
         JsError::FunctionNotFound(function_name.to_string())
     } else {
