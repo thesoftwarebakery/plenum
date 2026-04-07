@@ -171,6 +171,55 @@ impl ProxyHttp for OpenGateway {
         ctx.matched_route = Some(matched.value.clone());
         ctx.matched_method = Some(session.req_header().method.clone());
 
+        // Phase 1 of on_request: call with null body so header modifications are applied
+        // before the upstream request is built. Fires for all requests including GET.
+        // For requests with a body, phase 2 runs in request_body_filter to handle body access.
+        let op = matched.value.operations.get(&session.req_header().method);
+        if let Some(op) = op {
+            if let Some(handle) = op.interceptors.on_request.as_ref() {
+                let input = request_input_from_parts(
+                    &session.req_header().method,
+                    &session.req_header().uri,
+                    &session.req_header().headers,
+                );
+                let input_json = serde_json::to_value(&input).unwrap();
+
+                match call_interceptor(handle, "onRequest", input_json, None).await {
+                    Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
+                        if let Some(modifications) = headers {
+                            apply_request_header_modifications(
+                                session.req_header_mut(),
+                                &modifications,
+                            );
+                        }
+                    }
+                    Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
+                        let body_bytes: Bytes = match body_out {
+                            Some(b) => js_body_to_bytes(b),
+                            None => Bytes::new(),
+                        };
+                        session
+                            .respond_error_with_body(status, body_bytes)
+                            .await
+                            .ok();
+                        return Ok(true);
+                    }
+                    Err(e) => {
+                        log::error!("on_request interceptor error: {}", e);
+                        session
+                            .respond_error_with_body(
+                                500,
+                                GatewayError::internal(format!("interceptor error: {}", e))
+                                    .body(),
+                            )
+                            .await
+                            .ok();
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
         Ok(false)
     }
 
@@ -241,8 +290,14 @@ impl ProxyHttp for OpenGateway {
                 }
             }
 
-            // Step 2: Call on_request interceptor (if configured)
+            // Step 2: Call on_request interceptor phase 2 (body access).
+            // Only fires when body is non-empty. Phase 1 already ran in request_filter
+            // and handled header modifications. Here we only apply body changes.
             let final_buf: Bytes = if let Some(handle) = op.interceptors.on_request.as_ref() {
+                if buf.is_empty() {
+                    // No body to process; phase 1 already ran.
+                    buf
+                } else {
                 let content_type = session
                     .req_header()
                     .headers
@@ -259,57 +314,23 @@ impl ProxyHttp for OpenGateway {
                 let input_json = serde_json::to_value(&input).unwrap();
 
                 match call_interceptor(handle, "onRequest", input_json, js_body).await {
-                    Ok((InterceptorOutput::Continue { headers, .. }, body_out)) => {
-                        if let Some(modifications) = headers {
-                            apply_request_header_modifications(
-                                session.req_header_mut(),
-                                &modifications,
-                            );
-                        }
+                    Ok((InterceptorOutput::Continue { .. }, body_out)) => {
+                        // Header mods from phase 2 are intentionally not applied:
+                        // upstream headers were already built before request_body_filter runs.
                         match body_out {
                             Some(modified) => js_body_to_bytes(modified),
                             None => buf,
                         }
                     }
-                    Ok((InterceptorOutput::Respond { status, headers, body: resp_body }, _)) => {
-                        let body_bytes = resp_body.map(|s| s.into_bytes()).unwrap_or_default();
-                        if let Some(h) = &headers {
-                            let Ok(mut resp) =
-                                ResponseHeader::build(status, Some(h.len() + 1))
-                            else {
-                                log::error!(
-                                    "on_request interceptor returned invalid status code: {}",
-                                    status
-                                );
-                                let e = GatewayError::internal("interceptor returned invalid status");
-                                session.respond_error_with_body(e.status, e.body()).await.ok();
-                                ctx.request_body_validation_failed = true;
-                                return Ok(());
-                            };
-                            for (name, value) in h {
-                                if let (Ok(n), Ok(v)) = (
-                                    name.parse::<http::header::HeaderName>(),
-                                    value.parse::<http::header::HeaderValue>(),
-                                ) {
-                                    resp.insert_header(n, v).ok();
-                                }
-                            }
-                            resp.insert_header(http::header::CONTENT_LENGTH, body_bytes.len())
-                                .ok();
-                            session
-                                .write_response_header(Box::new(resp), false)
-                                .await
-                                .ok();
-                            session
-                                .write_response_body(Some(Bytes::from(body_bytes)), true)
-                                .await
-                                .ok();
-                        } else {
-                            session
-                                .respond_error_with_body(status, Bytes::from(body_bytes))
-                                .await
-                                .ok();
-                        }
+                    Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
+                        let body_bytes: Bytes = match body_out {
+                            Some(b) => js_body_to_bytes(b),
+                            None => Bytes::new(),
+                        };
+                        session
+                            .respond_error_with_body(status, body_bytes)
+                            .await
+                            .ok();
                         ctx.request_body_validation_failed = true;
                         return Ok(());
                     }
@@ -327,6 +348,7 @@ impl ProxyHttp for OpenGateway {
                         return Ok(());
                     }
                 }
+                } // close inner else { (non-empty body case)
             } else {
                 buf
             };
@@ -359,6 +381,22 @@ impl ProxyHttp for OpenGateway {
             Some(o) => o,
             None => return Ok(()),
         };
+
+        // When on_request is configured, the body may be modified in request_body_filter.
+        // Replace Content-Length with Transfer-Encoding: chunked so pingora will stream
+        // the (possibly resized) body to the upstream without a fixed length constraint.
+        if op.interceptors.on_request.is_some() {
+            upstream_request.remove_header(&http::header::CONTENT_LENGTH);
+            upstream_request
+                .insert_header(http::header::TRANSFER_ENCODING, "chunked")
+                .ok();
+        }
+
+        // When on_response_body is configured, we need to buffer and inspect the response body.
+        // Prevent gzip encoding from the upstream so we receive raw bytes.
+        if op.interceptors.on_response_body.is_some() {
+            upstream_request.insert_header("accept-encoding", "identity").ok();
+        }
 
         if let Some(handle) = &op.interceptors.before_upstream {
             let input = request_input_from_parts(
@@ -497,22 +535,26 @@ impl ProxyHttp for OpenGateway {
             let input = response_input_from_parts(status, &empty_headers);
             let input_json = serde_json::to_value(&input).unwrap();
 
-            let final_buf = match call_interceptor_blocking(handle, "onResponseBody", input_json, js_body) {
-                Ok((InterceptorOutput::Continue { .. }, body_out)) => {
-                    match body_out {
-                        Some(modified) => js_body_to_bytes(modified),
-                        None => buf,
+            // Use block_in_place so the blocking JS call can use tokio's blocking_send/recv
+            // from within pingora's async execution context.
+            let final_buf = tokio::task::block_in_place(|| {
+                match call_interceptor_blocking(handle, "onResponseBody", input_json, js_body) {
+                    Ok((InterceptorOutput::Continue { .. }, body_out)) => {
+                        match body_out {
+                            Some(modified) => js_body_to_bytes(modified),
+                            None => buf,
+                        }
+                    }
+                    Ok((InterceptorOutput::Respond { .. }, _)) => {
+                        log::warn!("on_response_body interceptor returned 'respond' — ignoring");
+                        buf
+                    }
+                    Err(e) => {
+                        log::error!("on_response_body interceptor error: {}", e);
+                        buf
                     }
                 }
-                Ok((InterceptorOutput::Respond { .. }, _)) => {
-                    log::warn!("on_response_body interceptor returned 'respond' — ignoring");
-                    buf
-                }
-                Err(e) => {
-                    log::error!("on_response_body interceptor error: {}", e);
-                    buf
-                }
-            };
+            });
 
             *body = Some(final_buf);
         }
