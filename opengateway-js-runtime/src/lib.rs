@@ -1,7 +1,7 @@
 mod types;
 mod worker;
 
-pub use types::JsError;
+pub use types::{CallOutput, JsBody, JsError};
 
 use std::path::Path;
 use std::time::Duration;
@@ -15,19 +15,21 @@ pub struct JsRuntimeHandle {
 }
 
 impl JsRuntimeHandle {
-    /// Call an exported JS function with a JSON argument.
-    /// Returns the function's return value as JSON, or an error.
+    /// Call an exported JS function with a JSON argument and optional body.
+    /// Returns the function's return value and any modified body, or an error.
     pub async fn call(
         &self,
         function_name: &str,
         arg: serde_json::Value,
+        body: Option<JsBody>,
         timeout: Duration,
-    ) -> Result<serde_json::Value, JsError> {
+    ) -> Result<CallOutput, JsError> {
         let (reply_tx, reply_rx) = oneshot::channel();
 
         let call = JsCall {
             function_name: function_name.to_string(),
             arg,
+            body,
             reply: reply_tx,
         };
 
@@ -47,6 +49,62 @@ impl JsRuntimeHandle {
                 Err(JsError::Timeout)
             }
         }
+    }
+
+    /// Synchronous variant of [`call`] for use from non-async contexts (e.g. pingora body filters).
+    ///
+    /// Internally blocks the calling thread until the JS function returns or the timeout expires.
+    pub fn call_blocking(
+        &self,
+        function_name: &str,
+        arg: serde_json::Value,
+        body: Option<JsBody>,
+        timeout: Duration,
+    ) -> Result<CallOutput, JsError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+
+        let call = JsCall {
+            function_name: function_name.to_string(),
+            arg,
+            body,
+            reply: reply_tx,
+        };
+
+        self.tx
+            .blocking_send(call)
+            .map_err(|_| JsError::ExecutionError("JS runtime worker has shut down".into()))?;
+
+        // Spawn a cancellable timeout thread. When the reply arrives (or this function
+        // returns early), dropping `cancel_tx` signals the timeout thread to exit.
+        let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
+        let timed_out = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let timed_out_clone = timed_out.clone();
+        let isolate_handle = self.isolate_handle.clone();
+
+        std::thread::spawn(move || {
+            match cancel_rx.recv_timeout(timeout) {
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    timed_out_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                    isolate_handle.terminate_execution();
+                }
+                _ => {} // Cancelled (cancel_tx dropped) or disconnected — do nothing.
+            }
+        });
+
+        let result = match reply_rx.blocking_recv() {
+            Ok(r) => r,
+            Err(_) => Err(JsError::ExecutionError(
+                "JS runtime worker dropped the reply channel".into(),
+            )),
+        };
+
+        // Signal the timeout thread to exit (no-op if it already fired).
+        drop(cancel_tx);
+
+        if timed_out.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(JsError::Timeout);
+        }
+        result
     }
 }
 
@@ -136,12 +194,14 @@ mod tests {
             .call(
                 "hello",
                 serde_json::json!({"name": "world"}),
+                None,
                 Duration::from_secs(5),
             )
             .await
             .unwrap();
 
-        assert_eq!(result, serde_json::json!({"greeting": "hi world"}));
+        assert_eq!(result.value, serde_json::json!({"greeting": "hi world"}));
+        assert!(result.body.is_none());
     }
 
     #[tokio::test]
@@ -151,6 +211,7 @@ mod tests {
             .call(
                 "nonexistent",
                 serde_json::json!({}),
+                None,
                 Duration::from_secs(5),
             )
             .await;
@@ -162,7 +223,7 @@ mod tests {
     async fn test_execution_error() {
         let handle = spawn_runtime(&fixture_path("throws.js")).await.unwrap();
         let result = handle
-            .call("doThrow", serde_json::json!({}), Duration::from_secs(5))
+            .call("doThrow", serde_json::json!({}), None, Duration::from_secs(5))
             .await;
 
         assert!(matches!(result, Err(JsError::ExecutionError(_))));
@@ -181,6 +242,7 @@ mod tests {
             .call(
                 "infinite",
                 serde_json::json!({}),
+                None,
                 Duration::from_millis(200),
             )
             .await;
@@ -196,6 +258,7 @@ mod tests {
             .call(
                 "hello",
                 serde_json::json!({"name": "Alice"}),
+                None,
                 Duration::from_secs(5),
             )
             .await
@@ -205,13 +268,14 @@ mod tests {
             .call(
                 "hello",
                 serde_json::json!({"name": "Bob"}),
+                None,
                 Duration::from_secs(5),
             )
             .await
             .unwrap();
 
-        assert_eq!(r1, serde_json::json!({"greeting": "hi Alice"}));
-        assert_eq!(r2, serde_json::json!({"greeting": "hi Bob"}));
+        assert_eq!(r1.value, serde_json::json!({"greeting": "hi Alice"}));
+        assert_eq!(r2.value, serde_json::json!({"greeting": "hi Bob"}));
     }
 
     #[tokio::test]
@@ -220,7 +284,7 @@ mod tests {
 
         // First call: timeout on infinite loop.
         let timeout_result = handle
-            .call("spin", serde_json::json!({}), Duration::from_millis(200))
+            .call("spin", serde_json::json!({}), None, Duration::from_millis(200))
             .await;
         assert!(matches!(timeout_result, Err(JsError::Timeout)));
 
@@ -232,11 +296,12 @@ mod tests {
             .call(
                 "greet",
                 serde_json::json!({"name": "world"}),
+                None,
                 Duration::from_secs(5),
             )
             .await
             .unwrap();
-        assert_eq!(ok_result, serde_json::json!({"greeting": "hi world"}));
+        assert_eq!(ok_result.value, serde_json::json!({"greeting": "hi world"}));
     }
 
     #[test]
@@ -244,11 +309,40 @@ mod tests {
         let handle = spawn_runtime_sync(&fixture_path("hello.js")).unwrap();
         // Use a temporary tokio runtime to call the async method.
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(handle.call(
-            "hello",
-            serde_json::json!({"name": "sync"}),
-            Duration::from_secs(5),
-        )).unwrap();
-        assert_eq!(result, serde_json::json!({"greeting": "hi sync"}));
+        let result = rt
+            .block_on(handle.call(
+                "hello",
+                serde_json::json!({"name": "sync"}),
+                None,
+                Duration::from_secs(5),
+            ))
+            .unwrap();
+        assert_eq!(result.value, serde_json::json!({"greeting": "hi sync"}));
+    }
+
+    #[test]
+    fn test_call_blocking() {
+        let handle = spawn_runtime_sync(&fixture_path("hello.js")).unwrap();
+        let result = handle
+            .call_blocking(
+                "hello",
+                serde_json::json!({"name": "blocking"}),
+                None,
+                Duration::from_secs(5),
+            )
+            .unwrap();
+        assert_eq!(result.value, serde_json::json!({"greeting": "hi blocking"}));
+    }
+
+    #[test]
+    fn test_call_blocking_timeout() {
+        let handle = spawn_runtime_sync(&fixture_path("infinite.js")).unwrap();
+        let result = handle.call_blocking(
+            "infinite",
+            serde_json::json!({}),
+            None,
+            Duration::from_millis(200),
+        );
+        assert!(matches!(result, Err(JsError::Timeout)));
     }
 }

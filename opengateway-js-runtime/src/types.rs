@@ -1,11 +1,34 @@
 use std::fmt;
 use tokio::sync::oneshot;
 
+/// Body content passed to or returned from a JS interceptor, typed by content-type.
+#[derive(Debug)]
+pub enum JsBody {
+    /// Parsed JSON body (`application/json`). Passed as a JS object.
+    Json(serde_json::Value),
+    /// Text body (`text/*`, `application/xml`, etc.). Passed as a JS string.
+    Text(String),
+    /// Binary body (everything else). Passed as a JS `Uint8Array`.
+    Bytes(Vec<u8>),
+}
+
+/// Output from a JS interceptor call. The main result value excludes the body
+/// field, which is extracted separately due to its typed nature.
+#[derive(Debug)]
+pub struct CallOutput {
+    /// The interceptor return value without the `body` field
+    /// (contains `action`, `status`, `headers`, etc.).
+    pub value: serde_json::Value,
+    /// The interceptor's returned body, if any.
+    pub body: Option<JsBody>,
+}
+
 /// A call to be dispatched to the JS runtime worker thread.
 pub(crate) struct JsCall {
     pub function_name: String,
     pub arg: serde_json::Value,
-    pub reply: oneshot::Sender<Result<serde_json::Value, JsError>>,
+    pub body: Option<JsBody>,
+    pub reply: oneshot::Sender<Result<CallOutput, JsError>>,
 }
 
 /// Errors that can occur when calling into the JS runtime.
