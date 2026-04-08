@@ -119,6 +119,15 @@ The hardcoded `INTERCEPTOR_TIMEOUT` constant and all hardcoded function name str
 
 At startup (path-match build time), unknown `hook` values are rejected with a clear error message. Valid values: `on_request`, `before_upstream`, `on_response`, `on_response_body`.
 
+## Baseline
+
+Before starting any implementation work, run the full test suite (Rust unit/integration tests and e2e tests) and record the results. This establishes a known baseline: any test that was already failing before the work started is not a regression, and any new failure introduced during implementation is clearly attributable to this change.
+
+```bash
+cargo test
+cd e2e && deno task test
+```
+
 ## Testing
 
 **Rust unit/integration tests (`gateway-core/tests/`):**
