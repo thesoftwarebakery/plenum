@@ -6,6 +6,6 @@ actions:
   - target: $.paths[*].get
     update:
       x-opengateway-interceptor:
-        module: "./interceptors/add-header.js"
-        hooks:
-          - on_request
+        - module: "./interceptors/add-header.js"
+          hook: on_request
+          function: onRequest

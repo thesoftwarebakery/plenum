@@ -24,7 +24,6 @@ pub mod upstream_http;
 pub mod path_match;
 pub mod validation;
 
-const INTERCEPTOR_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct GatewayCtx {
     matched_route: Option<Arc<RouteEntry>>,
@@ -59,8 +58,9 @@ async fn call_interceptor(
     function_name: &str,
     input: serde_json::Value,
     body: Option<JsBody>,
+    timeout: Duration,
 ) -> Result<(InterceptorOutput, Option<JsBody>), Box<dyn Error + Send + Sync>> {
-    let result = handle.call(function_name, input, body, INTERCEPTOR_TIMEOUT).await?;
+    let result = handle.call(function_name, input, body, timeout).await?;
     let output: InterceptorOutput = serde_json::from_value(result.value)?;
     Ok((output, result.body))
 }
@@ -71,8 +71,9 @@ fn call_interceptor_blocking(
     function_name: &str,
     input: serde_json::Value,
     body: Option<JsBody>,
+    timeout: Duration,
 ) -> Result<(InterceptorOutput, Option<JsBody>), Box<dyn Error + Send + Sync>> {
-    let result = handle.call_blocking(function_name, input, body, INTERCEPTOR_TIMEOUT)?;
+    let result = handle.call_blocking(function_name, input, body, timeout)?;
     let output: InterceptorOutput = serde_json::from_value(result.value)?;
     Ok((output, result.body))
 }
@@ -188,7 +189,7 @@ impl ProxyHttp for OpenGateway {
         // before the upstream request is built. Fires for all requests including GET.
         // For requests with a body, phase 2 runs in request_body_filter to handle body access.
         if let Some(op) = matched_op(&ctx.matched_route, &ctx.matched_method) {
-            if let Some(handle) = op.interceptors.on_request.as_ref() {
+            for hook in &op.interceptors.on_request {
                 let input = request_input_from_parts(
                     &session.req_header().method,
                     &session.req_header().uri,
@@ -196,7 +197,7 @@ impl ProxyHttp for OpenGateway {
                 );
                 let input_json = serde_json::to_value(&input).unwrap();
 
-                match call_interceptor(handle, "onRequest", input_json, None).await {
+                match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
                     Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
                         if let Some(mods) = headers {
                             apply_header_modifications(session.req_header_mut(), &mods);
@@ -245,7 +246,7 @@ impl ProxyHttp for OpenGateway {
         };
 
         // Skip if neither validation nor on_request interceptor is configured
-        if op.request_body.is_none() && op.interceptors.on_request.is_none() {
+        if op.request_body.is_none() && op.interceptors.on_request.is_empty() {
             return Ok(());
         }
 
@@ -292,27 +293,25 @@ impl ProxyHttp for OpenGateway {
             // phase 1 in request_filter already ran. Here we apply body changes only --
             // header modifications are intentionally ignored since upstream headers were
             // already built before request_body_filter runs.
-            let final_buf = if let Some(handle) = op.interceptors.on_request.as_ref() {
-                if buf.is_empty() {
-                    buf
-                } else {
-                    let content_type = session
-                        .req_header()
-                        .headers
-                        .get(http::header::CONTENT_TYPE)
-                        .and_then(|v| v.to_str().ok())
-                        .map(|s| s.to_string());
-                    let js_body = js_body_from_content_type(content_type.as_deref(), &buf);
+            let final_buf = if !op.interceptors.on_request.is_empty() && !buf.is_empty() {
+                let content_type = session
+                    .req_header()
+                    .headers
+                    .get(http::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.to_string());
+                let mut current_buf = buf;
+                for hook in &op.interceptors.on_request {
+                    let js_body = js_body_from_content_type(content_type.as_deref(), &current_buf);
                     let input = request_input_from_parts(
                         &session.req_header().method,
                         &session.req_header().uri,
                         &session.req_header().headers,
                     );
                     let input_json = serde_json::to_value(&input).unwrap();
-
-                    match call_interceptor(handle, "onRequest", input_json, js_body).await {
+                    match call_interceptor(&hook.runtime, &hook.function, input_json, js_body, hook.timeout).await {
                         Ok((InterceptorOutput::Continue { .. }, body_out)) => {
-                            body_out.map(js_body_to_bytes).unwrap_or(buf)
+                            current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
                         }
                         Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
                             session
@@ -340,6 +339,7 @@ impl ProxyHttp for OpenGateway {
                         }
                     }
                 }
+                current_buf
             } else {
                 buf
             };
@@ -367,7 +367,7 @@ impl ProxyHttp for OpenGateway {
         // When on_request is configured, the body may be modified in request_body_filter.
         // Replace Content-Length with Transfer-Encoding: chunked so pingora will stream
         // the (possibly resized) body to the upstream without a fixed length constraint.
-        if op.interceptors.on_request.is_some() {
+        if !op.interceptors.on_request.is_empty() {
             upstream_request.remove_header(&http::header::CONTENT_LENGTH);
             upstream_request
                 .insert_header(http::header::TRANSFER_ENCODING, "chunked")
@@ -376,11 +376,11 @@ impl ProxyHttp for OpenGateway {
 
         // When on_response_body is configured, we need to buffer and inspect the response body.
         // Prevent gzip encoding from the upstream so we receive raw bytes.
-        if op.interceptors.on_response_body.is_some() {
+        if !op.interceptors.on_response_body.is_empty() {
             upstream_request.insert_header("accept-encoding", "identity").ok();
         }
 
-        if let Some(handle) = &op.interceptors.before_upstream {
+        for hook in &op.interceptors.before_upstream {
             let input = request_input_from_parts(
                 &upstream_request.method,
                 &upstream_request.uri,
@@ -388,7 +388,7 @@ impl ProxyHttp for OpenGateway {
             );
             let input_json = serde_json::to_value(&input).unwrap();
 
-            match call_interceptor(handle, "beforeUpstream", input_json, None).await {
+            match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
                 Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
                     if let Some(mods) = &headers {
                         apply_header_modifications(upstream_request, mods);
@@ -419,14 +419,14 @@ impl ProxyHttp for OpenGateway {
             return Ok(());
         };
 
-        if let Some(handle) = &op.interceptors.on_response {
+        for hook in &op.interceptors.on_response {
             let input = response_input_from_parts(
                 upstream_response.status,
                 &upstream_response.headers,
             );
             let input_json = serde_json::to_value(&input).unwrap();
 
-            match call_interceptor(handle, "onResponse", input_json, None).await {
+            match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
                 Ok((InterceptorOutput::Continue { status, headers }, _)) => {
                     if let Some(code) = status {
                         if let Ok(status_code) = http::StatusCode::from_u16(code) {
@@ -448,7 +448,7 @@ impl ProxyHttp for OpenGateway {
 
         // When on_response_body is configured, strip Content-Length (body size may change)
         // and store metadata in ctx for use in upstream_response_body_filter.
-        if op.interceptors.on_response_body.is_some() {
+        if !op.interceptors.on_response_body.is_empty() {
             upstream_response.remove_header(&http::header::CONTENT_LENGTH);
             ctx.upstream_response_status = Some(upstream_response.status);
             ctx.upstream_response_content_type = upstream_response
@@ -475,7 +475,7 @@ impl ProxyHttp for OpenGateway {
             return Ok(None);
         };
 
-        if op.interceptors.on_response_body.is_none() {
+        if op.interceptors.on_response_body.is_empty() {
             return Ok(None);
         }
 
@@ -486,30 +486,38 @@ impl ProxyHttp for OpenGateway {
         }
 
         if end_of_stream {
-            let handle = op.interceptors.on_response_body.as_ref().unwrap();
             let buf = ctx.response_body_buf.split().freeze();
-            let js_body =
-                js_body_from_content_type(ctx.upstream_response_content_type.as_deref(), &buf);
             let status = ctx.upstream_response_status.unwrap_or(http::StatusCode::OK);
-            let input = response_input_from_parts(status, &http::HeaderMap::new());
-            let input_json = serde_json::to_value(&input).unwrap();
 
-            // Use block_in_place so the blocking JS call can use tokio's blocking_send/recv
-            // from within pingora's async execution context.
             let final_buf = tokio::task::block_in_place(|| {
-                match call_interceptor_blocking(handle, "onResponseBody", input_json, js_body) {
-                    Ok((InterceptorOutput::Continue { .. }, body_out)) => {
-                        body_out.map(js_body_to_bytes).unwrap_or(buf)
-                    }
-                    Ok((InterceptorOutput::Respond { .. }, _)) => {
-                        log::warn!("on_response_body interceptor returned 'respond' -- ignoring");
-                        buf
-                    }
-                    Err(e) => {
-                        log::error!("on_response_body interceptor error: {}", e);
-                        buf
+                let mut current_buf = buf;
+                for hook in &op.interceptors.on_response_body {
+                    let js_body = js_body_from_content_type(
+                        ctx.upstream_response_content_type.as_deref(),
+                        &current_buf,
+                    );
+                    let input = response_input_from_parts(status, &http::HeaderMap::new());
+                    let input_json = serde_json::to_value(&input).unwrap();
+
+                    match call_interceptor_blocking(
+                        &hook.runtime,
+                        &hook.function,
+                        input_json,
+                        js_body,
+                        hook.timeout,
+                    ) {
+                        Ok((InterceptorOutput::Continue { .. }, body_out)) => {
+                            current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
+                        }
+                        Ok((InterceptorOutput::Respond { .. }, _)) => {
+                            log::warn!("on_response_body interceptor returned 'respond' -- ignoring");
+                        }
+                        Err(e) => {
+                            log::error!("on_response_body interceptor error: {}", e);
+                        }
                     }
                 }
+                current_buf
             });
 
             *body = Some(final_buf);
