@@ -6,8 +6,12 @@ actions:
   - target: $.paths[*].get
     update:
       x-opengateway-interceptor:
-        module: "./interceptors/all-hooks.js"
-        hooks:
-          - on_request
-          - before_upstream
-          - on_response
+        - module: "./interceptors/all-hooks.js"
+          hook: on_request
+          function: onRequest
+        - module: "./interceptors/all-hooks.js"
+          hook: before_upstream
+          function: beforeUpstream
+        - module: "./interceptors/all-hooks.js"
+          hook: on_response
+          function: onResponse

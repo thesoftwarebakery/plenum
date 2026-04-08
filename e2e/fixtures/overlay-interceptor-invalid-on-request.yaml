@@ -6,6 +6,6 @@ actions:
   - target: $.paths[*].get
     update:
       x-opengateway-interceptor:
-        module: "./interceptors/invalid-return.js"
-        hooks:
-          - on_request
+        - module: "./interceptors/invalid-return.js"
+          hook: on_request
+          function: onRequest

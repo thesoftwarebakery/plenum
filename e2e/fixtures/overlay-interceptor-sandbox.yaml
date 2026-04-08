@@ -6,6 +6,6 @@ actions:
   - target: $.paths[*].get
     update:
       x-opengateway-interceptor:
-        module: "./interceptors/sandbox-escape.js"
-        hooks:
-          - on_request
+        - module: "./interceptors/sandbox-escape.js"
+          hook: on_request
+          function: onRequest

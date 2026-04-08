@@ -6,6 +6,6 @@ actions:
   - target: $.paths[*].get
     update:
       x-opengateway-interceptor:
-        module: "./interceptors/throw-error.js"
-        hooks:
-          - on_request
+        - module: "./interceptors/throw-error.js"
+          hook: on_request
+          function: onRequest
