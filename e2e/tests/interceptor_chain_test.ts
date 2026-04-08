@@ -4,7 +4,7 @@ import { startWiremock } from "../src/containers/wiremock.ts";
 import { startGateway } from "../src/containers/gateway.ts";
 import { WireMockClient } from "../src/helpers/wiremock-client.ts";
 
-Deno.test({ name: "two on_request interceptors both fire in order", sanitizeResources: false, sanitizeOps: false }, async () => {
+Deno.test({ name: "two on_request interceptors both fire", sanitizeResources: false, sanitizeOps: false }, async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
