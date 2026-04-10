@@ -89,7 +89,8 @@ impl JsRuntimeHandle {
 
         std::thread::spawn(move || {
             // Cancelled (cancel_tx dropped) or disconnected — do nothing.
-            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout) {
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout)
+            {
                 timed_out_clone.store(true, std::sync::atomic::Ordering::Relaxed);
                 isolate_handle.terminate_execution();
             }
