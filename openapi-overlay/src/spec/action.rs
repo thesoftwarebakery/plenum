@@ -34,7 +34,11 @@ pub struct Action {
     pub remove: bool,
 
     /// Specification extensions (x-* fields).
-    #[serde(flatten, with = "spec_extensions", skip_serializing_if = "spec_extensions::is_empty")]
+    #[serde(
+        flatten,
+        with = "spec_extensions",
+        skip_serializing_if = "spec_extensions::is_empty"
+    )]
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
 

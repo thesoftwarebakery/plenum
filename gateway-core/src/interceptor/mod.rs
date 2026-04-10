@@ -204,8 +204,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_action() {
-        let result =
-            serde_json::from_value::<InterceptorOutput>(json!({"action": "invalid"}));
+        let result = serde_json::from_value::<InterceptorOutput>(json!({"action": "invalid"}));
         assert!(result.is_err());
     }
 
@@ -252,9 +251,7 @@ mod tests {
 
     #[test]
     fn request_input_from_http_parts() {
-        let uri: http::Uri = "https://example.com/items?page=2&limit=10"
-            .parse()
-            .unwrap();
+        let uri: http::Uri = "https://example.com/items?page=2&limit=10".parse().unwrap();
         let method = http::Method::GET;
         let mut headers = http::HeaderMap::new();
         headers.insert("x-custom", "value".parse().unwrap());

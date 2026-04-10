@@ -25,13 +25,14 @@ pub fn apply_actions(doc: &mut Value, actions: &[Action]) -> Result<(), ApplyErr
 }
 
 fn apply_action(doc: &mut Value, action: &Action) -> Result<(), ApplyError> {
-    let path = action
-        .target
-        .parse::<JsonPath>()
-        .map_err(|source| ApplyError::InvalidTargetPath {
-            path: action.target.clone(),
-            source,
-        })?;
+    let path =
+        action
+            .target
+            .parse::<JsonPath>()
+            .map_err(|source| ApplyError::InvalidTargetPath {
+                path: action.target.clone(),
+                source,
+            })?;
 
     // Priority: remove > copy > update (matches spec precedence).
     if action.remove {

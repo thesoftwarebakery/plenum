@@ -27,7 +27,11 @@ pub struct Overlay {
     pub actions: Vec<Action>,
 
     /// Specification extensions (x-* fields).
-    #[serde(flatten, with = "spec_extensions", skip_serializing_if = "spec_extensions::is_empty")]
+    #[serde(
+        flatten,
+        with = "spec_extensions",
+        skip_serializing_if = "spec_extensions::is_empty"
+    )]
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
@@ -97,14 +101,8 @@ mod tests {
         }"#;
         let overlay: Overlay = serde_json::from_str(json).unwrap();
         assert_eq!(overlay.actions.len(), 2);
-        assert_eq!(
-            overlay.actions[0].target,
-            "$.paths['/foo'].get.description"
-        );
-        assert_eq!(
-            overlay.actions[1].target,
-            "$.paths['/bar'].get.description"
-        );
+        assert_eq!(overlay.actions[0].target, "$.paths['/foo'].get.description");
+        assert_eq!(overlay.actions[1].target, "$.paths['/bar'].get.description");
     }
 
     #[test]
@@ -210,7 +208,10 @@ mod tests {
                 copy: '$.paths[\"/items\"]'
         "};
         let overlay: Overlay = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(overlay.actions[0].copy.as_deref(), Some("$.paths[\"/items\"]"));
+        assert_eq!(
+            overlay.actions[0].copy.as_deref(),
+            Some("$.paths[\"/items\"]")
+        );
     }
 
     #[cfg(feature = "yaml")]

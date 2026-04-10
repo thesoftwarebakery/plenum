@@ -1,10 +1,10 @@
+use oas3::Spec;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use oas3::Spec;
 use std::collections::BTreeMap;
 use std::error::Error;
-use std::fs::{read_to_string,canonicalize};
+use std::fs::{canonicalize, read_to_string};
 use std::path::Path;
 
 #[derive(Debug)]
@@ -25,7 +25,8 @@ impl Config {
         extensions: &BTreeMap<String, Value>,
         key: &str,
     ) -> Result<T, Box<dyn Error>> {
-        let value = extensions.get(key)
+        let value = extensions
+            .get(key)
             .ok_or_else(|| format!("extension '{}' not found", key))?;
         self.resolve_value(value)
     }
@@ -40,7 +41,8 @@ impl Config {
 
     fn follow_ref(&self, path: &str) -> Result<&Value, Box<dyn Error>> {
         let pointer = path.trim_start_matches('#');
-        self.raw_doc.pointer(pointer)
+        self.raw_doc
+            .pointer(pointer)
             .ok_or_else(|| format!("$ref '{}' not found", path).into())
     }
 
@@ -49,19 +51,19 @@ impl Config {
         Ok(Config { spec, raw_doc: doc })
     }
 
-    pub fn parse(config_base: &str, path: &str, overlays: &[String]) -> Result<Self, Box<dyn Error>> {
-        let yaml = read_to_string(
-                canonicalize(Path::new(config_base).join(path))?
-            )
+    pub fn parse(
+        config_base: &str,
+        path: &str,
+        overlays: &[String],
+    ) -> Result<Self, Box<dyn Error>> {
+        let yaml = read_to_string(canonicalize(Path::new(config_base).join(path))?)
             .expect("Cannot read config path");
         let mut doc: serde_json::Value = serde_yaml_ng::from_str(&yaml)?;
 
         for overlay in overlays {
-            let overlay_doc = oapi_overlay::from_yaml(
-                &read_to_string(
-                    canonicalize(Path::new(config_base).join(overlay))?
-                )?
-            )?;
+            let overlay_doc = oapi_overlay::from_yaml(&read_to_string(canonicalize(
+                Path::new(config_base).join(overlay),
+            )?)?)?;
             oapi_overlay::apply_overlay(&mut doc, &overlay_doc)?
         }
         let spec: Spec = serde_json::from_value(doc.clone())?;
@@ -98,12 +100,17 @@ mod tests {
         });
         let config = make_config(doc);
 
-        let upstream: TestUpstream = config.extension(&config.spec.extensions, "opengateway-upstream").unwrap();
+        let upstream: TestUpstream = config
+            .extension(&config.spec.extensions, "opengateway-upstream")
+            .unwrap();
 
-        assert_eq!(upstream, TestUpstream {
-            address: "api.example.com".into(),
-            port: 443,
-        });
+        assert_eq!(
+            upstream,
+            TestUpstream {
+                address: "api.example.com".into(),
+                port: 443,
+            }
+        );
     }
 
     #[test]
@@ -124,12 +131,17 @@ mod tests {
         });
         let config = make_config(doc);
 
-        let upstream: TestUpstream = config.extension(&config.spec.extensions, "opengateway-upstream").unwrap();
+        let upstream: TestUpstream = config
+            .extension(&config.spec.extensions, "opengateway-upstream")
+            .unwrap();
 
-        assert_eq!(upstream, TestUpstream {
-            address: "api.example.com".into(),
-            port: 8080,
-        });
+        assert_eq!(
+            upstream,
+            TestUpstream {
+                address: "api.example.com".into(),
+                port: 8080,
+            }
+        );
     }
 
     #[test]
@@ -159,7 +171,8 @@ mod tests {
         });
         let config = make_config(doc);
 
-        let result = config.extension::<TestUpstream>(&config.spec.extensions, "opengateway-upstream");
+        let result =
+            config.extension::<TestUpstream>(&config.spec.extensions, "opengateway-upstream");
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));

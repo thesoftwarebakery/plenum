@@ -1,7 +1,7 @@
 pub mod apply;
 pub mod spec;
 
-pub use apply::{apply_actions, apply_overlay, ApplyError};
+pub use apply::{ApplyError, apply_actions, apply_overlay};
 pub use spec::{Action, Info, Overlay};
 
 /// Deserialise an [`Overlay`] from a JSON string.

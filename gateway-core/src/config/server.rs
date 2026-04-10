@@ -1,7 +1,11 @@
 use serde::Deserialize;
 
-fn default_threads() -> usize { 1 }
-fn default_listen() -> String { "0.0.0.0:6188".to_string() }
+fn default_threads() -> usize {
+    1
+}
+fn default_listen() -> String {
+    "0.0.0.0:6188".to_string()
+}
 
 #[derive(Debug, Deserialize)]
 pub struct ServerConfig {

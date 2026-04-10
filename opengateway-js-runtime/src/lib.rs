@@ -113,7 +113,10 @@ impl JsRuntimeHandle {
 fn start_worker(
     module_path: std::path::PathBuf,
 ) -> Result<
-    (oneshot::Receiver<Result<types::WorkerReady, JsError>>, mpsc::Sender<JsCall>),
+    (
+        oneshot::Receiver<Result<types::WorkerReady, JsError>>,
+        mpsc::Sender<JsCall>,
+    ),
     Box<dyn std::error::Error>,
 > {
     let (tx, rx) = mpsc::channel::<JsCall>(32);
@@ -121,7 +124,10 @@ fn start_worker(
     std::thread::Builder::new()
         .name(format!(
             "js-runtime-{}",
-            module_path.file_name().unwrap_or_default().to_string_lossy()
+            module_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
         ))
         .spawn(move || worker::run_worker(module_path, rx, ready_tx))?;
     Ok((ready_rx, tx))
@@ -133,15 +139,21 @@ fn start_worker(
 pub async fn spawn_runtime(
     module_path: &Path,
 ) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
-    let module_path = module_path
-        .canonicalize()
-        .map_err(|e| format!("cannot resolve module path '{}': {e}", module_path.display()))?;
+    let module_path = module_path.canonicalize().map_err(|e| {
+        format!(
+            "cannot resolve module path '{}': {e}",
+            module_path.display()
+        )
+    })?;
     let (ready_rx, tx) = start_worker(module_path)?;
     let ready = ready_rx
         .await
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
         .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
-    Ok(JsRuntimeHandle { tx, isolate_handle: ready.isolate_handle })
+    Ok(JsRuntimeHandle {
+        tx,
+        isolate_handle: ready.isolate_handle,
+    })
 }
 
 /// Like [`spawn_runtime`] but blocks the current thread until the module is loaded.
@@ -150,15 +162,21 @@ pub async fn spawn_runtime(
 pub fn spawn_runtime_sync(
     module_path: &Path,
 ) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
-    let module_path = module_path
-        .canonicalize()
-        .map_err(|e| format!("cannot resolve module path '{}': {e}", module_path.display()))?;
+    let module_path = module_path.canonicalize().map_err(|e| {
+        format!(
+            "cannot resolve module path '{}': {e}",
+            module_path.display()
+        )
+    })?;
     let (ready_rx, tx) = start_worker(module_path)?;
     let ready = ready_rx
         .blocking_recv()
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
         .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
-    Ok(JsRuntimeHandle { tx, isolate_handle: ready.isolate_handle })
+    Ok(JsRuntimeHandle {
+        tx,
+        isolate_handle: ready.isolate_handle,
+    })
 }
 
 #[cfg(test)]
@@ -209,7 +227,12 @@ mod tests {
     async fn test_execution_error() {
         let handle = spawn_runtime(&fixture_path("throws.js")).await.unwrap();
         let result = handle
-            .call("doThrow", serde_json::json!({}), None, Duration::from_secs(5))
+            .call(
+                "doThrow",
+                serde_json::json!({}),
+                None,
+                Duration::from_secs(5),
+            )
             .await;
 
         assert!(matches!(result, Err(JsError::ExecutionError(_))));
@@ -270,7 +293,12 @@ mod tests {
 
         // First call: timeout on infinite loop.
         let timeout_result = handle
-            .call("spin", serde_json::json!({}), None, Duration::from_millis(200))
+            .call(
+                "spin",
+                serde_json::json!({}),
+                None,
+                Duration::from_millis(200),
+            )
             .await;
         assert!(matches!(timeout_result, Err(JsError::Timeout)));
 

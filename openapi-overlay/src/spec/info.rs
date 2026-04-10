@@ -19,7 +19,11 @@ pub struct Info {
     pub description: Option<String>,
 
     /// Specification extensions (x-* fields).
-    #[serde(flatten, with = "spec_extensions", skip_serializing_if = "spec_extensions::is_empty")]
+    #[serde(
+        flatten,
+        with = "spec_extensions",
+        skip_serializing_if = "spec_extensions::is_empty"
+    )]
     pub extensions: BTreeMap<String, serde_json::Value>,
 }
 
@@ -41,13 +45,15 @@ mod tests {
 
     #[test]
     fn deserialises_all_fields() {
-        let json =
-            r#"{"title": "My Overlay", "version": "1.0.0", "description": "A **bold** overlay", "x-custom": true}"#;
+        let json = r#"{"title": "My Overlay", "version": "1.0.0", "description": "A **bold** overlay", "x-custom": true}"#;
         let info: Info = serde_json::from_str(json).unwrap();
         assert_eq!(info.title, "My Overlay");
         assert_eq!(info.version, "1.0.0");
         assert_eq!(info.description.as_deref(), Some("A **bold** overlay"));
-        assert_eq!(info.extensions.get("custom"), Some(&serde_json::json!(true)));
+        assert_eq!(
+            info.extensions.get("custom"),
+            Some(&serde_json::json!(true))
+        );
     }
 
     #[test]

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use http::Method;
-use oas3::spec::{Operation, PathItem, Spec};
 use matchit::Router;
+use oas3::spec::{Operation, PathItem, Spec};
 use opengateway_js_runtime::JsRuntimeHandle;
 use pingora_core::upstreams::peer::HttpPeer;
 
@@ -104,7 +104,8 @@ fn build_operation_interceptors(
         None => return Ok(OperationInterceptors::default()),
     };
 
-    let interceptor_configs: Vec<InterceptorConfig> = serde_json::from_value(interceptor_value.clone())?;
+    let interceptor_configs: Vec<InterceptorConfig> =
+        serde_json::from_value(interceptor_value.clone())?;
 
     let mut interceptors = OperationInterceptors::default();
     for config in &interceptor_configs {
@@ -126,15 +127,16 @@ fn build_operation_interceptors(
             }
         };
 
-        let timeout = config.timeout_ms
+        let timeout = config
+            .timeout_ms
             .map(Duration::from_millis)
             .unwrap_or(default_timeout);
 
-        let hook_handle = HookHandle { 
-            runtime, 
-            function: config.function.clone(), 
+        let hook_handle = HookHandle {
+            runtime,
+            function: config.function.clone(),
             timeout,
-            options: config.options.clone()
+            options: config.options.clone(),
         };
 
         match config.hook.as_str() {
@@ -160,14 +162,17 @@ pub fn build_router(
         .extension(&config.spec.extensions, "opengateway-config")
         .unwrap_or_else(|_| ServerConfig::default());
     let default_interceptor_timeout = Duration::from_millis(
-        server_config.interceptor_default_timeout_ms.unwrap_or(30_000)
+        server_config
+            .interceptor_default_timeout_ms
+            .unwrap_or(30_000),
     );
 
     let mut router = Router::new();
     let mut runtime_cache: HashMap<PathBuf, Arc<JsRuntimeHandle>> = HashMap::new();
 
     for (path, path_item) in paths {
-        let upstream: UpstreamConfig = config.extension(&path_item.extensions, "opengateway-upstream")?;
+        let upstream: UpstreamConfig =
+            config.extension(&path_item.extensions, "opengateway-upstream")?;
         let peer = make_peer(&upstream);
 
         // Path-level validation override
@@ -195,13 +200,16 @@ pub fn build_router(
                 default_interceptor_timeout,
             )?;
 
-            operations.insert(method, OperationSchemas {
-                request_body,
-                responses,
-                default_response,
-                validation_override: op_validation,
-                interceptors,
-            });
+            operations.insert(
+                method,
+                OperationSchemas {
+                    request_body,
+                    responses,
+                    default_response,
+                    validation_override: op_validation,
+                    interceptors,
+                },
+            );
         }
 
         let entry = Arc::new(RouteEntry {
@@ -464,7 +472,11 @@ mod tests {
         let result = build_router(&config, paths, Path::new("/"));
         assert!(result.is_err());
         let err = result.err().unwrap().to_string();
-        assert!(err.contains("unknown interceptor hook"), "expected error mentioning unknown hook, got: {}", err);
+        assert!(
+            err.contains("unknown interceptor hook"),
+            "expected error mentioning unknown hook, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -497,7 +509,10 @@ mod tests {
         let router = build_router(&config, paths, Path::new("/")).unwrap();
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert_eq!(get.interceptors.on_request[0].timeout, Duration::from_millis(5000));
+        assert_eq!(
+            get.interceptors.on_request[0].timeout,
+            Duration::from_millis(5000)
+        );
     }
 
     #[test]
@@ -570,7 +585,6 @@ mod tests {
         assert!(get.interceptors.on_request[0].options.is_none());
     }
 
-    
     #[test]
     fn falls_back_to_global_server_config_timeout() {
         let noop_path = fixture_path("noop.js");
@@ -601,7 +615,10 @@ mod tests {
         let router = build_router(&config, paths, Path::new("/")).unwrap();
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert_eq!(get.interceptors.on_request[0].timeout, Duration::from_millis(15000));
+        assert_eq!(
+            get.interceptors.on_request[0].timeout,
+            Duration::from_millis(15000)
+        );
     }
 
     #[test]
@@ -633,33 +650,46 @@ mod tests {
         let router = build_router(&config, paths, Path::new("/")).unwrap();
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert_eq!(get.interceptors.on_request[0].timeout, Duration::from_millis(30_000));
+        assert_eq!(
+            get.interceptors.on_request[0].timeout,
+            Duration::from_millis(30_000)
+        );
     }
 
     #[test]
     fn overlay_applies_interceptor_extension() {
         let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent().unwrap()
-            .join("e2e").join("fixtures");
+            .parent()
+            .unwrap()
+            .join("e2e")
+            .join("fixtures");
 
         let yaml = std::fs::read_to_string(fixtures.join("openapi-interceptor.yaml")).unwrap();
         let mut doc: serde_json::Value = serde_yaml_ng::from_str(&yaml).unwrap();
 
         // Apply upstream overlay
-        let overlay_yaml = std::fs::read_to_string(fixtures.join("overlay-interceptor-upstream.yaml")).unwrap();
+        let overlay_yaml =
+            std::fs::read_to_string(fixtures.join("overlay-interceptor-upstream.yaml")).unwrap();
         let overlay = oapi_overlay::from_yaml(&overlay_yaml).unwrap();
         oapi_overlay::apply_overlay(&mut doc, &overlay).unwrap();
 
         // Apply interceptor overlay
-        let overlay_yaml = std::fs::read_to_string(fixtures.join("overlay-interceptor-add-header.yaml")).unwrap();
+        let overlay_yaml =
+            std::fs::read_to_string(fixtures.join("overlay-interceptor-add-header.yaml")).unwrap();
         let overlay = oapi_overlay::from_yaml(&overlay_yaml).unwrap();
         oapi_overlay::apply_overlay(&mut doc, &overlay).unwrap();
 
         // Check the interceptor extension landed on the operation as an array
         let get_op = &doc["paths"]["/products"]["get"];
         let interceptor = &get_op["x-opengateway-interceptor"];
-        assert!(!interceptor.is_null(), "interceptor extension should be present after overlay");
-        assert!(interceptor.is_array(), "interceptor extension should be an array");
+        assert!(
+            !interceptor.is_null(),
+            "interceptor extension should be present after overlay"
+        );
+        assert!(
+            interceptor.is_array(),
+            "interceptor extension should be an array"
+        );
         assert_eq!(interceptor[0]["hook"], "on_request");
         assert_eq!(interceptor[0]["function"], "onRequest");
 
@@ -667,8 +697,15 @@ mod tests {
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
         let products = paths.get("/products").unwrap();
-        let get_op = products.methods().into_iter().find(|(m, _)| *m == Method::GET).unwrap().1;
-        assert!(get_op.extensions.contains_key("opengateway-interceptor"),
-            "oas3 should preserve the extension (x- stripped)");
+        let get_op = products
+            .methods()
+            .into_iter()
+            .find(|(m, _)| *m == Method::GET)
+            .unwrap()
+            .1;
+        assert!(
+            get_op.extensions.contains_key("opengateway-interceptor"),
+            "oas3 should preserve the extension (x- stripped)"
+        );
     }
 }
