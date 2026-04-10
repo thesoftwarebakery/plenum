@@ -78,6 +78,13 @@ fn call_interceptor_blocking(
     Ok((output, result.body))
 }
 
+/// Helper to merge interceptor options into the input JSON value.
+fn merge_options(input_json: &mut serde_json::Value, options: Option<&serde_json::Value>) {
+    if let (Some(opts), serde_json::Value::Object(map)) = (options, input_json) {
+        map.insert("options".to_string(), opts.clone());
+    }
+}
+
 /// Determine the JS body representation for a buffer based on the request content-type.
 /// Returns None if the buffer is empty.
 fn js_body_from_content_type(content_type: Option<&str>, buf: &[u8]) -> Option<JsBody> {
@@ -195,7 +202,8 @@ impl ProxyHttp for OpenGateway {
                     &session.req_header().uri,
                     &session.req_header().headers,
                 );
-                let input_json = serde_json::to_value(&input).unwrap();
+                let mut input_json = serde_json::to_value(&input).unwrap();
+                merge_options(&mut input_json, hook.options.as_ref());
 
                 match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
                     Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
@@ -308,7 +316,8 @@ impl ProxyHttp for OpenGateway {
                         &session.req_header().uri,
                         &session.req_header().headers,
                     );
-                    let input_json = serde_json::to_value(&input).unwrap();
+                    let mut input_json = serde_json::to_value(&input).unwrap();
+                    merge_options(&mut input_json, hook.options.as_ref());
                     match call_interceptor(&hook.runtime, &hook.function, input_json, js_body, hook.timeout).await {
                         Ok((InterceptorOutput::Continue { .. }, body_out)) => {
                             current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
@@ -386,7 +395,8 @@ impl ProxyHttp for OpenGateway {
                 &upstream_request.uri,
                 &upstream_request.headers,
             );
-            let input_json = serde_json::to_value(&input).unwrap();
+            let mut input_json = serde_json::to_value(&input).unwrap();
+            merge_options(&mut input_json, hook.options.as_ref());
 
             match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
                 Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
@@ -424,7 +434,8 @@ impl ProxyHttp for OpenGateway {
                 upstream_response.status,
                 &upstream_response.headers,
             );
-            let input_json = serde_json::to_value(&input).unwrap();
+            let mut input_json = serde_json::to_value(&input).unwrap();
+            merge_options(&mut input_json, hook.options.as_ref());
 
             match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
                 Ok((InterceptorOutput::Continue { status, headers }, _)) => {
@@ -497,7 +508,8 @@ impl ProxyHttp for OpenGateway {
                         &current_buf,
                     );
                     let input = response_input_from_parts(status, &http::HeaderMap::new());
-                    let input_json = serde_json::to_value(&input).unwrap();
+                    let mut input_json = serde_json::to_value(&input).unwrap();
+                    merge_options(&mut input_json, hook.options.as_ref());
 
                     match call_interceptor_blocking(
                         &hook.runtime,

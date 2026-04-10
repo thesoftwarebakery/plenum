@@ -1,0 +1,15 @@
+overlay: 1.1.0
+info:
+  title: Attach interceptor with options
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-opengateway-interceptor:
+        - module: "./interceptors/check-options.js"
+          hook: on_request
+          function: checkOptions
+          options:
+            expectedHeader: "x-role"
+            expectedValue: "admin"
+            denyStatus: 403

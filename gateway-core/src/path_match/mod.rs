@@ -14,11 +14,12 @@ use crate::config::{Config, InterceptorConfig, ServerConfig, UpstreamConfig, Val
 use crate::upstream_http::make_peer;
 use crate::validation::schema::CompiledSchema;
 
-/// A resolved interceptor hook: runtime handle, JS function name, and call timeout.
+/// A resolved interceptor hook: runtime handle, JS function name, call timeout, and options.
 pub struct HookHandle {
     pub runtime: Arc<JsRuntimeHandle>,
     pub function: String,
     pub timeout: Duration,
+    pub options: Option<serde_json::Value>,
 }
 
 /// JS interceptor handles for a single operation, one per lifecycle hook.
@@ -129,7 +130,12 @@ fn build_operation_interceptors(
             .map(Duration::from_millis)
             .unwrap_or(default_timeout);
 
-        let hook_handle = HookHandle { runtime, function: config.function.clone(), timeout };
+        let hook_handle = HookHandle { 
+            runtime, 
+            function: config.function.clone(), 
+            timeout,
+            options: config.options.clone()
+        };
 
         match config.hook.as_str() {
             "on_request" => interceptors.on_request.push(hook_handle),
@@ -494,6 +500,77 @@ mod tests {
         assert_eq!(get.interceptors.on_request[0].timeout, Duration::from_millis(5000));
     }
 
+    #[test]
+    fn propogates_options_to_hook_handle() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_request",
+                            "function": "onRequest",
+                            "options": {
+                                "role": "admin",
+                                "allowed_methods": ["GET", "POST"]
+                            }
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        let options = get.interceptors.on_request[0].options.as_ref().unwrap();
+        assert_eq!(options["role"].as_str().unwrap(), "admin");
+        assert_eq!(options["allowed_methods"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn hook_handle_options_is_none_when_not_configured() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_request",
+                            "function": "onRequest"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert!(get.interceptors.on_request[0].options.is_none());
+    }
+
+    
     #[test]
     fn falls_back_to_global_server_config_timeout() {
         let noop_path = fixture_path("noop.js");
