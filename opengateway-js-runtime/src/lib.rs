@@ -8,6 +8,12 @@ use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use types::JsCall;
 
+/// Channel pair returned by `start_worker`: ready receiver and call sender.
+type WorkerChannel = (
+    oneshot::Receiver<Result<types::WorkerReady, JsError>>,
+    mpsc::Sender<JsCall>,
+);
+
 /// Handle to a JS runtime running on a dedicated thread. Send + Sync.
 pub struct JsRuntimeHandle {
     tx: mpsc::Sender<JsCall>,
@@ -82,12 +88,10 @@ impl JsRuntimeHandle {
         let isolate_handle = self.isolate_handle.clone();
 
         std::thread::spawn(move || {
-            match cancel_rx.recv_timeout(timeout) {
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    timed_out_clone.store(true, std::sync::atomic::Ordering::Relaxed);
-                    isolate_handle.terminate_execution();
-                }
-                _ => {} // Cancelled (cancel_tx dropped) or disconnected — do nothing.
+            // Cancelled (cancel_tx dropped) or disconnected — do nothing.
+            if let Err(std::sync::mpsc::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout) {
+                timed_out_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                isolate_handle.terminate_execution();
             }
         });
 
@@ -112,13 +116,7 @@ impl JsRuntimeHandle {
 /// The caller is responsible for waiting on the receiver (async or blocking).
 fn start_worker(
     module_path: std::path::PathBuf,
-) -> Result<
-    (
-        oneshot::Receiver<Result<types::WorkerReady, JsError>>,
-        mpsc::Sender<JsCall>,
-    ),
-    Box<dyn std::error::Error>,
-> {
+) -> Result<WorkerChannel, Box<dyn std::error::Error>> {
     let (tx, rx) = mpsc::channel::<JsCall>(32);
     let (ready_tx, ready_rx) = oneshot::channel();
     std::thread::Builder::new()

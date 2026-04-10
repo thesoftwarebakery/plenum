@@ -68,10 +68,10 @@ fn apply_remove(doc: &mut Value, path: &JsonPath) -> Result<(), ApplyError> {
             array_removals.entry(parent).or_default().push(index);
         } else {
             // Object key removal.
-            if let Some(parent_val) = doc.pointer_mut(&parent) {
-                if let Some(obj) = parent_val.as_object_mut() {
-                    obj.remove(&last_segment);
-                }
+            if let Some(parent_val) = doc.pointer_mut(&parent)
+                && let Some(obj) = parent_val.as_object_mut()
+            {
+                obj.remove(&last_segment);
             }
         }
     }
@@ -80,12 +80,12 @@ fn apply_remove(doc: &mut Value, path: &JsonPath) -> Result<(), ApplyError> {
     for (parent_ptr, mut indices) in array_removals {
         indices.sort_unstable();
         indices.dedup();
-        if let Some(parent_val) = doc.pointer_mut(&parent_ptr) {
-            if let Some(arr) = parent_val.as_array_mut() {
-                for &idx in indices.iter().rev() {
-                    if idx < arr.len() {
-                        arr.remove(idx);
-                    }
+        if let Some(parent_val) = doc.pointer_mut(&parent_ptr)
+            && let Some(arr) = parent_val.as_array_mut()
+        {
+            for &idx in indices.iter().rev() {
+                if idx < arr.len() {
+                    arr.remove(idx);
                 }
             }
         }

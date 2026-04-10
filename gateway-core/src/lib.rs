@@ -473,10 +473,10 @@ impl ProxyHttp for OpenGateway {
             .await
             {
                 Ok((InterceptorOutput::Continue { status, headers }, _)) => {
-                    if let Some(code) = status {
-                        if let Ok(status_code) = http::StatusCode::from_u16(code) {
-                            upstream_response.set_status(status_code).ok();
-                        }
+                    if let Some(code) = status
+                        && let Ok(status_code) = http::StatusCode::from_u16(code)
+                    {
+                        upstream_response.set_status(status_code).ok();
                     }
                     if let Some(mods) = &headers {
                         apply_header_modifications(upstream_response, mods);
