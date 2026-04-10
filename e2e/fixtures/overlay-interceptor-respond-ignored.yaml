@@ -6,7 +6,9 @@ actions:
   - target: $.paths[*].get
     update:
       x-opengateway-interceptor:
-        module: "./interceptors/respond-ignored.js"
-        hooks:
-          - before_upstream
-          - on_response
+        - module: "./interceptors/respond-ignored.js"
+          hook: before_upstream
+          function: beforeUpstream
+        - module: "./interceptors/respond-ignored.js"
+          hook: on_response
+          function: onResponse

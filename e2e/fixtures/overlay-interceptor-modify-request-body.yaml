@@ -6,6 +6,6 @@ actions:
   - target: $.paths[*].post
     update:
       x-opengateway-interceptor:
-        module: "./interceptors/modify-request-body.js"
-        hooks:
-          - on_request
+        - module: "./interceptors/modify-request-body.js"
+          hook: on_request
+          function: onRequest

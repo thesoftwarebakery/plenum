@@ -1,0 +1,14 @@
+overlay: 1.1.0
+info:
+  title: Attach two on_request interceptors (chaining test)
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-opengateway-interceptor:
+        - module: "./interceptors/chain-first.js"
+          hook: on_request
+          function: addFirst
+        - module: "./interceptors/chain-second.js"
+          hook: on_request
+          function: addSecond

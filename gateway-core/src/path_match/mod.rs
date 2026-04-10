@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use http::Method;
 use oas3::spec::{Operation, PathItem, Spec};
@@ -9,17 +10,25 @@ use matchit::Router;
 use opengateway_js_runtime::JsRuntimeHandle;
 use pingora_core::upstreams::peer::HttpPeer;
 
-use crate::config::{Config, InterceptorConfig, UpstreamConfig, ValidationOverride};
+use crate::config::{Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride};
 use crate::upstream_http::make_peer;
 use crate::validation::schema::CompiledSchema;
 
+/// A resolved interceptor hook: runtime handle, JS function name, and call timeout.
+pub struct HookHandle {
+    pub runtime: Arc<JsRuntimeHandle>,
+    pub function: String,
+    pub timeout: Duration,
+}
+
 /// JS interceptor handles for a single operation, one per lifecycle hook.
+/// Each vec preserves the array order from the config, which is the execution order.
 #[derive(Default)]
 pub struct OperationInterceptors {
-    pub on_request: Option<Arc<JsRuntimeHandle>>,
-    pub before_upstream: Option<Arc<JsRuntimeHandle>>,
-    pub on_response: Option<Arc<JsRuntimeHandle>>,
-    pub on_response_body: Option<Arc<JsRuntimeHandle>>,
+    pub on_request: Vec<HookHandle>,
+    pub before_upstream: Vec<HookHandle>,
+    pub on_response: Vec<HookHandle>,
+    pub on_response_body: Vec<HookHandle>,
 }
 
 /// Compiled schemas for a single operation (method on a path).
@@ -87,39 +96,46 @@ fn build_operation_interceptors(
     operation: &Operation,
     config_base: &Path,
     runtime_cache: &mut HashMap<PathBuf, Arc<JsRuntimeHandle>>,
+    default_timeout: Duration,
 ) -> Result<OperationInterceptors, Box<dyn Error>> {
     let interceptor_value = match operation.extensions.get("opengateway-interceptor") {
         Some(v) => v,
         None => return Ok(OperationInterceptors::default()),
     };
 
-    let interceptor_config: InterceptorConfig = serde_json::from_value(interceptor_value.clone())?;
-
-    let module_path = config_base.join(&interceptor_config.module);
-    let canonical = module_path.canonicalize().map_err(|e| {
-        format!(
-            "interceptor module '{}' not found (resolved to '{}'): {e}",
-            interceptor_config.module,
-            module_path.display()
-        )
-    })?;
-
-    // Deduplicate: reuse handle if this module was already spawned.
-    let handle = match runtime_cache.entry(canonical) {
-        std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
-        std::collections::hash_map::Entry::Vacant(e) => {
-            let h = Arc::new(opengateway_js_runtime::spawn_runtime_sync(e.key())?);
-            e.insert(h).clone()
-        }
-    };
+    let interceptor_configs: Vec<InterceptorConfig> = serde_json::from_value(interceptor_value.clone())?;
 
     let mut interceptors = OperationInterceptors::default();
-    for hook in &interceptor_config.hooks {
-        match hook.as_str() {
-            "on_request" => interceptors.on_request = Some(handle.clone()),
-            "before_upstream" => interceptors.before_upstream = Some(handle.clone()),
-            "on_response" => interceptors.on_response = Some(handle.clone()),
-            "on_response_body" => interceptors.on_response_body = Some(handle.clone()),
+    for config in &interceptor_configs {
+        let module_path = config_base.join(&config.module);
+        let canonical = module_path.canonicalize().map_err(|e| {
+            format!(
+                "interceptor module '{}' not found (resolved to '{}'): {e}",
+                config.module,
+                module_path.display()
+            )
+        })?;
+
+        // Deduplicate: reuse handle if this module was already spawned.
+        let runtime = match runtime_cache.entry(canonical) {
+            std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let h = Arc::new(opengateway_js_runtime::spawn_runtime_sync(e.key())?);
+                e.insert(h).clone()
+            }
+        };
+
+        let timeout = config.timeout_ms
+            .map(Duration::from_millis)
+            .unwrap_or(default_timeout);
+
+        let hook_handle = HookHandle { runtime, function: config.function.clone(), timeout };
+
+        match config.hook.as_str() {
+            "on_request" => interceptors.on_request.push(hook_handle),
+            "before_upstream" => interceptors.before_upstream.push(hook_handle),
+            "on_response" => interceptors.on_response.push(hook_handle),
+            "on_response_body" => interceptors.on_response_body.push(hook_handle),
             other => {
                 return Err(format!("unknown interceptor hook: '{other}'").into());
             }
@@ -134,6 +150,13 @@ pub fn build_router(
     paths: &BTreeMap<String, PathItem>,
     config_base: &Path,
 ) -> Result<OpenGatewayRouter, Box<dyn Error>> {
+    let server_config: ServerConfig = config
+        .extension(&config.spec.extensions, "opengateway-config")
+        .unwrap_or_else(|_| ServerConfig::default());
+    let default_interceptor_timeout = Duration::from_millis(
+        server_config.interceptor_default_timeout_ms.unwrap_or(30_000)
+    );
+
     let mut router = Router::new();
     let mut runtime_cache: HashMap<PathBuf, Arc<JsRuntimeHandle>> = HashMap::new();
 
@@ -158,11 +181,12 @@ pub fn build_router(
                 .get("opengateway-validation")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
 
-            // Operation-level interceptor
+            // Operation-level interceptors
             let interceptors = build_operation_interceptors(
                 operation,
                 config_base,
                 &mut runtime_cache,
+                default_interceptor_timeout,
             )?;
 
             operations.insert(method, OperationSchemas {
@@ -317,15 +341,15 @@ mod tests {
     }
 
     #[test]
-    fn operations_without_interceptor_have_none() {
+    fn operations_without_interceptor_have_empty_vecs() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
         let router = build_router(&config, paths, &dummy_config_base()).unwrap();
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert!(get.interceptors.on_request.is_none());
-        assert!(get.interceptors.before_upstream.is_none());
-        assert!(get.interceptors.on_response.is_none());
+        assert!(get.interceptors.on_request.is_empty());
+        assert!(get.interceptors.before_upstream.is_empty());
+        assert!(get.interceptors.on_response.is_empty());
     }
 
     #[test]
@@ -337,10 +361,11 @@ mod tests {
             "paths": {
                 "/test": {
                     "get": {
-                        "x-opengateway-interceptor": {
+                        "x-opengateway-interceptor": [{
                             "module": &noop_path,
-                            "hooks": ["on_request"]
-                        },
+                            "hook": "on_request",
+                            "function": "onRequest"
+                        }],
                         "responses": {
                             "200": { "description": "ok" }
                         }
@@ -359,9 +384,179 @@ mod tests {
         let router = build_router(&config, paths, Path::new("/")).unwrap();
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert!(get.interceptors.on_request.is_some());
-        assert!(get.interceptors.before_upstream.is_none());
-        assert!(get.interceptors.on_response.is_none());
+        assert_eq!(get.interceptors.on_request.len(), 1);
+        assert_eq!(get.interceptors.on_request[0].function, "onRequest");
+        assert!(get.interceptors.before_upstream.is_empty());
+        assert!(get.interceptors.on_response.is_empty());
+    }
+
+    #[test]
+    fn supports_multiple_interceptors_per_hook_phase() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [
+                            {
+                                "module": &noop_path,
+                                "hook": "on_request",
+                                "function": "onRequest"
+                            },
+                            {
+                                "module": &noop_path,
+                                "hook": "on_request",
+                                "function": "onRequest"
+                            }
+                        ],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.interceptors.on_request.len(), 2);
+    }
+
+    #[test]
+    fn rejects_unknown_hook_name() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "invalid_hook",
+                            "function": "someFunction"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(err.contains("unknown interceptor hook"), "expected error mentioning unknown hook, got: {}", err);
+    }
+
+    #[test]
+    fn resolves_per_interceptor_timeout() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_request",
+                            "function": "onRequest",
+                            "timeout_ms": 5000
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.interceptors.on_request[0].timeout, Duration::from_millis(5000));
+    }
+
+    #[test]
+    fn falls_back_to_global_server_config_timeout() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "x-opengateway-config": { "interceptor_default_timeout_ms": 15000 },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_request",
+                            "function": "onRequest"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.interceptors.on_request[0].timeout, Duration::from_millis(15000));
+    }
+
+    #[test]
+    fn falls_back_to_hardcoded_default_when_no_config() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_request",
+                            "function": "onRequest"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.interceptors.on_request[0].timeout, Duration::from_millis(30_000));
     }
 
     #[test]
@@ -383,18 +578,19 @@ mod tests {
         let overlay = oapi_overlay::from_yaml(&overlay_yaml).unwrap();
         oapi_overlay::apply_overlay(&mut doc, &overlay).unwrap();
 
-        // Check the interceptor extension landed on the operation
+        // Check the interceptor extension landed on the operation as an array
         let get_op = &doc["paths"]["/products"]["get"];
         let interceptor = &get_op["x-opengateway-interceptor"];
         assert!(!interceptor.is_null(), "interceptor extension should be present after overlay");
-        assert_eq!(interceptor["hooks"][0], "on_request");
+        assert!(interceptor.is_array(), "interceptor extension should be an array");
+        assert_eq!(interceptor[0]["hook"], "on_request");
+        assert_eq!(interceptor[0]["function"], "onRequest");
 
         // Now verify oas3 parses it and our code can see the extension
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
         let products = paths.get("/products").unwrap();
         let get_op = products.methods().into_iter().find(|(m, _)| *m == Method::GET).unwrap().1;
-        eprintln!("oas3 operation extensions: {:?}", get_op.extensions);
         assert!(get_op.extensions.contains_key("opengateway-interceptor"),
             "oas3 should preserve the extension (x- stripped)");
     }
