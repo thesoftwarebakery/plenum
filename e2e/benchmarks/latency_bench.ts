@@ -1,8 +1,10 @@
 /**
  * E2E latency benchmark suite for OpenGateway.
  *
- * Each scenario starts a fresh gateway + wiremock container pair, runs a
- * warmup phase, then measures latency over a fixed time window using tinybench.
+ * A single network and wiremock container are shared across all scenarios.
+ * Only the gateway container is replaced per scenario (it's the thing that
+ * differs). Wiremock stubs are reset between scenarios.
+ *
  * Results are printed as a human-readable table and saved as
  * github-action-benchmark "customSmallerIsBetter" JSON.
  *
@@ -17,6 +19,32 @@ import { Network } from "testcontainers";
 import { startGateway } from "../src/containers/gateway.ts";
 import { startWiremock } from "../src/containers/wiremock.ts";
 import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+
+/**
+ * Start the gateway, retrying if Docker reports a port-binding conflict.
+ *
+ * After a high-traffic gateway container is stopped, Docker Desktop on macOS
+ * can take a moment to flush its iptables NAT rules even after the container
+ * removal promise resolves. This is a Docker daemon race condition -- we detect
+ * the specific error and retry rather than sleeping blindly.
+ */
+async function startGatewayWithRetry(
+  opts: Parameters<typeof startGateway>[0],
+  maxAttempts = 5,
+): ReturnType<typeof startGateway> {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await startGateway(opts);
+    } catch (err) {
+      const isPortConflict =
+        err instanceof Error && err.message.includes("address already in use");
+      if (!isPortConflict || attempt === maxAttempts) throw err;
+      console.log(`  [attempt ${attempt + 1}/${maxAttempts}] Docker NAT cleanup pending, retrying...`);
+      await new Promise((r) => setTimeout(r, 500 * attempt));
+    }
+  }
+  throw new Error("unreachable");
+}
 
 // ---------------------------------------------------------------------------
 // Scenario definitions
@@ -79,24 +107,17 @@ interface BenchEntry {
 }
 
 // ---------------------------------------------------------------------------
-// Run a single scenario
+// Run a single scenario against a running network and wiremock instance
 // ---------------------------------------------------------------------------
 
-async function runScenario(scenario: Scenario): Promise<BenchEntry[]> {
+async function runScenario(
+  scenario: Scenario,
+  network: Awaited<ReturnType<typeof Network.prototype.start>>,
+  wm: WireMockClient,
+): Promise<BenchEntry[]> {
   console.log(`\n--- ${scenario.name} ---`);
 
-  const network = await new Network().start();
-  const wiremock = await startWiremock({ network, alias: "wiremock" });
-  const gateway = await startGateway({
-    network,
-    fixtures: {
-      openapi: scenario.openapi,
-      overlays: scenario.overlays,
-      extraFiles: scenario.extraFiles,
-    },
-  });
-
-  const wm = new WireMockClient(wiremock.adminUrl);
+  await wm.reset();
   await wm.stubFor({
     request: { method: "GET", urlPath: scenario.path },
     response: {
@@ -106,29 +127,43 @@ async function runScenario(scenario: Scenario): Promise<BenchEntry[]> {
     },
   });
 
+  const gateway = await startGatewayWithRetry({
+    network,
+    fixtures: {
+      openapi: scenario.openapi,
+      overlays: scenario.overlays,
+      extraFiles: scenario.extraFiles,
+    },
+  });
+
   const url = `${gateway.baseUrl}${scenario.path}`;
 
   const bench = new Bench({
     time: 10_000,      // 10s measurement window
     warmupTime: 2_000, // 2s warmup
-    iterations: 1,     // run each sample once (latency-focused, not throughput)
   });
 
+  // Use resp.text() rather than resp.body?.cancel() so Deno's HTTP client
+  // can keep the connection alive across iterations. cancel() half-closes
+  // the TCP connection, generating one connection per request (~10k+ total)
+  // which exhausts Docker Desktop's port-mapping cleanup capacity before
+  // the next scenario's container can start.
   bench.add(scenario.name, async () => {
     const resp = await fetch(url);
-    await resp.body?.cancel();
+    await resp.text();
   });
 
   await bench.run();
 
   await gateway.container.stop();
-  await wiremock.container.stop();
-  await network.stop();
 
   const task = bench.tasks[0];
+  if (task.result?.error) {
+    const err = task.result.error as Error;
+    throw new Error(`Bench task "${scenario.name}" threw: ${err?.message ?? err}`);
+  }
   const r = task.result!;
 
-  // tinybench reports times in milliseconds
   const p99 = r.p99;
   const mean = r.mean;
   const min = r.min;
@@ -156,14 +191,23 @@ async function runScenario(scenario: Scenario): Promise<BenchEntry[]> {
 }
 
 // ---------------------------------------------------------------------------
-// Main
+// Main: shared network and wiremock across all scenarios
 // ---------------------------------------------------------------------------
+
+const network = await new Network().start();
+const wiremock = await startWiremock({ network, alias: "wiremock" });
+const wm = new WireMockClient(wiremock.adminUrl);
 
 const results: BenchEntry[] = [];
 
-for (const scenario of SCENARIOS) {
-  const entries = await runScenario(scenario);
-  results.push(...entries);
+try {
+  for (const scenario of SCENARIOS) {
+    const entries = await runScenario(scenario, network, wm);
+    results.push(...entries);
+  }
+} finally {
+  await wiremock.container.stop();
+  await network.stop();
 }
 
 // Print summary table
@@ -185,3 +229,9 @@ for (let i = 0; i < results.length; i += 2) {
 const outputPath = new URL("../bench-results.json", import.meta.url);
 await Deno.writeTextFile(outputPath, JSON.stringify(results, null, 2));
 console.log(`\nResults written to bench-results.json`);
+
+// testcontainers keeps a background Ryuk reaper socket open for resource
+// cleanup. Under `deno run` the process waits for all sockets, so it hangs
+// after the benchmark completes. All containers and networks are already
+// stopped in the finally block above, so a clean exit is safe here.
+Deno.exit(0);
