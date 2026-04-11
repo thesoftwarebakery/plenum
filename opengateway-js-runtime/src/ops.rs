@@ -1,4 +1,4 @@
-use deno_core::{extension, op2, OpState};
+use deno_core::{OpState, extension, op2};
 use deno_error::JsErrorBox;
 
 use crate::permissions::InterceptorPermissions;
@@ -16,10 +16,7 @@ pub struct FetchResponse {
 /// Returns the value as a string, or undefined if the variable is not set.
 #[op2]
 #[string]
-fn op_read_env(
-    state: &mut OpState,
-    #[string] key: String,
-) -> Result<Option<String>, JsErrorBox> {
+fn op_read_env(state: &mut OpState, #[string] key: String) -> Result<Option<String>, JsErrorBox> {
     let perms = state.borrow::<InterceptorPermissions>();
     perms.check_env(&key).map_err(JsErrorBox::generic)?;
     Ok(std::env::var(&key).ok())
@@ -29,15 +26,11 @@ fn op_read_env(
 /// interceptor's allowed_read_paths.
 #[op2]
 #[string]
-fn op_read_file(
-    state: &mut OpState,
-    #[string] path: String,
-) -> Result<String, JsErrorBox> {
+fn op_read_file(state: &mut OpState, #[string] path: String) -> Result<String, JsErrorBox> {
     let perms = state.borrow::<InterceptorPermissions>();
     let p = std::path::Path::new(&path);
     perms.check_read(p).map_err(JsErrorBox::generic)?;
-    std::fs::read_to_string(p)
-        .map_err(|e| JsErrorBox::generic(format!("read_file failed: {e}")))
+    std::fs::read_to_string(p).map_err(|e| JsErrorBox::generic(format!("read_file failed: {e}")))
 }
 
 /// Make an outbound HTTP request. The hostname must be in the interceptor's
@@ -51,8 +44,8 @@ fn op_fetch(
     #[string] body: String,
 ) -> Result<FetchResponse, JsErrorBox> {
     // Extract hostname for the permission check.
-    let parsed = url::Url::parse(&url)
-        .map_err(|e| JsErrorBox::generic(format!("invalid URL: {e}")))?;
+    let parsed =
+        url::Url::parse(&url).map_err(|e| JsErrorBox::generic(format!("invalid URL: {e}")))?;
     let host = parsed
         .host_str()
         .ok_or_else(|| JsErrorBox::generic("URL has no host".to_string()))?
@@ -73,8 +66,8 @@ fn op_fetch(
         .body(body.into_bytes())
         .map_err(|e| JsErrorBox::generic(format!("failed to build request: {e}")))?;
 
-    let mut response = ureq::run(request)
-        .map_err(|e| JsErrorBox::generic(format!("fetch failed: {e}")))?;
+    let mut response =
+        ureq::run(request).map_err(|e| JsErrorBox::generic(format!("fetch failed: {e}")))?;
 
     let status = response.status().as_u16();
     let mut headers = std::collections::HashMap::new();

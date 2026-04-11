@@ -144,7 +144,9 @@ fn build_operation_interceptors(
                     }
                     module_resolver::ResolvedModule::Internal { name, source } => {
                         opengateway_js_runtime::spawn_runtime_from_source_sync(
-                            name, source, permissions,
+                            name,
+                            source,
+                            permissions,
                         )?
                     }
                 });

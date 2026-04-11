@@ -282,9 +282,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_execution_error() {
-        let handle = spawn_runtime(&fixture_path("throws.js"), InterceptorPermissions::default())
-            .await
-            .unwrap();
+        let handle = spawn_runtime(
+            &fixture_path("throws.js"),
+            InterceptorPermissions::default(),
+        )
+        .await
+        .unwrap();
         let result = handle
             .call(
                 "doThrow",
@@ -299,18 +302,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_module_not_found() {
-        let result =
-            spawn_runtime(Path::new("/nonexistent/module.js"), InterceptorPermissions::default())
-                .await;
+        let result = spawn_runtime(
+            Path::new("/nonexistent/module.js"),
+            InterceptorPermissions::default(),
+        )
+        .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_timeout() {
-        let handle =
-            spawn_runtime(&fixture_path("infinite.js"), InterceptorPermissions::default())
-                .await
-                .unwrap();
+        let handle = spawn_runtime(
+            &fixture_path("infinite.js"),
+            InterceptorPermissions::default(),
+        )
+        .await
+        .unwrap();
         let result = handle
             .call(
                 "infinite",
@@ -422,9 +429,11 @@ mod tests {
 
     #[test]
     fn test_call_blocking_timeout() {
-        let handle =
-            spawn_runtime_sync(&fixture_path("infinite.js"), InterceptorPermissions::default())
-                .unwrap();
+        let handle = spawn_runtime_sync(
+            &fixture_path("infinite.js"),
+            InterceptorPermissions::default(),
+        )
+        .unwrap();
         let result = handle.call_blocking(
             "infinite",
             serde_json::json!({}),
@@ -441,9 +450,10 @@ mod tests {
                 return { greeting: "hi " + input.name };
             };
         "#;
-        let handle = spawn_runtime_from_source("test-inline", source, InterceptorPermissions::default())
-            .await
-            .unwrap();
+        let handle =
+            spawn_runtime_from_source("test-inline", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
         let result = handle
             .call(
                 "hello",

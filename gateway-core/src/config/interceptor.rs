@@ -155,6 +155,11 @@ mod tests {
         let expected_tmp = std::path::Path::new("/tmp")
             .canonicalize()
             .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
-        assert!(runtime_perms.allowed_read_paths.iter().any(|p| *p == expected_tmp));
+        assert!(
+            runtime_perms
+                .allowed_read_paths
+                .iter()
+                .any(|p| *p == expected_tmp)
+        );
     }
 }
