@@ -16,6 +16,7 @@ use async_trait::async_trait;
 use gateway_error::GatewayError;
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_proxy::{ProxyHttp, Session};
+use tracing::Instrument;
 
 pub mod config;
 pub mod gateway_error;
@@ -181,14 +182,17 @@ impl ProxyHttp for OpenGateway {
         Self::CTX: Send + Sync,
     {
         let path = session.req_header().uri.path();
-        let matched = self.router.at(path).map_err(|e| {
-            log::warn!("No route matched for path: {}", path);
-            pingora_core::Error::because(
-                pingora_core::ErrorType::HTTPStatus(404),
-                "no matching route",
-                e,
-            )
-        })?;
+        let matched = {
+            let _span = tracing::debug_span!("route_match", path).entered();
+            self.router.at(path).map_err(|e| {
+                log::warn!("No route matched for path: {}", path);
+                pingora_core::Error::because(
+                    pingora_core::ErrorType::HTTPStatus(404),
+                    "no matching route",
+                    e,
+                )
+            })?
+        };
         ctx.matched_route = Some(matched.value.clone());
         ctx.matched_method = Some(session.req_header().method.clone());
 
@@ -205,6 +209,7 @@ impl ProxyHttp for OpenGateway {
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
 
+                let span = tracing::debug_span!("interceptor_call", hook = "on_request", function = hook.function.as_str());
                 match call_interceptor(
                     &hook.runtime,
                     &hook.function,
@@ -212,6 +217,7 @@ impl ProxyHttp for OpenGateway {
                     None,
                     hook.timeout,
                 )
+                .instrument(span)
                 .await
                 {
                     Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
@@ -294,7 +300,10 @@ impl ProxyHttp for OpenGateway {
                         return Ok(());
                     }
                 };
-                if let Err(issues) = schema.validate(&parsed) {
+                if let Err(issues) = {
+                    let _span = tracing::debug_span!("validation", phase = "request_body").entered();
+                    schema.validate(&parsed)
+                } {
                     let err = ValidationErrorResponse::request_error(issues);
                     session
                         .respond_error_with_body(400, Bytes::from(err.to_json()))
@@ -326,6 +335,7 @@ impl ProxyHttp for OpenGateway {
                     );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
+                    let span = tracing::debug_span!("interceptor_call", hook = "on_request_body", function = hook.function.as_str());
                     match call_interceptor(
                         &hook.runtime,
                         &hook.function,
@@ -333,6 +343,7 @@ impl ProxyHttp for OpenGateway {
                         js_body,
                         hook.timeout,
                     )
+                    .instrument(span)
                     .await
                     {
                         Ok((InterceptorOutput::Continue { .. }, body_out)) => {
@@ -416,6 +427,7 @@ impl ProxyHttp for OpenGateway {
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
 
+            let span = tracing::debug_span!("interceptor_call", hook = "before_upstream", function = hook.function.as_str());
             match call_interceptor(
                 &hook.runtime,
                 &hook.function,
@@ -423,6 +435,7 @@ impl ProxyHttp for OpenGateway {
                 None,
                 hook.timeout,
             )
+            .instrument(span)
             .await
             {
                 Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
@@ -463,6 +476,7 @@ impl ProxyHttp for OpenGateway {
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
 
+            let span = tracing::debug_span!("interceptor_call", hook = "on_response", function = hook.function.as_str());
             match call_interceptor(
                 &hook.runtime,
                 &hook.function,
@@ -470,6 +484,7 @@ impl ProxyHttp for OpenGateway {
                 None,
                 hook.timeout,
             )
+            .instrument(span)
             .await
             {
                 Ok((InterceptorOutput::Continue { status, headers }, _)) => {
@@ -547,6 +562,7 @@ impl ProxyHttp for OpenGateway {
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
 
+                    let _span = tracing::debug_span!("interceptor_call", hook = "on_response_body", function = hook.function.as_str()).entered();
                     match call_interceptor_blocking(
                         &hook.runtime,
                         &hook.function,
