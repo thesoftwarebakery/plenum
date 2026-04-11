@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub enum ResolvedModule {
     File(PathBuf),
+    /// Built-in module with source embedded at compile time via `include_str!`.
+    /// The `source` lifetime is `'static` because all built-ins are inlined into
+    /// the binary at compile time.
     Internal { name: String, source: &'static str },
 }
 
