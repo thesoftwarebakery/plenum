@@ -661,6 +661,42 @@ mod tests {
     }
 
     #[test]
+    fn resolves_internal_module_interceptor() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": "internal:add-header",
+                            "hook": "on_request",
+                            "function": "onRequest"
+                        }],
+                        "responses": {
+                            "200": { "description": "ok" }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.interceptors.on_request.len(), 1);
+        assert_eq!(get.interceptors.on_request[0].function, "onRequest");
+        assert!(get.interceptors.before_upstream.is_empty());
+        assert!(get.interceptors.on_response.is_empty());
+    }
+
+    #[test]
     fn overlay_applies_interceptor_extension() {
         let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()

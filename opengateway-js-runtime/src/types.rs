@@ -5,7 +5,11 @@ use tokio::sync::oneshot;
 pub(crate) enum ModuleSource {
     /// Load from a file on disk.
     FilePath(std::path::PathBuf),
-    /// Execute inline source code. The name is used for error messages and thread naming.
+    /// Inline source code with a logical name.
+    ///
+    /// The source is evaluated via `execute_script` (classic script context),
+    /// so ES module syntax (`import`/`export` statements) is not supported.
+    /// Functions must be assigned to `globalThis`.
     Inline { name: String, source: String },
 }
 

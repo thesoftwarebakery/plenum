@@ -36,7 +36,7 @@ pub fn resolve_module(
             }),
             None => Err(format!(
                 "unknown built-in interceptor module 'internal:{name}'. Available built-ins: {}",
-                available_builtins().join(", ")
+                available_builtins().collect::<Vec<_>>().join(", ")
             )
             .into()),
         }
@@ -53,15 +53,16 @@ pub fn resolve_module(
     }
 }
 
+const BUILTINS: &[(&str, &'static str)] = &[
+    ("add-header", include_str!("../../js/add-header.js")),
+];
+
 fn lookup_builtin(name: &str) -> Option<&'static str> {
-    match name {
-        "add-header" => Some(include_str!("../../js/add-header.js")),
-        _ => None,
-    }
+    BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
 }
 
-fn available_builtins() -> Vec<&'static str> {
-    vec!["add-header"]
+fn available_builtins() -> impl Iterator<Item = &'static str> {
+    BUILTINS.iter().map(|(n, _)| *n)
 }
 
 #[cfg(test)]
