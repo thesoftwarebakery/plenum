@@ -1,6 +1,8 @@
+mod module_resolver;
+
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -96,7 +98,7 @@ fn compile_response_schemas(
 fn build_operation_interceptors(
     operation: &Operation,
     config_base: &Path,
-    runtime_cache: &mut HashMap<PathBuf, Arc<JsRuntimeHandle>>,
+    runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>>,
     default_timeout: Duration,
 ) -> Result<OperationInterceptors, Box<dyn Error>> {
     let interceptor_value = match operation.extensions.get("opengateway-interceptor") {
@@ -109,20 +111,21 @@ fn build_operation_interceptors(
 
     let mut interceptors = OperationInterceptors::default();
     for config in &interceptor_configs {
-        let module_path = config_base.join(&config.module);
-        let canonical = module_path.canonicalize().map_err(|e| {
-            format!(
-                "interceptor module '{}' not found (resolved to '{}'): {e}",
-                config.module,
-                module_path.display()
-            )
-        })?;
+        let resolved = module_resolver::resolve_module(&config.module, config_base)?;
+        let cache_key = resolved.cache_key();
 
         // Deduplicate: reuse handle if this module was already spawned.
-        let runtime = match runtime_cache.entry(canonical) {
+        let runtime = match runtime_cache.entry(cache_key) {
             std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
             std::collections::hash_map::Entry::Vacant(e) => {
-                let h = Arc::new(opengateway_js_runtime::spawn_runtime_sync(e.key())?);
+                let h = Arc::new(match &resolved {
+                    module_resolver::ResolvedModule::File(path) => {
+                        opengateway_js_runtime::spawn_runtime_sync(path)?
+                    }
+                    module_resolver::ResolvedModule::Internal { name, source } => {
+                        opengateway_js_runtime::spawn_runtime_from_source_sync(name, source)?
+                    }
+                });
                 e.insert(h).clone()
             }
         };
@@ -168,7 +171,8 @@ pub fn build_router(
     );
 
     let mut router = Router::new();
-    let mut runtime_cache: HashMap<PathBuf, Arc<JsRuntimeHandle>> = HashMap::new();
+    let mut runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
+        HashMap::new();
 
     for (path, path_item) in paths {
         let upstream: UpstreamConfig =
@@ -227,6 +231,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use serde_json::json;
+    use std::path::PathBuf;
 
     fn fixture_path(name: &str) -> String {
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -654,6 +659,42 @@ mod tests {
             get.interceptors.on_request[0].timeout,
             Duration::from_millis(30_000)
         );
+    }
+
+    #[test]
+    fn resolves_internal_module_interceptor() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": "internal:add-header",
+                            "hook": "on_request",
+                            "function": "onRequest"
+                        }],
+                        "responses": {
+                            "200": { "description": "ok" }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.interceptors.on_request.len(), 1);
+        assert_eq!(get.interceptors.on_request[0].function, "onRequest");
+        assert!(get.interceptors.before_upstream.is_empty());
+        assert!(get.interceptors.on_response.is_empty());
     }
 
     #[test]

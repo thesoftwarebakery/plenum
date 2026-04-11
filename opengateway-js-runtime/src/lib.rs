@@ -116,19 +116,20 @@ impl JsRuntimeHandle {
 /// Spawn the worker thread and return the ready-signal receiver and the call sender.
 /// The caller is responsible for waiting on the receiver (async or blocking).
 fn start_worker(
-    module_path: std::path::PathBuf,
+    module_source: types::ModuleSource,
 ) -> Result<WorkerChannel, Box<dyn std::error::Error>> {
+    let thread_name = match &module_source {
+        types::ModuleSource::FilePath(path) => format!(
+            "js-runtime-{}",
+            path.file_name().unwrap_or_default().to_string_lossy()
+        ),
+        types::ModuleSource::Inline { name, .. } => format!("js-runtime-{name}"),
+    };
     let (tx, rx) = mpsc::channel::<JsCall>(32);
     let (ready_tx, ready_rx) = oneshot::channel();
     std::thread::Builder::new()
-        .name(format!(
-            "js-runtime-{}",
-            module_path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-        ))
-        .spawn(move || worker::run_worker(module_path, rx, ready_tx))?;
+        .name(thread_name)
+        .spawn(move || worker::run_worker(module_source, rx, ready_tx))?;
     Ok((ready_rx, tx))
 }
 
@@ -144,7 +145,7 @@ pub async fn spawn_runtime(
             module_path.display()
         )
     })?;
-    let (ready_rx, tx) = start_worker(module_path)?;
+    let (ready_rx, tx) = start_worker(types::ModuleSource::FilePath(module_path))?;
     let ready = ready_rx
         .await
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
@@ -167,7 +168,52 @@ pub fn spawn_runtime_sync(
             module_path.display()
         )
     })?;
-    let (ready_rx, tx) = start_worker(module_path)?;
+    let (ready_rx, tx) = start_worker(types::ModuleSource::FilePath(module_path))?;
+    let ready = ready_rx
+        .blocking_recv()
+        .map_err(|_| "JS runtime worker thread exited before becoming ready")?
+        .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
+    Ok(JsRuntimeHandle {
+        tx,
+        isolate_handle: ready.isolate_handle,
+    })
+}
+
+/// Spawn a new JS runtime on a dedicated thread, executing the given inline JS source.
+///
+/// The source must assign functions to `globalThis`. The `name` is used for error messages
+/// and thread naming.
+pub async fn spawn_runtime_from_source(
+    name: &str,
+    source: &str,
+) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
+    let module_source = types::ModuleSource::Inline {
+        name: name.to_string(),
+        source: source.to_string(),
+    };
+    let (ready_rx, tx) = start_worker(module_source)?;
+    let ready = ready_rx
+        .await
+        .map_err(|_| "JS runtime worker thread exited before becoming ready")?
+        .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
+    Ok(JsRuntimeHandle {
+        tx,
+        isolate_handle: ready.isolate_handle,
+    })
+}
+
+/// Like [`spawn_runtime_from_source`] but blocks the current thread until the source is evaluated.
+///
+/// Use this when no tokio runtime is available (e.g. during synchronous startup).
+pub fn spawn_runtime_from_source_sync(
+    name: &str,
+    source: &str,
+) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
+    let module_source = types::ModuleSource::Inline {
+        name: name.to_string(),
+        source: source.to_string(),
+    };
+    let (ready_rx, tx) = start_worker(module_source)?;
     let ready = ready_rx
         .blocking_recv()
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
@@ -357,5 +403,45 @@ mod tests {
             Duration::from_millis(200),
         );
         assert!(matches!(result, Err(JsError::Timeout)));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_from_source() {
+        let source = r#"
+            globalThis.hello = function(input) {
+                return { greeting: "hi " + input.name };
+            };
+        "#;
+        let handle = spawn_runtime_from_source("test-inline", source)
+            .await
+            .unwrap();
+        let result = handle
+            .call(
+                "hello",
+                serde_json::json!({"name": "world"}),
+                None,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.value, serde_json::json!({"greeting": "hi world"}));
+    }
+
+    #[tokio::test]
+    async fn test_spawn_from_source_syntax_error() {
+        let source = "this is not valid javascript }{{{";
+        let result = spawn_runtime_from_source("bad-source", source).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_spawn_from_source_sync() {
+        let source = r#"globalThis.greet = function(i) { return { msg: "ok" }; };"#;
+        let handle = spawn_runtime_from_source_sync("sync-inline", source).unwrap();
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let result = rt
+            .block_on(handle.call("greet", serde_json::json!({}), None, Duration::from_secs(5)))
+            .unwrap();
+        assert_eq!(result.value, serde_json::json!({"msg": "ok"}));
     }
 }
