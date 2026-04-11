@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use deno_core::JsRuntime;
@@ -62,6 +63,14 @@ pub(crate) fn run_worker(
 
         let isolate_handle = runtime.v8_isolate().thread_safe_handle();
 
+        // Cache of resolved function references. Avoids re-running execute_script on every call
+        // for the same function name. The cache is valid for the lifetime of the isolate because
+        // interceptor modules set their functions once during module evaluation and never change
+        // them. On timeout+recovery, cancel_terminate_execution() restores the isolate without
+        // invalidating existing globals, so the cache remains correct.
+        let mut fn_cache: HashMap<String, deno_core::v8::Global<deno_core::v8::Function>> =
+            HashMap::new();
+
         // Message loop: receive calls, execute, reply.
         while let Some(call) = rx.recv().await {
             // Always cancel any pending termination before executing.
@@ -71,7 +80,7 @@ pub(crate) fn run_worker(
             isolate_handle.cancel_terminate_execution();
 
             let result =
-                execute_call(&mut runtime, &call.function_name, &call.arg, call.body).await;
+                execute_call(&mut runtime, &call.function_name, &call.arg, call.body, &mut fn_cache).await;
             let _ = call.reply.send(result);
         }
     });
@@ -82,28 +91,40 @@ async fn execute_call(
     function_name: &str,
     arg: &serde_json::Value,
     body: Option<JsBody>,
+    fn_cache: &mut HashMap<String, deno_core::v8::Global<deno_core::v8::Function>>,
 ) -> Result<CallOutput, JsError> {
     use deno_core::v8;
 
-    // Step 1: Look up the function from globalThis, checking it exists.
-    let fn_script = format!(
-        "if (typeof globalThis.{n} !== \"function\") {{ throw new Error(\"__FUNCTION_NOT_FOUND__:{n}\"); }} globalThis.{n}",
-        n = function_name
-    );
-    let fn_val_global = runtime
-        .execute_script("<get-fn>", fn_script)
-        .map_err(|e| classify_error(e, function_name))?;
+    // Step 1: Resolve the function reference, using the cache to avoid re-running
+    // execute_script on every call. On the first call for a given name we look up
+    // globalThis.<name>, store the Global<Function>, and reuse it thereafter.
+    let fn_global = if let Some(cached) = fn_cache.get(function_name) {
+        cached.clone()
+    } else {
+        let fn_script = format!(
+            "if (typeof globalThis.{n} !== \"function\") {{ throw new Error(\"__FUNCTION_NOT_FOUND__:{n}\"); }} globalThis.{n}",
+            n = function_name
+        );
+        let fn_val_global = runtime
+            .execute_script("<get-fn>", fn_script)
+            .map_err(|e| classify_error(e, function_name))?;
 
-    // Step 2: Build typed function reference and V8 arg object within a scope.
+        let fn_global = {
+            deno_core::scope!(scope, runtime);
+            let fn_local = v8::Local::new(scope, fn_val_global);
+            let fn_fn = v8::Local::<v8::Function>::try_from(fn_local)
+                .map_err(|_| JsError::FunctionNotFound(function_name.to_string()))?;
+            v8::Global::new(scope, fn_fn)
+        };
+
+        fn_cache.insert(function_name.to_string(), fn_global.clone());
+        fn_global
+    };
+
+    // Step 2: Build V8 arg object within a scope.
     // The scope borrow on runtime is released when this block ends.
-    let (fn_global, arg_global) = {
+    let arg_global = {
         deno_core::scope!(scope, runtime);
-
-        // Get a typed v8::Function reference.
-        let fn_local = v8::Local::new(scope, fn_val_global);
-        let fn_fn = v8::Local::<v8::Function>::try_from(fn_local)
-            .map_err(|_| JsError::FunctionNotFound(function_name.to_string()))?;
-        let fn_global = v8::Global::new(scope, fn_fn);
 
         // Serialize JSON metadata (method, path, headers, etc.) to a V8 object.
         let v8_meta = deno_core::serde_v8::to_v8(scope, arg)
@@ -131,8 +152,7 @@ async fn execute_call(
         };
         v8_obj.set(scope, body_key.into(), body_val);
 
-        let arg_global = v8::Global::new(scope, v8::Local::<v8::Value>::from(v8_obj));
-        (fn_global, arg_global)
+        v8::Global::new(scope, v8::Local::<v8::Value>::from(v8_obj))
     };
 
     // Step 3: Call the JS function and resolve via the event loop.
