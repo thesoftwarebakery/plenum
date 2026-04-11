@@ -1,6 +1,7 @@
 {
   "tasks": {
-    "test": "deno test -P tests/"
+    "test": "deno test -P tests/",
+    "bench": "deno run -A benchmarks/latency_bench.ts"
   },
   "test": {
     "permissions": {
@@ -17,6 +18,7 @@
   },
   "imports": {
     "testcontainers": "npm:testcontainers@^11",
+    "tinybench": "npm:tinybench@^2",
     "@std/assert": "jsr:@std/assert@^1",
     "@std/path": "jsr:@std/path@^1"
   }
