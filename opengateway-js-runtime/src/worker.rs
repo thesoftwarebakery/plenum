@@ -1,16 +1,14 @@
-use std::path::PathBuf;
-
 use deno_core::JsRuntime;
 use deno_core::ModuleSpecifier;
 use deno_core::PollEventLoopOptions;
 use deno_core::RuntimeOptions;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::types::{CallOutput, JsBody, JsCall, JsError, WorkerReady};
+use crate::types::{CallOutput, JsBody, JsCall, JsError, ModuleSource, WorkerReady};
 
 /// Run the JS runtime worker on the current thread. Blocks until the channel is closed.
 pub(crate) fn run_worker(
-    module_path: PathBuf,
+    module_source: ModuleSource,
     mut rx: mpsc::Receiver<JsCall>,
     ready_tx: oneshot::Sender<Result<WorkerReady, JsError>>,
 ) {
@@ -25,35 +23,47 @@ pub(crate) fn run_worker(
             ..Default::default()
         });
 
-        // Load and evaluate the module.
-        let module_specifier = match ModuleSpecifier::from_file_path(&module_path) {
-            Ok(s) => s,
-            Err(()) => {
-                let err = JsError::ModuleLoadError(format!(
-                    "invalid module path: {}",
-                    module_path.display()
-                ));
-                let _ = ready_tx.send(Err(err));
-                return;
-            }
-        };
+        match module_source {
+            ModuleSource::FilePath(module_path) => {
+                // Load and evaluate the module from the file system.
+                let module_specifier = match ModuleSpecifier::from_file_path(&module_path) {
+                    Ok(s) => s,
+                    Err(()) => {
+                        let err = JsError::ModuleLoadError(format!(
+                            "invalid module path: {}",
+                            module_path.display()
+                        ));
+                        let _ = ready_tx.send(Err(err));
+                        return;
+                    }
+                };
 
-        let module_id = match runtime.load_main_es_module(&module_specifier).await {
-            Ok(id) => id,
-            Err(e) => {
-                let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
-                return;
-            }
-        };
+                let module_id = match runtime.load_main_es_module(&module_specifier).await {
+                    Ok(id) => id,
+                    Err(e) => {
+                        let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
+                        return;
+                    }
+                };
 
-        let eval_future = runtime.mod_evaluate(module_id);
-        if let Err(e) = runtime.run_event_loop(Default::default()).await {
-            let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
-            return;
-        }
-        if let Err(e) = eval_future.await {
-            let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
-            return;
+                let eval_future = runtime.mod_evaluate(module_id);
+                if let Err(e) = runtime.run_event_loop(Default::default()).await {
+                    let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
+                    return;
+                }
+                if let Err(e) = eval_future.await {
+                    let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
+                    return;
+                }
+            }
+            ModuleSource::Inline { name, source } => {
+                // execute_script requires a 'static name; leak the String to satisfy that.
+                let static_name: &'static str = Box::leak(name.into_boxed_str());
+                if let Err(e) = runtime.execute_script(static_name, source) {
+                    let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
+                    return;
+                }
+            }
         }
 
         // Send the isolate handle back so the caller can terminate on timeout.

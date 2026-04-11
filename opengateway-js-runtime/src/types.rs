@@ -1,6 +1,14 @@
 use std::fmt;
 use tokio::sync::oneshot;
 
+/// Source of a JS module to load into the runtime.
+pub(crate) enum ModuleSource {
+    /// Load from a file on disk.
+    FilePath(std::path::PathBuf),
+    /// Execute inline source code. The name is used for error messages and thread naming.
+    Inline { name: String, source: String },
+}
+
 /// Body content passed to or returned from a JS interceptor, typed by content-type.
 #[derive(Debug)]
 pub enum JsBody {
