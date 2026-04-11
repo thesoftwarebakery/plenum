@@ -39,7 +39,10 @@ impl ValidationErrorResponse {
 
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| {
-            format!(r#"{{"type":"{}","title":"{}","status":{}}}"#, self.error_type, self.title, self.status)
+            format!(
+                r#"{{"type":"{}","title":"{}","status":{}}}"#,
+                self.error_type, self.title, self.status
+            )
         })
     }
 }
@@ -50,12 +53,10 @@ mod tests {
 
     #[test]
     fn request_error_serializes_to_rfc7807() {
-        let err = ValidationErrorResponse::request_error(vec![
-            ValidationIssue {
-                path: "/email".into(),
-                message: "not a valid email".into(),
-            },
-        ]);
+        let err = ValidationErrorResponse::request_error(vec![ValidationIssue {
+            path: "/email".into(),
+            message: "not a valid email".into(),
+        }]);
         let json: serde_json::Value = serde_json::from_str(&err.to_json()).unwrap();
         assert_eq!(json["type"], "request-validation-error");
         assert_eq!(json["title"], "Request Validation Failed");

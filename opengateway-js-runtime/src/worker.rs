@@ -124,8 +124,9 @@ async fn execute_call(
                 .into(),
             Some(JsBody::Bytes(b)) => {
                 let to_buf = deno_core::ToJsBuffer::from(b);
-                deno_core::serde_v8::to_v8(scope, to_buf)
-                    .map_err(|e| JsError::ExecutionError(format!("body buffer serialization: {e}")))?
+                deno_core::serde_v8::to_v8(scope, to_buf).map_err(|e| {
+                    JsError::ExecutionError(format!("body buffer serialization: {e}"))
+                })?
             }
         };
         v8_obj.set(scope, body_key.into(), body_val);
@@ -169,10 +170,9 @@ async fn execute_call(
             None
         } else if body_val.is_array_buffer_view() {
             // Uint8Array or other typed array: extract raw bytes
-            let view = v8::Local::<v8::ArrayBufferView>::try_from(body_val)
-                .map_err(|_| {
-                    JsError::ExecutionError("body ArrayBufferView extraction failed".into())
-                })?;
+            let view = v8::Local::<v8::ArrayBufferView>::try_from(body_val).map_err(|_| {
+                JsError::ExecutionError("body ArrayBufferView extraction failed".into())
+            })?;
             let mut buf = vec![0u8; view.byte_length()];
             view.copy_contents(&mut buf);
             obj.delete(scope, body_key.into());

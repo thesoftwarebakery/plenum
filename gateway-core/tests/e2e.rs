@@ -3,8 +3,8 @@ use std::net::TcpListener;
 use gateway_core::build_gateway;
 use gateway_core::config::Config;
 
-use pingora_core::server::configuration::{Opt, ServerConf};
 use pingora_core::server::Server;
+use pingora_core::server::configuration::{Opt, ServerConf};
 use pingora_proxy::http_proxy_service;
 use serde_json::json;
 use wiremock::matchers::{method, path};
@@ -77,8 +77,7 @@ async fn proxies_get_to_upstream() {
     Mock::given(method("GET"))
         .and(path("/products"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"items": ["widget", "gadget"]})),
+            ResponseTemplate::new(200).set_body_json(json!({"items": ["widget", "gadget"]})),
         )
         .mount(&mock_server)
         .await;
@@ -101,8 +100,7 @@ async fn proxies_parameterised_path() {
     Mock::given(method("GET"))
         .and(path("/products/abc-123"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(json!({"id": "abc-123", "name": "Widget"})),
+            ResponseTemplate::new(200).set_body_json(json!({"id": "abc-123", "name": "Widget"})),
         )
         .mount(&mock_server)
         .await;

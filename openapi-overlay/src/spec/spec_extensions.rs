@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use serde::Deserializer;
 use serde::de::{MapAccess, Visitor};
 use serde::ser::Serializer;
-use serde::Deserializer;
 
 pub(crate) fn deserialize<'de, D>(
     deserializer: D,
@@ -75,10 +75,7 @@ mod tests {
             result.extensions.get("foo"),
             Some(&serde_json::Value::String("bar".to_owned()))
         );
-        assert_eq!(
-            result.extensions.get("num"),
-            Some(&serde_json::json!(42))
-        );
+        assert_eq!(result.extensions.get("num"), Some(&serde_json::json!(42)));
     }
 
     #[test]

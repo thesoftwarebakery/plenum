@@ -9,17 +9,26 @@ import { resolve, dirname, fromFileUrl } from "@std/path";
 const GATEWAY_PORT = 6188;
 const FIXTURES_DIR = resolve(dirname(fromFileUrl(import.meta.url)), "../../fixtures");
 
-let builtImage: GenericContainer | null = null;
+let localImageBuilt = false;
 
-async function getImage(): Promise<GenericContainer> {
-  if (builtImage) return builtImage;
+async function getImage(): Promise<string> {
+  // In CI, we build the image using docker buildx for faster caching
+  // and load it as 'opengateway:latest' prior to running the e2e tests.
+  if (Deno.env.get("CI")) {
+    return "opengateway:latest";
+  }
 
-  const contextDir = resolve(dirname(fromFileUrl(import.meta.url)), "../../..");
-  builtImage = await GenericContainer.fromDockerfile(contextDir).build(
-    "opengateway-test",
-    { deleteOnExit: false },
-  );
-  return builtImage;
+  // Local development fallback: build the image from scratch once per suite
+  if (!localImageBuilt) {
+    const contextDir = resolve(dirname(fromFileUrl(import.meta.url)), "../../..");
+    await GenericContainer.fromDockerfile(contextDir).build(
+      "opengateway-test",
+      { deleteOnExit: false },
+    );
+    localImageBuilt = true;
+  }
+  
+  return "opengateway-test";
 }
 
 export interface GatewayContainer extends AsyncDisposable {
@@ -41,7 +50,7 @@ export async function startGateway(opts: {
     "overlay-upstream.yaml",
   ];
 
-  const image = await getImage();
+  const imageTag = await getImage();
 
   const filesToCopy: { source: string; target: string }[] = [];
 
@@ -62,7 +71,7 @@ export async function startGateway(opts: {
     });
   }
 
-  let builder = image
+  let builder = new GenericContainer(imageTag)
     .withExposedPorts(GATEWAY_PORT)
     .withNetwork(opts.network)
     .withCommand([

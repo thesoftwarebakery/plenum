@@ -3,27 +3,26 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::{Bytes, BytesMut, BufMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use config::Config;
 use http::Method;
 use interceptor::{InterceptorOutput, request_input_from_parts, response_input_from_parts};
 use opengateway_js_runtime::{JsBody, JsRuntimeHandle};
-use path_match::{build_router, OperationSchemas, RouteEntry};
+use path_match::{OperationSchemas, RouteEntry, build_router};
 use pingora_http::{RequestHeader, ResponseHeader};
 use validation::error::ValidationErrorResponse;
 
-use gateway_error::GatewayError;
 use async_trait::async_trait;
+use gateway_error::GatewayError;
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_proxy::{ProxyHttp, Session};
 
 pub mod config;
 pub mod gateway_error;
 pub mod interceptor;
-pub mod upstream_http;
 pub mod path_match;
+pub mod upstream_http;
 pub mod validation;
-
 
 pub struct GatewayCtx {
     matched_route: Option<Arc<RouteEntry>>,
@@ -92,9 +91,10 @@ fn js_body_from_content_type(content_type: Option<&str>, buf: &[u8]) -> Option<J
         return None;
     }
     match content_type {
-        Some(ct) if ct.starts_with("application/json") => {
-            serde_json::from_slice(buf).ok().map(JsBody::Json).or_else(|| Some(JsBody::Bytes(buf.to_vec())))
-        }
+        Some(ct) if ct.starts_with("application/json") => serde_json::from_slice(buf)
+            .ok()
+            .map(JsBody::Json)
+            .or_else(|| Some(JsBody::Bytes(buf.to_vec()))),
         Some(ct)
             if ct.starts_with("text/")
                 || ct.starts_with("application/xml")
@@ -205,7 +205,15 @@ impl ProxyHttp for OpenGateway {
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
 
-                match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
+                match call_interceptor(
+                    &hook.runtime,
+                    &hook.function,
+                    input_json,
+                    None,
+                    hook.timeout,
+                )
+                .await
+                {
                     Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
                         if let Some(mods) = headers {
                             apply_header_modifications(session.req_header_mut(), &mods);
@@ -318,7 +326,15 @@ impl ProxyHttp for OpenGateway {
                     );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
-                    match call_interceptor(&hook.runtime, &hook.function, input_json, js_body, hook.timeout).await {
+                    match call_interceptor(
+                        &hook.runtime,
+                        &hook.function,
+                        input_json,
+                        js_body,
+                        hook.timeout,
+                    )
+                    .await
+                    {
                         Ok((InterceptorOutput::Continue { .. }, body_out)) => {
                             current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
                         }
@@ -386,7 +402,9 @@ impl ProxyHttp for OpenGateway {
         // When on_response_body is configured, we need to buffer and inspect the response body.
         // Prevent gzip encoding from the upstream so we receive raw bytes.
         if !op.interceptors.on_response_body.is_empty() {
-            upstream_request.insert_header("accept-encoding", "identity").ok();
+            upstream_request
+                .insert_header("accept-encoding", "identity")
+                .ok();
         }
 
         for hook in &op.interceptors.before_upstream {
@@ -398,14 +416,24 @@ impl ProxyHttp for OpenGateway {
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
 
-            match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
+            match call_interceptor(
+                &hook.runtime,
+                &hook.function,
+                input_json,
+                None,
+                hook.timeout,
+            )
+            .await
+            {
                 Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
                     if let Some(mods) = &headers {
                         apply_header_modifications(upstream_request, mods);
                     }
                 }
                 Ok((InterceptorOutput::Respond { .. }, _)) => {
-                    log::warn!("before_upstream interceptor returned 'respond' -- ignoring (request already committed to upstream)");
+                    log::warn!(
+                        "before_upstream interceptor returned 'respond' -- ignoring (request already committed to upstream)"
+                    );
                 }
                 Err(e) => {
                     log::error!("before_upstream interceptor error: {}", e);
@@ -430,26 +458,34 @@ impl ProxyHttp for OpenGateway {
         };
 
         for hook in &op.interceptors.on_response {
-            let input = response_input_from_parts(
-                upstream_response.status,
-                &upstream_response.headers,
-            );
+            let input =
+                response_input_from_parts(upstream_response.status, &upstream_response.headers);
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
 
-            match call_interceptor(&hook.runtime, &hook.function, input_json, None, hook.timeout).await {
+            match call_interceptor(
+                &hook.runtime,
+                &hook.function,
+                input_json,
+                None,
+                hook.timeout,
+            )
+            .await
+            {
                 Ok((InterceptorOutput::Continue { status, headers }, _)) => {
-                    if let Some(code) = status {
-                        if let Ok(status_code) = http::StatusCode::from_u16(code) {
-                            upstream_response.set_status(status_code).ok();
-                        }
+                    if let Some(code) = status
+                        && let Ok(status_code) = http::StatusCode::from_u16(code)
+                    {
+                        upstream_response.set_status(status_code).ok();
                     }
                     if let Some(mods) = &headers {
                         apply_header_modifications(upstream_response, mods);
                     }
                 }
                 Ok((InterceptorOutput::Respond { .. }, _)) => {
-                    log::warn!("on_response interceptor returned 'respond' -- ignoring (response already in flight)");
+                    log::warn!(
+                        "on_response interceptor returned 'respond' -- ignoring (response already in flight)"
+                    );
                 }
                 Err(e) => {
                     log::error!("on_response interceptor error: {}", e);
@@ -522,7 +558,9 @@ impl ProxyHttp for OpenGateway {
                             current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
                         }
                         Ok((InterceptorOutput::Respond { .. }, _)) => {
-                            log::warn!("on_response_body interceptor returned 'respond' -- ignoring");
+                            log::warn!(
+                                "on_response_body interceptor returned 'respond' -- ignoring"
+                            );
                         }
                         Err(e) => {
                             log::error!("on_response_body interceptor error: {}", e);
@@ -544,11 +582,14 @@ impl ProxyHttp for OpenGateway {
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
         if ctx.request_body_validation_failed {
-            return Err(pingora_core::Error::new(pingora_core::ErrorType::HTTPStatus(400)));
+            return Err(pingora_core::Error::new(
+                pingora_core::ErrorType::HTTPStatus(400),
+            ));
         }
-        let route = ctx.matched_route.as_ref().ok_or_else(|| {
-            pingora_core::Error::new(pingora_core::ErrorType::InternalError)
-        })?;
+        let route = ctx
+            .matched_route
+            .as_ref()
+            .ok_or_else(|| pingora_core::Error::new(pingora_core::ErrorType::InternalError))?;
         Ok(Box::new(route.peer.clone()))
     }
 }

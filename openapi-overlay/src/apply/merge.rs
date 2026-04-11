@@ -90,7 +90,10 @@ mod tests {
         let mut target = json!({"a": 1, "b": {"c": 2, "d": 3}});
         let update = json!({"b": {"c": 99, "e": 5}, "f": 6});
         merge_in_place(&mut target, &update, "").unwrap();
-        assert_eq!(target, json!({"a": 1, "b": {"c": 99, "d": 3, "e": 5}, "f": 6}));
+        assert_eq!(
+            target,
+            json!({"a": 1, "b": {"c": 99, "d": 3, "e": 5}, "f": 6})
+        );
     }
 
     #[test]
