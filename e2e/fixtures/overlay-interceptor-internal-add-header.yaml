@@ -1,0 +1,14 @@
+overlay: 1.1.0
+info:
+  title: Attach internal add-header interceptor
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-opengateway-interceptor:
+        - module: "internal:add-header"
+          hook: on_request
+          function: onRequest
+          options:
+            headers:
+              x-builtin: "true"
