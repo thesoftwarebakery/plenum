@@ -19,21 +19,25 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
+          
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
-
+      
+      # Build the workspace for tests, avoiding duplicate recompilation across different targets
       - name: Build workspace
-        run: cargo build --workspace --release
+        run: cargo build --workspace --tests
 
       - name: Run unit tests
         run: cargo test --workspace
 
-  docker-cache:
-    name: Docker Cache
+  e2e:
+    name: E2E Tests
     needs: check-and-test
     runs-on: ubuntu-latest
     steps:
@@ -52,14 +56,6 @@ jobs:
           tags: opengateway:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-  e2e:
-    name: E2E Tests
-    needs: docker-cache
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
 
       - name: Setup Deno
         uses: denoland/setup-deno@v2
