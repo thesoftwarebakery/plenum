@@ -57,9 +57,7 @@ pub(crate) fn run_worker(
                 }
             }
             ModuleSource::Inline { name, source } => {
-                // execute_script requires a 'static name; leak the String to satisfy that.
-                let static_name: &'static str = Box::leak(name.into_boxed_str());
-                if let Err(e) = runtime.execute_script(static_name, source) {
+                if let Err(e) = runtime.execute_script(name, source) {
                     let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
                     return;
                 }
