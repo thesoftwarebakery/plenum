@@ -1,6 +1,7 @@
 {
   "tasks": {
-    "test": "deno test -P tests/"
+    "prebuild": "deno run -A src/prebuild.ts",
+    "test": "deno task prebuild && DENO_JOBS=3 deno test --parallel -P tests/"
   },
   "test": {
     "permissions": {
