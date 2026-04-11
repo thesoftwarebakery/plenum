@@ -412,9 +412,16 @@ mod tests {
                 return { greeting: "hi " + input.name };
             };
         "#;
-        let handle = spawn_runtime_from_source("test-inline", source).await.unwrap();
+        let handle = spawn_runtime_from_source("test-inline", source)
+            .await
+            .unwrap();
         let result = handle
-            .call("hello", serde_json::json!({"name": "world"}), None, Duration::from_secs(5))
+            .call(
+                "hello",
+                serde_json::json!({"name": "world"}),
+                None,
+                Duration::from_secs(5),
+            )
             .await
             .unwrap();
         assert_eq!(result.value, serde_json::json!({"greeting": "hi world"}));
@@ -432,7 +439,9 @@ mod tests {
         let source = r#"globalThis.greet = function(i) { return { msg: "ok" }; };"#;
         let handle = spawn_runtime_from_source_sync("sync-inline", source).unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(handle.call("greet", serde_json::json!({}), None, Duration::from_secs(5))).unwrap();
+        let result = rt
+            .block_on(handle.call("greet", serde_json::json!({}), None, Duration::from_secs(5)))
+            .unwrap();
         assert_eq!(result.value, serde_json::json!({"msg": "ok"}));
     }
 }

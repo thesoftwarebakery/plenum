@@ -171,7 +171,8 @@ pub fn build_router(
     );
 
     let mut router = Router::new();
-    let mut runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> = HashMap::new();
+    let mut runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
+        HashMap::new();
 
     for (path, path_item) in paths {
         let upstream: UpstreamConfig =

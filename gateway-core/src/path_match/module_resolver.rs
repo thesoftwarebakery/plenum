@@ -6,7 +6,10 @@ pub enum ResolvedModule {
     /// Built-in module with source embedded at compile time via `include_str!`.
     /// The `source` lifetime is `'static` because all built-ins are inlined into
     /// the binary at compile time.
-    Internal { name: String, source: &'static str },
+    Internal {
+        name: String,
+        source: &'static str,
+    },
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -53,9 +56,7 @@ pub fn resolve_module(
     }
 }
 
-const BUILTINS: &[(&str, &'static str)] = &[
-    ("add-header", include_str!("../../js/add-header.js")),
-];
+const BUILTINS: &[(&str, &'static str)] = &[("add-header", include_str!("../../js/add-header.js"))];
 
 fn lookup_builtin(name: &str) -> Option<&'static str> {
     BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
@@ -105,8 +106,14 @@ mod tests {
         let mut map: HashMap<ModuleCacheKey, &str> = HashMap::new();
         map.insert(ModuleCacheKey::Internal("add-header".into()), "internal");
         map.insert(ModuleCacheKey::File(PathBuf::from("/some/file.js")), "file");
-        assert_eq!(map[&ModuleCacheKey::Internal("add-header".into())], "internal");
-        assert_eq!(map[&ModuleCacheKey::File(PathBuf::from("/some/file.js"))], "file");
+        assert_eq!(
+            map[&ModuleCacheKey::Internal("add-header".into())],
+            "internal"
+        );
+        assert_eq!(
+            map[&ModuleCacheKey::File(PathBuf::from("/some/file.js"))],
+            "file"
+        );
         // Same name but different key type -- not equal:
         assert_ne!(
             ModuleCacheKey::Internal("add-header".into()),
