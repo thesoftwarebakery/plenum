@@ -79,8 +79,14 @@ pub(crate) fn run_worker(
             // explicitly cancelled.
             isolate_handle.cancel_terminate_execution();
 
-            let result =
-                execute_call(&mut runtime, &call.function_name, &call.arg, call.body, &mut fn_cache).await;
+            let result = execute_call(
+                &mut runtime,
+                &call.function_name,
+                &call.arg,
+                call.body,
+                &mut fn_cache,
+            )
+            .await;
             let _ = call.reply.send(result);
         }
     });

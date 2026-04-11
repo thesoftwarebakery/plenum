@@ -14,7 +14,9 @@ fn build_router(n: usize) -> matchit::Router<usize> {
     let mut router = matchit::Router::new();
     for i in 0..n {
         router.insert(format!("/api/v1/resource_{i}"), i * 2).ok();
-        router.insert(format!("/api/v1/resource_{i}/{{id}}"), i * 2 + 1).ok();
+        router
+            .insert(format!("/api/v1/resource_{i}/{{id}}"), i * 2 + 1)
+            .ok();
     }
     router
 }
@@ -27,9 +29,13 @@ fn bench_route_matching(c: &mut Criterion) {
         let router = build_router(n);
         // Look up a path that exists in the middle of the route table.
         let target = format!("/api/v1/resource_{}/123", n / 2);
-        group.bench_with_input(BenchmarkId::from_parameter(n), &(router, target), |b, (r, path)| {
-            b.iter(|| r.at(path.as_str()).unwrap());
-        });
+        group.bench_with_input(
+            BenchmarkId::from_parameter(n),
+            &(router, target),
+            |b, (r, path)| {
+                b.iter(|| r.at(path.as_str()).unwrap());
+            },
+        );
     }
     group.finish();
 }
@@ -79,7 +85,10 @@ fn bench_interceptor_serialization(c: &mut Criterion) {
         headers: {
             let mut m = HashMap::new();
             m.insert("content-type".to_string(), "application/json".to_string());
-            m.insert("authorization".to_string(), "Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig".to_string());
+            m.insert(
+                "authorization".to_string(),
+                "Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig".to_string(),
+            );
             m.insert("x-request-id".to_string(), "abc-123-def-456".to_string());
             m.insert("user-agent".to_string(), "curl/7.88.1".to_string());
             m.insert("accept".to_string(), "application/json".to_string());

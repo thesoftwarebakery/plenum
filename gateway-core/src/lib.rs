@@ -209,7 +209,11 @@ impl ProxyHttp for OpenGateway {
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
 
-                let span = tracing::debug_span!("interceptor_call", hook = "on_request", function = hook.function.as_str());
+                let span = tracing::debug_span!(
+                    "interceptor_call",
+                    hook = "on_request",
+                    function = hook.function.as_str()
+                );
                 match call_interceptor(
                     &hook.runtime,
                     &hook.function,
@@ -301,7 +305,8 @@ impl ProxyHttp for OpenGateway {
                     }
                 };
                 if let Err(issues) = {
-                    let _span = tracing::debug_span!("validation", phase = "request_body").entered();
+                    let _span =
+                        tracing::debug_span!("validation", phase = "request_body").entered();
                     schema.validate(&parsed)
                 } {
                     let err = ValidationErrorResponse::request_error(issues);
@@ -335,7 +340,11 @@ impl ProxyHttp for OpenGateway {
                     );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
-                    let span = tracing::debug_span!("interceptor_call", hook = "on_request_body", function = hook.function.as_str());
+                    let span = tracing::debug_span!(
+                        "interceptor_call",
+                        hook = "on_request_body",
+                        function = hook.function.as_str()
+                    );
                     match call_interceptor(
                         &hook.runtime,
                         &hook.function,
@@ -427,7 +436,11 @@ impl ProxyHttp for OpenGateway {
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
 
-            let span = tracing::debug_span!("interceptor_call", hook = "before_upstream", function = hook.function.as_str());
+            let span = tracing::debug_span!(
+                "interceptor_call",
+                hook = "before_upstream",
+                function = hook.function.as_str()
+            );
             match call_interceptor(
                 &hook.runtime,
                 &hook.function,
@@ -476,7 +489,11 @@ impl ProxyHttp for OpenGateway {
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
 
-            let span = tracing::debug_span!("interceptor_call", hook = "on_response", function = hook.function.as_str());
+            let span = tracing::debug_span!(
+                "interceptor_call",
+                hook = "on_response",
+                function = hook.function.as_str()
+            );
             match call_interceptor(
                 &hook.runtime,
                 &hook.function,
@@ -562,7 +579,12 @@ impl ProxyHttp for OpenGateway {
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
 
-                    let _span = tracing::debug_span!("interceptor_call", hook = "on_response_body", function = hook.function.as_str()).entered();
+                    let _span = tracing::debug_span!(
+                        "interceptor_call",
+                        hook = "on_response_body",
+                        function = hook.function.as_str()
+                    )
+                    .entered();
                     match call_interceptor_blocking(
                         &hook.runtime,
                         &hook.function,
