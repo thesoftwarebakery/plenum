@@ -1,7 +1,8 @@
 {
   "tasks": {
-    "test": "deno test -P tests/",
-    "bench": "deno run -A benchmarks/latency_bench.ts"
+    "bench": "deno run -A benchmarks/latency_bench.ts",
+    "prebuild": "deno run -A src/prebuild.ts",
+    "test": "deno task prebuild && DENO_JOBS=3 deno test --parallel -P tests/"
   },
   "test": {
     "permissions": {
