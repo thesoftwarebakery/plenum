@@ -117,13 +117,15 @@ fn build_operation_interceptors(
         // Deduplicate: reuse handle if this module was already spawned.
         let runtime = match runtime_cache.entry(cache_key) {
             std::collections::hash_map::Entry::Occupied(e) => {
-                // The runtime for this module was already spawned with its first permissions config.
-                // Permissions are per-runtime, not per-call, so subsequent configs with different
-                // permissions for the same module are ignored.
+                // The runtime for this module was already spawned with the first config's
+                // permissions. Permissions are per-runtime, not per-call, so any permissions
+                // declared on subsequent configs for the same module are silently ignored.
+                // Warn so operators know their permissions config has no effect.
                 if config.permissions.is_some() {
                     log::warn!(
-                        "interceptor module '{}' is referenced multiple times with different \
-                         permissions; only the first permissions config takes effect",
+                        "interceptor module '{}' is referenced multiple times; permissions \
+                         declared here are ignored -- only the first reference's permissions \
+                         take effect",
                         config.module
                     );
                 }

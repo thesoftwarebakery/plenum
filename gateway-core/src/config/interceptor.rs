@@ -14,7 +14,14 @@ impl PermissionsConfig {
     pub fn into_runtime_permissions(self) -> opengateway_js_runtime::InterceptorPermissions {
         opengateway_js_runtime::InterceptorPermissions {
             allowed_env_vars: self.env.into_iter().collect(),
-            allowed_read_paths: self.read.into_iter().map(std::path::PathBuf::from).collect(),
+            allowed_read_paths: self
+                .read
+                .into_iter()
+                .map(|s| {
+                    let p = std::path::PathBuf::from(&s);
+                    p.canonicalize().unwrap_or(p)
+                })
+                .collect(),
             allowed_hosts: self.net.into_iter().collect(),
         }
     }
@@ -145,9 +152,9 @@ mod tests {
         let runtime_perms = perms_config.into_runtime_permissions();
         assert!(runtime_perms.allowed_env_vars.contains("MY_VAR"));
         assert!(runtime_perms.allowed_hosts.contains("example.com"));
-        assert!(runtime_perms
-            .allowed_read_paths
-            .iter()
-            .any(|p| p.to_str() == Some("/tmp")));
+        let expected_tmp = std::path::Path::new("/tmp")
+            .canonicalize()
+            .unwrap_or_else(|_| std::path::PathBuf::from("/tmp"));
+        assert!(runtime_perms.allowed_read_paths.iter().any(|p| *p == expected_tmp));
     }
 }
