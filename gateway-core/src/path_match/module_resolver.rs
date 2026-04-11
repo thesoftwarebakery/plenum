@@ -56,7 +56,7 @@ pub fn resolve_module(
     }
 }
 
-const BUILTINS: &[(&str, &'static str)] = &[("add-header", include_str!("../../js/add-header.js"))];
+const BUILTINS: &[(&str, &str)] = &[("add-header", include_str!("../../js/add-header.js"))];
 
 fn lookup_builtin(name: &str) -> Option<&'static str> {
     BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
