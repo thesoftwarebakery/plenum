@@ -1,3 +1,5 @@
+mod module_resolver;
+
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::path::{Path, PathBuf};
