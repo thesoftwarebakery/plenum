@@ -1,0 +1,18 @@
+overlay: 1.1.0
+info:
+  title: Attach validate-request interceptor
+  version: 1.0.0
+actions:
+  - target: $.paths['/products'].post
+    update:
+      x-opengateway-interceptor:
+        - module: "internal:validate-request"
+          hook: on_request
+          function: validateRequest
+          options:
+            schema:
+              type: object
+              required: ["name"]
+              properties:
+                name:
+                  type: string

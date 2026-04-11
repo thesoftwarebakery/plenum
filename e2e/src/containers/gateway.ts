@@ -20,6 +20,7 @@ export interface GatewayContainer extends AsyncDisposable {
 
 export async function startGateway(opts: {
   network: StartedNetwork;
+  environment?: Record<string, string>;
   fixtures?: {
     openapi?: string;
     overlays?: string[];
@@ -62,6 +63,10 @@ export async function startGateway(opts: {
       "--openapi-overlay", overlayFiles.join(","),
     ])
     .withWaitStrategy(Wait.forListeningPorts());
+
+  if (opts.environment) {
+    builder = builder.withEnvironment(opts.environment);
+  }
 
   for (const file of filesToCopy) {
     const content = await Deno.readTextFile(file.source);

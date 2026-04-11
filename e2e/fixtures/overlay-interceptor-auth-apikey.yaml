@@ -1,0 +1,16 @@
+overlay: 1.1.0
+info:
+  title: Attach auth-apikey interceptor
+  version: 1.0.0
+actions:
+  - target: $.paths['/products'].get
+    update:
+      x-opengateway-interceptor:
+        - module: "internal:auth-apikey"
+          hook: on_request
+          function: checkApiKey
+          options:
+            envVar: "API_KEY"
+            header: "x-api-key"
+          permissions:
+            env: ["API_KEY"]
