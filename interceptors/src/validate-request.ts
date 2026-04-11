@@ -28,7 +28,9 @@ interface ValidateRequestOptions {
 interface InterceptorRequest {
   options?: ValidateRequestOptions;
   headers?: Record<string, string>;
-  body?: string | null;
+  // The gateway passes body as a pre-parsed object for application/json requests,
+  // as a string for text/* requests, and as null/undefined when there is no body.
+  body?: unknown;
 }
 
 /** Successful validation -- pass the request through to the upstream. */
@@ -79,23 +81,32 @@ function getValidator(schema: object): ReturnType<typeof ajv.compile> {
   }
 
   // No body to validate -- pass through.
-  if (!request.body) {
+  if (request.body === null || request.body === undefined) {
     return { action: "continue" };
   }
 
-  // Parse the body; treat parse errors as a validation failure.
+  // The gateway sends application/json bodies as pre-parsed objects. For text
+  // bodies (or any other string), attempt to parse the string as JSON.
   let parsed: unknown;
-  try {
-    parsed = JSON.parse(request.body);
-  } catch {
-    return {
-      action: "respond",
-      status: 400,
-      body: {
-        error: "Request validation failed",
-        details: [{ message: "Request body is not valid JSON" }],
-      },
-    };
+  if (typeof request.body === "string") {
+    if (request.body === "") {
+      return { action: "continue" };
+    }
+    try {
+      parsed = JSON.parse(request.body);
+    } catch {
+      return {
+        action: "respond",
+        status: 400,
+        body: {
+          error: "Request validation failed",
+          details: [{ message: "Request body is not valid JSON" }],
+        },
+      };
+    }
+  } else {
+    // Already a parsed value (object, array, etc.) -- use directly.
+    parsed = request.body;
   }
 
   const validate = getValidator(schema);

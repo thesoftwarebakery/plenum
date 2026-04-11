@@ -6495,21 +6495,28 @@
     if (!schema) {
       return { action: "continue" };
     }
-    if (!request.body) {
+    if (request.body === null || request.body === void 0) {
       return { action: "continue" };
     }
     let parsed;
-    try {
-      parsed = JSON.parse(request.body);
-    } catch {
-      return {
-        action: "respond",
-        status: 400,
-        body: {
-          error: "Request validation failed",
-          details: [{ message: "Request body is not valid JSON" }]
-        }
-      };
+    if (typeof request.body === "string") {
+      if (request.body === "") {
+        return { action: "continue" };
+      }
+      try {
+        parsed = JSON.parse(request.body);
+      } catch {
+        return {
+          action: "respond",
+          status: 400,
+          body: {
+            error: "Request validation failed",
+            details: [{ message: "Request body is not valid JSON" }]
+          }
+        };
+      }
+    } else {
+      parsed = request.body;
     }
     const validate = getValidator(schema);
     const valid = validate(parsed);
