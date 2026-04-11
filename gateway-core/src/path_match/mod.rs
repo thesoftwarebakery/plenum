@@ -116,14 +116,34 @@ fn build_operation_interceptors(
 
         // Deduplicate: reuse handle if this module was already spawned.
         let runtime = match runtime_cache.entry(cache_key) {
-            std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+            std::collections::hash_map::Entry::Occupied(e) => {
+                // The runtime for this module was already spawned with its first permissions config.
+                // Permissions are per-runtime, not per-call, so subsequent configs with different
+                // permissions for the same module are ignored.
+                if config.permissions.is_some() {
+                    log::warn!(
+                        "interceptor module '{}' is referenced multiple times with different \
+                         permissions; only the first permissions config takes effect",
+                        config.module
+                    );
+                }
+                e.get().clone()
+            }
             std::collections::hash_map::Entry::Vacant(e) => {
+                let permissions = config
+                    .permissions
+                    .clone()
+                    .map(|p| p.into_runtime_permissions())
+                    .unwrap_or_default();
+
                 let h = Arc::new(match &resolved {
                     module_resolver::ResolvedModule::File(path) => {
-                        opengateway_js_runtime::spawn_runtime_sync(path)?
+                        opengateway_js_runtime::spawn_runtime_sync(path, permissions)?
                     }
                     module_resolver::ResolvedModule::Internal { name, source } => {
-                        opengateway_js_runtime::spawn_runtime_from_source_sync(name, source)?
+                        opengateway_js_runtime::spawn_runtime_from_source_sync(
+                            name, source, permissions,
+                        )?
                     }
                 });
                 e.insert(h).clone()

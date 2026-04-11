@@ -4,11 +4,14 @@ use deno_core::PollEventLoopOptions;
 use deno_core::RuntimeOptions;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::ops::opengateway_runtime_ext;
+use crate::permissions::InterceptorPermissions;
 use crate::types::{CallOutput, JsBody, JsCall, JsError, ModuleSource, WorkerReady};
 
 /// Run the JS runtime worker on the current thread. Blocks until the channel is closed.
 pub(crate) fn run_worker(
     module_source: ModuleSource,
+    permissions: InterceptorPermissions,
     mut rx: mpsc::Receiver<JsCall>,
     ready_tx: oneshot::Sender<Result<WorkerReady, JsError>>,
 ) {
@@ -18,10 +21,13 @@ pub(crate) fn run_worker(
         .expect("failed to create tokio runtime for JS worker");
 
     rt.block_on(async move {
+        let ext = opengateway_runtime_ext::init();
         let mut runtime = JsRuntime::new(RuntimeOptions {
             module_loader: Some(std::rc::Rc::new(deno_core::FsModuleLoader)),
+            extensions: vec![ext],
             ..Default::default()
         });
+        runtime.op_state().borrow_mut().put(permissions);
 
         match module_source {
             ModuleSource::FilePath(module_path) => {
