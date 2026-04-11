@@ -88,7 +88,14 @@ jobs:
         with:
           deno-version: v2.x
 
+      - name: Expose Docker over TCP (Deno Unix Socket workaround)
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y socat
+          sudo socat TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock &
+
       - name: Run E2E tests
+        env:
+          DOCKER_HOST: tcp://127.0.0.1:2375
         run: cd e2e && deno task test
 
       - name: Collect container logs on failure
