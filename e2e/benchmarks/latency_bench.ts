@@ -191,6 +191,46 @@ async function runScenario(
 }
 
 // ---------------------------------------------------------------------------
+// System warmup: a throwaway passthrough run before any measured scenario.
+//
+// The first scenario always runs on a cold system: Docker network paths,
+// OS TCP buffers, and CPU frequency scaling all take a few seconds to reach
+// steady state. Scenarios that run later benefit from that settling. This
+// warmup fires one passthrough gateway for 5s (unmeasured) so every
+// measured scenario sees a pre-warmed system.
+// ---------------------------------------------------------------------------
+
+async function warmupSystem(
+  network: Awaited<ReturnType<typeof Network.prototype.start>>,
+  wm: WireMockClient,
+): Promise<void> {
+  console.log("--- system warmup (unmeasured) ---");
+  await wm.reset();
+  await wm.stubFor({
+    request: { method: "GET", urlPath: "/products" },
+    response: {
+      status: 200,
+      jsonBody: { items: ["widget"] },
+      headers: { "Content-Type": "application/json" },
+    },
+  });
+  const gateway = await startGatewayWithRetry({
+    network,
+    fixtures: {
+      openapi: "openapi.yaml",
+      overlays: ["overlay-gateway.yaml", "overlay-upstream.yaml"],
+    },
+  });
+  const url = `${gateway.baseUrl}/products`;
+  const end = Date.now() + 5_000;
+  while (Date.now() < end) {
+    const resp = await fetch(url);
+    await resp.text();
+  }
+  await gateway.container.stop();
+}
+
+// ---------------------------------------------------------------------------
 // Main: shared network and wiremock across all scenarios
 // ---------------------------------------------------------------------------
 
@@ -201,6 +241,7 @@ const wm = new WireMockClient(wiremock.adminUrl);
 const results: BenchEntry[] = [];
 
 try {
+  await warmupSystem(network, wm);
   for (const scenario of SCENARIOS) {
     const entries = await runScenario(scenario, network, wm);
     results.push(...entries);
