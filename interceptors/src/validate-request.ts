@@ -70,7 +70,7 @@ function getValidator(schema: object): ReturnType<typeof ajv.compile> {
   return validate;
 }
 
-(globalThis as any).validateRequest = function (
+export function validateRequest(
   request: InterceptorRequest
 ): InterceptorResult {
   const schema = request.options && request.options.schema;
@@ -124,4 +124,4 @@ function getValidator(schema: object): ReturnType<typeof ajv.compile> {
       details: validate.errors,
     },
   };
-};
+}

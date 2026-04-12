@@ -68,7 +68,7 @@ function timingSafeEqual(a: string, b: string): boolean {
   return mismatch === 0;
 }
 
-(globalThis as any).checkApiKey = function (
+export function checkApiKey(
   request: InterceptorRequest
 ): InterceptorResult {
   const envVar = request.options && request.options.envVar;
@@ -119,4 +119,4 @@ function timingSafeEqual(a: string, b: string): boolean {
   }
 
   return { action: "continue" };
-};
+}
