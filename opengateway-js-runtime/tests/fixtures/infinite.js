@@ -1,3 +1,3 @@
-globalThis.infinite = function(_input) {
+export function infinite(_input) {
   while (true) {}
-};
+}

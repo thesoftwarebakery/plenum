@@ -1,7 +1,7 @@
-globalThis.spin = function(_input) {
+export function spin(_input) {
   while (true) {}
-};
+}
 
-globalThis.greet = function(input) {
+export function greet(input) {
   return { greeting: "hi " + input.name };
-};
+}

@@ -24,54 +24,76 @@ pub(crate) fn run_worker(
         .expect("failed to create tokio runtime for JS worker");
 
     rt.block_on(async move {
-        let ext = opengateway_runtime_ext::init();
-        let mut runtime = JsRuntime::new(RuntimeOptions {
-            module_loader: Some(std::rc::Rc::new(deno_core::FsModuleLoader)),
-            extensions: vec![ext],
-            ..Default::default()
-        });
-        runtime.op_state().borrow_mut().put(permissions);
-
-        match module_source {
-            ModuleSource::FilePath(module_path) => {
-                // Load and evaluate the module from the file system.
-                let module_specifier = match ModuleSpecifier::from_file_path(&module_path) {
+        // Build loader and resolve the specifier to load before creating the runtime.
+        let (loader, specifier) = match &module_source {
+            ModuleSource::FilePath(path) => {
+                let specifier = match ModuleSpecifier::from_file_path(path) {
                     Ok(s) => s,
                     Err(()) => {
                         let err = JsError::ModuleLoadError(format!(
                             "invalid module path: {}",
-                            module_path.display()
+                            path.display()
                         ));
                         let _ = ready_tx.send(Err(err));
                         return;
                     }
                 };
-
-                let module_id = match runtime.load_main_es_module(&module_specifier).await {
-                    Ok(id) => id,
+                (GatewayModuleLoader::new(), specifier)
+            }
+            ModuleSource::Inline { name, source } => {
+                let specifier_str = format!("file:///opengateway-internal/{}.js", name);
+                let specifier = match ModuleSpecifier::parse(&specifier_str) {
+                    Ok(s) => s,
                     Err(e) => {
-                        let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
+                        let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!(
+                            "invalid internal module name '{name}': {e}"
+                        ))));
                         return;
                     }
                 };
+                let loader =
+                    GatewayModuleLoader::with_embedded(specifier.clone(), source.clone());
+                (loader, specifier)
+            }
+        };
 
-                let eval_future = runtime.mod_evaluate(module_id);
-                if let Err(e) = runtime.run_event_loop(Default::default()).await {
-                    let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
-                    return;
-                }
-                if let Err(e) = eval_future.await {
-                    let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
-                    return;
-                }
+        let ext = opengateway_runtime_ext::init();
+        let mut runtime = JsRuntime::new(RuntimeOptions {
+            module_loader: Some(std::rc::Rc::new(loader)),
+            extensions: vec![ext],
+            ..Default::default()
+        });
+        runtime.op_state().borrow_mut().put(permissions);
+
+        // Load and evaluate the module.
+        let module_id = match runtime.load_main_es_module(&specifier).await {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
+                return;
             }
-            ModuleSource::Inline { name, source } => {
-                if let Err(e) = runtime.execute_script(name, source) {
-                    let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
-                    return;
-                }
-            }
+        };
+
+        let eval_future = runtime.mod_evaluate(module_id);
+        if let Err(e) = runtime.run_event_loop(Default::default()).await {
+            let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
+            return;
         }
+        if let Err(e) = eval_future.await {
+            let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!("{e}"))));
+            return;
+        }
+
+        // Retrieve the module's export namespace for function dispatch.
+        let module_namespace = match runtime.get_module_namespace(module_id) {
+            Ok(ns) => ns,
+            Err(e) => {
+                let _ = ready_tx.send(Err(JsError::ModuleLoadError(format!(
+                    "failed to get module namespace: {e}"
+                ))));
+                return;
+            }
+        };
 
         // Send the isolate handle back so the caller can terminate on timeout.
         let isolate_handle = runtime.v8_isolate().thread_safe_handle();
@@ -79,11 +101,11 @@ pub(crate) fn run_worker(
 
         let isolate_handle = runtime.v8_isolate().thread_safe_handle();
 
-        // Cache of resolved function references. Avoids re-running execute_script on every call
-        // for the same function name. The cache is valid for the lifetime of the isolate because
-        // interceptor modules set their functions once during module evaluation and never change
-        // them. On timeout+recovery, cancel_terminate_execution() restores the isolate without
-        // invalidating existing globals, so the cache remains correct.
+        // Cache of resolved function references. Avoids re-running namespace lookup on every
+        // call for the same function name. The cache is valid for the lifetime of the isolate
+        // because interceptor modules set their functions once during module evaluation and
+        // never change them. On timeout+recovery, cancel_terminate_execution() restores the
+        // isolate without invalidating existing globals, so the cache remains correct.
         let mut fn_cache: HashMap<String, deno_core::v8::Global<deno_core::v8::Function>> =
             HashMap::new();
 
@@ -101,6 +123,7 @@ pub(crate) fn run_worker(
                 &call.arg,
                 call.body,
                 &mut fn_cache,
+                &module_namespace,
             )
             .await;
             let _ = call.reply.send(result);
@@ -114,31 +137,32 @@ async fn execute_call(
     arg: &serde_json::Value,
     body: Option<JsBody>,
     fn_cache: &mut HashMap<String, deno_core::v8::Global<deno_core::v8::Function>>,
+    module_namespace: &deno_core::v8::Global<deno_core::v8::Object>,
 ) -> Result<CallOutput, JsError> {
     use deno_core::v8;
 
-    // Step 1: Resolve the function reference, using the cache to avoid re-running
-    // execute_script on every call. On the first call for a given name we look up
-    // globalThis.<name>, store the Global<Function>, and reuse it thereafter.
+    // Step 1: Resolve the exported function reference, using the cache to avoid
+    // repeated namespace lookups. On the first call for a given name we look up
+    // the property on the module namespace object (its ES export), store the
+    // Global<Function>, and reuse it thereafter.
     let fn_global = if let Some(cached) = fn_cache.get(function_name) {
         cached.clone()
     } else {
-        let fn_script = format!(
-            "if (typeof globalThis.{n} !== \"function\") {{ throw new Error(\"__FUNCTION_NOT_FOUND__:{n}\"); }} globalThis.{n}",
-            n = function_name
-        );
-        let fn_val_global = runtime
-            .execute_script("<get-fn>", fn_script)
-            .map_err(|e| classify_error(e, function_name))?;
-
         let fn_global = {
             deno_core::scope!(scope, runtime);
-            let fn_local = v8::Local::new(scope, fn_val_global);
-            let fn_fn = v8::Local::<v8::Function>::try_from(fn_local)
+            let ns = v8::Local::new(scope, module_namespace);
+            let key = v8::String::new(scope, function_name)
+                .ok_or_else(|| JsError::FunctionNotFound(function_name.to_string()))?;
+            let export_val = ns
+                .get(scope, key.into())
+                .ok_or_else(|| JsError::FunctionNotFound(function_name.to_string()))?;
+            if export_val.is_undefined() || export_val.is_null() {
+                return Err(JsError::FunctionNotFound(function_name.to_string()));
+            }
+            let fn_fn = v8::Local::<v8::Function>::try_from(export_val)
                 .map_err(|_| JsError::FunctionNotFound(function_name.to_string()))?;
             v8::Global::new(scope, fn_fn)
         };
-
         fn_cache.insert(function_name.to_string(), fn_global.clone());
         fn_global
     };
@@ -184,7 +208,7 @@ async fn execute_call(
     let result_global = runtime
         .with_event_loop_promise(call_fut, PollEventLoopOptions::default())
         .await
-        .map_err(|e| classify_error(e, function_name))?;
+        .map_err(|e| JsError::ExecutionError(e.to_string()))?;
 
     // Step 4: Extract the result. Body is extracted separately via V8 type inspection
     // so it can be typed correctly (Uint8Array -> Bytes, string -> Text, object -> Json).
@@ -243,13 +267,4 @@ async fn execute_call(
         value,
         body: body_out,
     })
-}
-
-fn classify_error(e: impl std::fmt::Display, function_name: &str) -> JsError {
-    let msg = e.to_string();
-    if msg.contains("__FUNCTION_NOT_FOUND__:") {
-        JsError::FunctionNotFound(function_name.to_string())
-    } else {
-        JsError::ExecutionError(msg)
-    }
 }
