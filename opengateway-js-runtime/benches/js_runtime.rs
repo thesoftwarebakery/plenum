@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use opengateway_js_runtime::spawn_runtime_sync;
+use opengateway_js_runtime::{InterceptorPermissions, spawn_runtime_sync};
 use tokio::runtime::Runtime;
 
 fn fixture_path(name: &str) -> PathBuf {
@@ -17,7 +17,7 @@ fn fixture_path(name: &str) -> PathBuf {
 fn bench_spawn_runtime(c: &mut Criterion) {
     c.bench_function("spawn_runtime", |b| {
         b.iter(|| {
-            let _handle = spawn_runtime_sync(&fixture_path("hello.js")).unwrap();
+            let _handle = spawn_runtime_sync(&fixture_path("hello.js"), InterceptorPermissions::default()).unwrap();
             // Handle is dropped here, which stops the worker thread.
         });
     });
@@ -28,7 +28,7 @@ fn bench_spawn_runtime(c: &mut Criterion) {
 /// criterion's warm_up_time allows V8's JIT to stabilize before measurement.
 fn bench_call_roundtrip(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let handle = spawn_runtime_sync(&fixture_path("hello.js")).unwrap();
+    let handle = spawn_runtime_sync(&fixture_path("hello.js"), InterceptorPermissions::default()).unwrap();
 
     let mut group = c.benchmark_group("call_roundtrip");
     group.warm_up_time(Duration::from_secs(5));
@@ -56,7 +56,7 @@ fn bench_call_roundtrip(c: &mut Criterion) {
 /// The first call for each name pays the execute_script lookup once.
 fn bench_function_lookup(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    let handle = spawn_runtime_sync(&fixture_path("two_functions.js")).unwrap();
+    let handle = spawn_runtime_sync(&fixture_path("two_functions.js"), InterceptorPermissions::default()).unwrap();
 
     let mut group = c.benchmark_group("function_lookup");
     group.warm_up_time(Duration::from_secs(5));
