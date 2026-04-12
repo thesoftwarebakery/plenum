@@ -1,4 +1,4 @@
-globalThis.checkOptions = (input) => {
+export const checkOptions = (input) => {
   const opts = input.options ?? {};
   const { expectedHeader, expectedValue, denyStatus } = opts;
   const headerVal = input.headers[expectedHeader] || input.headers[expectedHeader.toLowerCase()] || input.headers[expectedHeader.toUpperCase()];

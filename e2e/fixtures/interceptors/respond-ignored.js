@@ -1,7 +1,7 @@
-globalThis.beforeUpstream = function (_request) {
+export function beforeUpstream(_request) {
   return { action: "respond", status: 403, body: "should be ignored" };
-};
+}
 
-globalThis.onResponse = function (_response) {
+export function onResponse(_response) {
   return { action: "respond", status: 403, body: "should be ignored" };
-};
+}

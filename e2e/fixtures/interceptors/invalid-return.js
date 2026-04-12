@@ -1,11 +1,11 @@
-globalThis.onRequest = function (_request) {
+export function onRequest(_request) {
   return { wrong: "shape" };
-};
+}
 
-globalThis.beforeUpstream = function (_request) {
+export function beforeUpstream(_request) {
   return { wrong: "shape" };
-};
+}
 
-globalThis.onResponse = function (_response) {
+export function onResponse(_response) {
   return { wrong: "shape" };
-};
+}
