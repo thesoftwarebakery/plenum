@@ -1,6 +1,9 @@
+mod ops;
+mod permissions;
 mod types;
 mod worker;
 
+pub use permissions::InterceptorPermissions;
 pub use types::{CallOutput, JsBody, JsError};
 
 use std::path::Path;
@@ -117,6 +120,7 @@ impl JsRuntimeHandle {
 /// The caller is responsible for waiting on the receiver (async or blocking).
 fn start_worker(
     module_source: types::ModuleSource,
+    permissions: InterceptorPermissions,
 ) -> Result<WorkerChannel, Box<dyn std::error::Error>> {
     let thread_name = match &module_source {
         types::ModuleSource::FilePath(path) => format!(
@@ -129,7 +133,7 @@ fn start_worker(
     let (ready_tx, ready_rx) = oneshot::channel();
     std::thread::Builder::new()
         .name(thread_name)
-        .spawn(move || worker::run_worker(module_source, rx, ready_tx))?;
+        .spawn(move || worker::run_worker(module_source, permissions, rx, ready_tx))?;
     Ok((ready_rx, tx))
 }
 
@@ -138,6 +142,7 @@ fn start_worker(
 /// The module must assign functions to `globalThis` (e.g. `globalThis.hello = function(input) { ... }`).
 pub async fn spawn_runtime(
     module_path: &Path,
+    permissions: InterceptorPermissions,
 ) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
     let module_path = module_path.canonicalize().map_err(|e| {
         format!(
@@ -145,7 +150,7 @@ pub async fn spawn_runtime(
             module_path.display()
         )
     })?;
-    let (ready_rx, tx) = start_worker(types::ModuleSource::FilePath(module_path))?;
+    let (ready_rx, tx) = start_worker(types::ModuleSource::FilePath(module_path), permissions)?;
     let ready = ready_rx
         .await
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
@@ -161,6 +166,7 @@ pub async fn spawn_runtime(
 /// Use this when no tokio runtime is available (e.g. during synchronous startup).
 pub fn spawn_runtime_sync(
     module_path: &Path,
+    permissions: InterceptorPermissions,
 ) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
     let module_path = module_path.canonicalize().map_err(|e| {
         format!(
@@ -168,7 +174,7 @@ pub fn spawn_runtime_sync(
             module_path.display()
         )
     })?;
-    let (ready_rx, tx) = start_worker(types::ModuleSource::FilePath(module_path))?;
+    let (ready_rx, tx) = start_worker(types::ModuleSource::FilePath(module_path), permissions)?;
     let ready = ready_rx
         .blocking_recv()
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
@@ -186,12 +192,13 @@ pub fn spawn_runtime_sync(
 pub async fn spawn_runtime_from_source(
     name: &str,
     source: &str,
+    permissions: InterceptorPermissions,
 ) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
     let module_source = types::ModuleSource::Inline {
         name: name.to_string(),
         source: source.to_string(),
     };
-    let (ready_rx, tx) = start_worker(module_source)?;
+    let (ready_rx, tx) = start_worker(module_source, permissions)?;
     let ready = ready_rx
         .await
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
@@ -208,12 +215,13 @@ pub async fn spawn_runtime_from_source(
 pub fn spawn_runtime_from_source_sync(
     name: &str,
     source: &str,
+    permissions: InterceptorPermissions,
 ) -> Result<JsRuntimeHandle, Box<dyn std::error::Error>> {
     let module_source = types::ModuleSource::Inline {
         name: name.to_string(),
         source: source.to_string(),
     };
-    let (ready_rx, tx) = start_worker(module_source)?;
+    let (ready_rx, tx) = start_worker(module_source, permissions)?;
     let ready = ready_rx
         .blocking_recv()
         .map_err(|_| "JS runtime worker thread exited before becoming ready")?
@@ -238,7 +246,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_call_hello() {
-        let handle = spawn_runtime(&fixture_path("hello.js")).await.unwrap();
+        let handle = spawn_runtime(&fixture_path("hello.js"), InterceptorPermissions::default())
+            .await
+            .unwrap();
         let result = handle
             .call(
                 "hello",
@@ -255,7 +265,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_function_not_found() {
-        let handle = spawn_runtime(&fixture_path("hello.js")).await.unwrap();
+        let handle = spawn_runtime(&fixture_path("hello.js"), InterceptorPermissions::default())
+            .await
+            .unwrap();
         let result = handle
             .call(
                 "nonexistent",
@@ -270,7 +282,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_execution_error() {
-        let handle = spawn_runtime(&fixture_path("throws.js")).await.unwrap();
+        let handle = spawn_runtime(
+            &fixture_path("throws.js"),
+            InterceptorPermissions::default(),
+        )
+        .await
+        .unwrap();
         let result = handle
             .call(
                 "doThrow",
@@ -285,13 +302,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_module_not_found() {
-        let result = spawn_runtime(Path::new("/nonexistent/module.js")).await;
+        let result = spawn_runtime(
+            Path::new("/nonexistent/module.js"),
+            InterceptorPermissions::default(),
+        )
+        .await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_timeout() {
-        let handle = spawn_runtime(&fixture_path("infinite.js")).await.unwrap();
+        let handle = spawn_runtime(
+            &fixture_path("infinite.js"),
+            InterceptorPermissions::default(),
+        )
+        .await
+        .unwrap();
         let result = handle
             .call(
                 "infinite",
@@ -306,7 +332,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_calls() {
-        let handle = spawn_runtime(&fixture_path("hello.js")).await.unwrap();
+        let handle = spawn_runtime(&fixture_path("hello.js"), InterceptorPermissions::default())
+            .await
+            .unwrap();
 
         let r1 = handle
             .call(
@@ -334,7 +362,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_recovery_after_timeout() {
-        let handle = spawn_runtime(&fixture_path("mixed.js")).await.unwrap();
+        let handle = spawn_runtime(&fixture_path("mixed.js"), InterceptorPermissions::default())
+            .await
+            .unwrap();
 
         // First call: timeout on infinite loop.
         let timeout_result = handle
@@ -365,7 +395,9 @@ mod tests {
 
     #[test]
     fn test_spawn_runtime_sync() {
-        let handle = spawn_runtime_sync(&fixture_path("hello.js")).unwrap();
+        let handle =
+            spawn_runtime_sync(&fixture_path("hello.js"), InterceptorPermissions::default())
+                .unwrap();
         // Use a temporary tokio runtime to call the async method.
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt
@@ -381,7 +413,9 @@ mod tests {
 
     #[test]
     fn test_call_blocking() {
-        let handle = spawn_runtime_sync(&fixture_path("hello.js")).unwrap();
+        let handle =
+            spawn_runtime_sync(&fixture_path("hello.js"), InterceptorPermissions::default())
+                .unwrap();
         let result = handle
             .call_blocking(
                 "hello",
@@ -395,7 +429,11 @@ mod tests {
 
     #[test]
     fn test_call_blocking_timeout() {
-        let handle = spawn_runtime_sync(&fixture_path("infinite.js")).unwrap();
+        let handle = spawn_runtime_sync(
+            &fixture_path("infinite.js"),
+            InterceptorPermissions::default(),
+        )
+        .unwrap();
         let result = handle.call_blocking(
             "infinite",
             serde_json::json!({}),
@@ -412,9 +450,10 @@ mod tests {
                 return { greeting: "hi " + input.name };
             };
         "#;
-        let handle = spawn_runtime_from_source("test-inline", source)
-            .await
-            .unwrap();
+        let handle =
+            spawn_runtime_from_source("test-inline", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
         let result = handle
             .call(
                 "hello",
@@ -430,18 +469,83 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_from_source_syntax_error() {
         let source = "this is not valid javascript }{{{";
-        let result = spawn_runtime_from_source("bad-source", source).await;
+        let result =
+            spawn_runtime_from_source("bad-source", source, InterceptorPermissions::default())
+                .await;
         assert!(result.is_err());
     }
 
     #[test]
     fn test_spawn_from_source_sync() {
         let source = r#"globalThis.greet = function(i) { return { msg: "ok" }; };"#;
-        let handle = spawn_runtime_from_source_sync("sync-inline", source).unwrap();
+        let handle = spawn_runtime_from_source_sync(
+            "sync-inline",
+            source,
+            InterceptorPermissions::default(),
+        )
+        .unwrap();
         let rt = tokio::runtime::Runtime::new().unwrap();
         let result = rt
             .block_on(handle.call("greet", serde_json::json!({}), None, Duration::from_secs(5)))
             .unwrap();
         assert_eq!(result.value, serde_json::json!({"msg": "ok"}));
+    }
+
+    /// Interceptor that reads Deno.env.get("TEST_VAR") and returns it.
+    #[tokio::test]
+    async fn test_env_op_allowed() {
+        let source = r#"
+            globalThis.readEnv = function(input) {
+                const val = Deno.env.get(input.key);
+                return { value: val || null };
+            };
+        "#;
+        let mut perms = InterceptorPermissions::default();
+        perms.allowed_env_vars.insert("TEST_VAR".to_string());
+
+        // SAFETY: test-only, single-threaded tokio test, no races.
+        unsafe { std::env::set_var("TEST_VAR", "hello_from_env") };
+        let handle = spawn_runtime_from_source("env-allowed", source, perms)
+            .await
+            .unwrap();
+        let result = handle
+            .call(
+                "readEnv",
+                serde_json::json!({"key": "TEST_VAR"}),
+                None,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.value, serde_json::json!({"value": "hello_from_env"}));
+    }
+
+    /// Interceptor that tries to read Deno.env.get("SECRET") without permission should fail.
+    #[tokio::test]
+    async fn test_env_op_denied() {
+        let source = r#"
+            globalThis.readEnv = function(input) {
+                const val = Deno.env.get(input.key);
+                return { value: val || null };
+            };
+        "#;
+        // Default permissions: no env vars allowed.
+        let handle =
+            spawn_runtime_from_source("env-denied", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
+        let result = handle
+            .call(
+                "readEnv",
+                serde_json::json!({"key": "SECRET"}),
+                None,
+                Duration::from_secs(5),
+            )
+            .await;
+        // Should fail because SECRET is not in allowed_env_vars.
+        assert!(
+            matches!(result, Err(JsError::ExecutionError(_))),
+            "expected ExecutionError for denied env access, got: {result:?}"
+        );
     }
 }

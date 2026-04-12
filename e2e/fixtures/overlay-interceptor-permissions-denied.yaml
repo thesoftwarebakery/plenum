@@ -1,0 +1,13 @@
+overlay: 1.1.0
+info:
+  title: Test permission denial
+  version: 1.0.0
+actions:
+  - target: $.paths['/products'].get
+    update:
+      x-opengateway-interceptor:
+        - module: "./interceptors/read-env.js"
+          hook: on_request
+          function: readEnv
+          options:
+            envVar: "SECRET_VALUE"

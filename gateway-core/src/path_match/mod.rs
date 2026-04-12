@@ -116,14 +116,38 @@ fn build_operation_interceptors(
 
         // Deduplicate: reuse handle if this module was already spawned.
         let runtime = match runtime_cache.entry(cache_key) {
-            std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+            std::collections::hash_map::Entry::Occupied(e) => {
+                // The runtime for this module was already spawned with the first config's
+                // permissions. Permissions are per-runtime, not per-call, so any permissions
+                // declared on subsequent configs for the same module are silently ignored.
+                // Warn so operators know their permissions config has no effect.
+                if config.permissions.is_some() {
+                    log::warn!(
+                        "interceptor module '{}' is referenced multiple times; permissions \
+                         declared here are ignored -- only the first reference's permissions \
+                         take effect",
+                        config.module
+                    );
+                }
+                e.get().clone()
+            }
             std::collections::hash_map::Entry::Vacant(e) => {
+                let permissions = config
+                    .permissions
+                    .clone()
+                    .map(|p| p.into_runtime_permissions())
+                    .unwrap_or_default();
+
                 let h = Arc::new(match &resolved {
                     module_resolver::ResolvedModule::File(path) => {
-                        opengateway_js_runtime::spawn_runtime_sync(path)?
+                        opengateway_js_runtime::spawn_runtime_sync(path, permissions)?
                     }
                     module_resolver::ResolvedModule::Internal { name, source } => {
-                        opengateway_js_runtime::spawn_runtime_from_source_sync(name, source)?
+                        opengateway_js_runtime::spawn_runtime_from_source_sync(
+                            name,
+                            source,
+                            permissions,
+                        )?
                     }
                 });
                 e.insert(h).clone()
