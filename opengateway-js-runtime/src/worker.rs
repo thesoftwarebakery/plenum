@@ -6,6 +6,7 @@ use deno_core::PollEventLoopOptions;
 use deno_core::RuntimeOptions;
 use tokio::sync::{mpsc, oneshot};
 
+use crate::loader::GatewayModuleLoader;
 use crate::ops::opengateway_runtime_ext;
 use crate::permissions::InterceptorPermissions;
 use crate::types::{CallOutput, JsBody, JsCall, JsError, ModuleSource, WorkerReady};

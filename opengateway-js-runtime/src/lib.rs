@@ -1,3 +1,4 @@
+mod loader;
 mod ops;
 mod permissions;
 mod types;
