@@ -1,8 +1,8 @@
 use deno_core::{
-    FsModuleLoader, ModuleLoadOptions, ModuleLoadResponse, ModuleLoadReferrer, ModuleLoader,
+    FsModuleLoader, ModuleLoadOptions, ModuleLoadReferrer, ModuleLoadResponse, ModuleLoader,
     ModuleSource, ModuleSourceCode, ModuleSpecifier, ModuleType, ResolutionKind, resolve_import,
 };
-use deno_core::error::ModuleLoaderError;
+use deno_error::JsErrorBox;
 
 /// Module loader for the gateway JS runtime.
 ///
@@ -37,8 +37,8 @@ impl ModuleLoader for GatewayModuleLoader {
         specifier: &str,
         referrer: &str,
         _kind: ResolutionKind,
-    ) -> Result<ModuleSpecifier, ModuleLoaderError> {
-        resolve_import(specifier, referrer).map_err(ModuleLoaderError::from_err)
+    ) -> Result<ModuleSpecifier, JsErrorBox> {
+        resolve_import(specifier, referrer).map_err(JsErrorBox::from_err)
     }
 
     fn load(
