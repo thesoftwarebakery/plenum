@@ -20,7 +20,7 @@ for (const entry of entries) {
     entryPoints: [entry],
     outfile,
     bundle: true,
-    format: 'iife',
+    format: 'esm',
     platform: 'neutral',
     mainFields: ['module', 'main'],
     minify: false,

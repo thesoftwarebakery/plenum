@@ -1,4 +1,4 @@
-globalThis.onRequest = function(req) {
+export function onRequest(req) {
   if (req.body && req.body.block === true) {
     return {
       action: "respond",
@@ -8,4 +8,4 @@ globalThis.onRequest = function(req) {
     };
   }
   return { action: "continue" };
-};
+}

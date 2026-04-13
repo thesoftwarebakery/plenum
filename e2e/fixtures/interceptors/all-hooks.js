@@ -1,11 +1,11 @@
-globalThis.onRequest = function (_request) {
+export function onRequest(_request) {
   return { action: "continue", headers: { "x-on-request": "fired" } };
-};
+}
 
-globalThis.beforeUpstream = function (_request) {
+export function beforeUpstream(_request) {
   return { action: "continue", headers: { "x-before-upstream": "fired" } };
-};
+}
 
-globalThis.onResponse = function (_response) {
+export function onResponse(_response) {
   return { action: "continue", headers: { "x-on-response": "fired" } };
-};
+}

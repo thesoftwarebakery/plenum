@@ -75,7 +75,11 @@ fn bench_function_lookup(c: &mut Criterion) {
     let mut i = 0u64;
     group.bench_function("alternating_cached", |b| {
         b.iter(|| {
-            let name = if i % 2 == 0 { "hello" } else { "goodbye" };
+            let name = if i.is_multiple_of(2) {
+                "hello"
+            } else {
+                "goodbye"
+            };
             i += 1;
             rt.block_on(handle.call(
                 name,

@@ -1,11 +1,11 @@
-globalThis.onRequest = function (_request) {
+export function onRequest(_request) {
   throw new Error("boom from on_request");
-};
+}
 
-globalThis.beforeUpstream = function (_request) {
+export function beforeUpstream(_request) {
   throw new Error("boom from before_upstream");
-};
+}
 
-globalThis.onResponse = function (_response) {
+export function onResponse(_response) {
   throw new Error("boom from on_response");
-};
+}

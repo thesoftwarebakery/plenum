@@ -1,4 +1,4 @@
-globalThis.readEnv = function(request) {
+export function readEnv(request) {
   var envVar = request.options && request.options.envVar;
   try {
     var value = Deno.env.get(envVar);
@@ -14,4 +14,4 @@ globalThis.readEnv = function(request) {
       body: { error: e.message }
     };
   }
-};
+}

@@ -1,6 +1,7 @@
-globalThis.hello = function(input) {
+export function hello(input) {
   return { action: "continue", greeting: "hi " + input.name };
-};
-globalThis.goodbye = function(input) {
+}
+
+export function goodbye(input) {
   return { action: "continue", farewell: "bye " + input.name };
-};
+}
