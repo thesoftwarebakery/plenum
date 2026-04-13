@@ -5,10 +5,9 @@
  * from an environment variable whose name is provided in the interceptor
  * options, allowing secrets to stay out of the OpenAPI spec.
  *
- * NOTE: Environment variable access requires Phase 3 (Deno.env permission
- * op). Until that is implemented, `Deno.env.get` is not available in the
- * runtime sandbox. The interceptor handles this gracefully by returning a
- * 500 error when the env access is unavailable, rather than crashing.
+ * NOTE: Environment variable access is provided via the `OpenGateway.env.get`
+ * API injected by the gateway runtime. The interceptor handles the case where
+ * it is unavailable gracefully by returning a 500 error rather than crashing.
  *
  * Interceptor contract:
  *   - `request.options.envVar`  -- name of the env var holding the expected
@@ -82,19 +81,7 @@ export function checkApiKey(
     };
   }
 
-  // Deno.env.get is injected by the gateway runtime (Phase 3). If it is not
-  // yet available, fail closed with a 500 rather than allowing unauthenticated
-  // access.
-  const denoEnv = (globalThis as { Deno?: { env?: { get?: (k: string) => string | undefined } } }).Deno?.env;
-  if (!denoEnv || typeof denoEnv.get !== "function") {
-    return {
-      action: "respond",
-      status: 500,
-      body: { error: "auth-apikey: environment variable access is not available" },
-    };
-  }
-
-  const expectedKey = denoEnv.get(envVar);
+  const expectedKey = OpenGateway.env.get(envVar);
 
   // If the env var is not set, the gateway is misconfigured -- fail with 500.
   if (!expectedKey) {

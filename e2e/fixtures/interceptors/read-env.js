@@ -1,7 +1,7 @@
 export function readEnv(request) {
   var envVar = request.options && request.options.envVar;
   try {
-    var value = Deno.env.get(envVar);
+    var value = OpenGateway.env.get(envVar);
     return {
       action: "continue",
       headers: { "x-env-value": value || "not-set" }

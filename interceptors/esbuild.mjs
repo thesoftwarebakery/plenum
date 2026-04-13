@@ -10,7 +10,7 @@ const outDir = join(__dirname, '..', 'gateway-core', 'js', 'dist');
 mkdirSync(outDir, { recursive: true });
 
 const entries = readdirSync(srcDir)
-  .filter(f => f.endsWith('.ts'))
+  .filter(f => f.endsWith('.ts') && !f.endsWith('.d.ts'))
   .map(f => join(srcDir, f));
 
 for (const entry of entries) {
