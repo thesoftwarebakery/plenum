@@ -548,4 +548,219 @@ mod tests {
             "expected ExecutionError for denied env access, got: {result:?}"
         );
     }
+
+    // ---- Web Platform API tests ---------------------------------------------------
+
+    /// Starts a minimal HTTP/1.1 server that responds 200 OK with a fixed JSON body.
+    /// Returns the bound port. The server runs until the returned JoinHandle is dropped.
+    async fn start_stub_http_server(
+        response_body: &'static str,
+    ) -> (u16, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        // Bind before spawning so the port is ready synchronously.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    // Drain incoming request bytes before replying.
+                    let mut buf = [0u8; 4096];
+                    let _ = stream.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response_body.len(),
+                        response_body
+                    );
+                    let _ = stream.write_all(resp.as_bytes()).await;
+                });
+            }
+        });
+
+        (port, handle)
+    }
+
+    #[tokio::test]
+    async fn test_async_fetch_allowed() {
+        let (port, _server) = start_stub_http_server(r#"{"ok":true}"#).await;
+        let url = format!("http://127.0.0.1:{port}/test");
+
+        let source = format!(
+            r#"
+            globalThis.doFetch = async function(input) {{
+                const resp = await fetch(input.url);
+                const data = await resp.json();
+                return {{ status: resp.status, ok: data.ok }};
+            }};
+            "#
+        );
+
+        let mut perms = InterceptorPermissions::default();
+        perms.allowed_hosts.insert("127.0.0.1".to_string());
+
+        let handle = spawn_runtime_from_source("fetch-allowed", source.leak(), perms)
+            .await
+            .unwrap();
+
+        let result = handle
+            .call(
+                "doFetch",
+                serde_json::json!({ "url": url }),
+                None,
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.value["status"], 200);
+        assert_eq!(result.value["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_denied() {
+        let source = r#"
+            globalThis.doFetch = async function(input) {
+                const resp = await fetch("http://example.com");
+                return { status: resp.status };
+            };
+        "#;
+
+        let handle =
+            spawn_runtime_from_source("fetch-denied", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
+
+        let result = handle
+            .call(
+                "doFetch",
+                serde_json::json!({}),
+                None,
+                Duration::from_secs(5),
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(JsError::ExecutionError(_))),
+            "expected ExecutionError for denied fetch, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_crypto_random_uuid() {
+        let source = r#"
+            globalThis.getUuid = function() {
+                return { uuid: crypto.randomUUID() };
+            };
+        "#;
+
+        let handle =
+            spawn_runtime_from_source("crypto-uuid", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
+
+        let result = handle
+            .call(
+                "getUuid",
+                serde_json::json!({}),
+                None,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+
+        let uuid = result.value["uuid"].as_str().unwrap();
+        // UUID v4 format: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+        assert_eq!(uuid.len(), 36);
+        assert_eq!(uuid.chars().filter(|&c| c == '-').count(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_text_encoder_decoder() {
+        let source = r#"
+            globalThis.roundtrip = function(input) {
+                const encoded = new TextEncoder().encode(input.text);
+                const decoded = new TextDecoder().decode(encoded);
+                return { decoded };
+            };
+        "#;
+
+        let handle =
+            spawn_runtime_from_source("text-encoder", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
+
+        let result = handle
+            .call(
+                "roundtrip",
+                serde_json::json!({ "text": "hello world" }),
+                None,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.value["decoded"], "hello world");
+    }
+
+    #[tokio::test]
+    async fn test_url_parse() {
+        let source = r#"
+            globalThis.parseUrl = function(input) {
+                const url = new URL(input.raw);
+                return { host: url.hostname, path: url.pathname };
+            };
+        "#;
+
+        let handle =
+            spawn_runtime_from_source("url-parse", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
+
+        let result = handle
+            .call(
+                "parseUrl",
+                serde_json::json!({ "raw": "https://example.com/api/v1?foo=bar" }),
+                None,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.value["host"], "example.com");
+        assert_eq!(result.value["path"], "/api/v1");
+    }
+
+    #[tokio::test]
+    async fn test_console_no_crash() {
+        let source = r#"
+            globalThis.logStuff = function() {
+                console.log("hello from interceptor");
+                console.warn("a warning");
+                console.error("an error");
+                return { ok: true };
+            };
+        "#;
+
+        let handle =
+            spawn_runtime_from_source("console", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
+
+        let result = handle
+            .call(
+                "logStuff",
+                serde_json::json!({}),
+                None,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.value["ok"], true);
+    }
 }

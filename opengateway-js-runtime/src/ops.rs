@@ -3,14 +3,6 @@ use deno_error::JsErrorBox;
 
 use crate::permissions::InterceptorPermissions;
 
-/// Response from an outbound HTTP fetch.
-#[derive(serde::Serialize)]
-pub struct FetchResponse {
-    pub status: u16,
-    pub body: String,
-    pub headers: std::collections::HashMap<String, String>,
-}
-
 /// Read an environment variable. Requires the variable name to be in the
 /// interceptor's allowed_env_vars set.
 /// Returns the value as a string, or undefined if the variable is not set.
@@ -33,63 +25,42 @@ fn op_read_file(state: &mut OpState, #[string] path: String) -> Result<String, J
     std::fs::read_to_string(p).map_err(|e| JsErrorBox::generic(format!("read_file failed: {e}")))
 }
 
-/// Make an outbound HTTP request. The hostname must be in the interceptor's
-/// allowed_hosts set.
-#[op2]
-#[serde]
-fn op_fetch(
-    state: &mut OpState,
-    #[string] url: String,
-    #[string] method: String,
-    #[string] body: String,
-) -> Result<FetchResponse, JsErrorBox> {
-    // Extract hostname for the permission check.
-    let parsed =
-        url::Url::parse(&url).map_err(|e| JsErrorBox::generic(format!("invalid URL: {e}")))?;
-    let host = parsed
-        .host_str()
-        .ok_or_else(|| JsErrorBox::generic("URL has no host".to_string()))?
-        .to_string();
+// Stub extension named "deno_net" that provides ext:deno_net/02_tls.js and
+// ext:deno_net/03_quic.js. deno_fetch imports loadTlsKeyPair for custom TLS;
+// deno_web's webtransport.js imports QUIC helpers. Neither is used by interceptors.
+extension!(
+    deno_net,
+    esm = [
+        "ext:deno_net/02_tls.js" = "src/02_tls.js",
+        "ext:deno_net/03_quic.js" = "src/stub_quic.js",
+    ],
+);
 
-    {
-        let perms = state.borrow::<InterceptorPermissions>();
-        perms.check_net(&host).map_err(JsErrorBox::generic)?;
-    } // borrow released before network I/O
+// Stub extension named "deno_telemetry" that provides ext:deno_telemetry/telemetry.ts
+// and ext:deno_telemetry/util.ts. deno_fetch's 26_fetch.js imports tracing symbols
+// from these modules. With TRACING_ENABLED=false the tracing paths are bypassed
+// so all exports beyond that flag are safe no-ops. Must come before deno_fetch.
+extension!(
+    deno_telemetry,
+    esm = [
+        "ext:deno_telemetry/telemetry.ts" = "src/stub_telemetry.js",
+        "ext:deno_telemetry/util.ts" = "src/stub_telemetry_util.js",
+    ],
+);
 
-    // Build an http::Request with the given method, then run it via ureq.
-    let http_method = ureq::http::Method::from_bytes(method.as_bytes())
-        .map_err(|e| JsErrorBox::generic(format!("invalid HTTP method: {e}")))?;
-
-    let request = ureq::http::Request::builder()
-        .method(http_method)
-        .uri(&url)
-        .body(body.into_bytes())
-        .map_err(|e| JsErrorBox::generic(format!("failed to build request: {e}")))?;
-
-    let mut response =
-        ureq::run(request).map_err(|e| JsErrorBox::generic(format!("fetch failed: {e}")))?;
-
-    let status = response.status().as_u16();
-    let mut headers = std::collections::HashMap::new();
-    for (key, val) in response.headers() {
-        if let Ok(val_str) = val.to_str() {
-            headers.insert(key.to_string(), val_str.to_string());
-        }
-    }
-    let body_str = response
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| JsErrorBox::generic(format!("failed to read response body: {e}")))?;
-
-    Ok(FetchResponse {
-        status,
-        body: body_str,
-        headers,
-    })
-}
+// Stub extension named "deno_node" providing the minimal subset of Node.js compat
+// modules referenced at startup by deno_crypto. The kKeyObject symbol only needs to
+// be consistent within this runtime; no Node.js interop is required.
+extension!(
+    deno_node,
+    esm = ["ext:deno_node/internal/crypto/constants.ts" = "src/stub_node_crypto_constants.js",],
+);
 
 extension!(
     opengateway_runtime_ext,
-    ops = [op_read_env, op_read_file, op_fetch],
+    deps = [deno_web],
+    ops = [op_read_env, op_read_file],
+    esm_entry_point = "ext:opengateway_runtime_ext/runtime_entry.js",
+    esm = ["ext:opengateway_runtime_ext/runtime_entry.js" = "src/runtime_entry.js"],
     js = ["src/runtime_api.js"],
 );

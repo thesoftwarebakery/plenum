@@ -1,0 +1,16 @@
+overlay: 1.1.0
+info:
+  title: Attach fetch-external interceptor with net permission
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-opengateway-interceptor:
+        - module: "./interceptors/fetch-external.js"
+          hook: on_request
+          function: onRequest
+          options:
+            externalHost: "external-api:8080"
+          permissions:
+            net:
+              - "external-api"

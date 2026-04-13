@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use deno_core::JsRuntime;
 use deno_core::ModuleSpecifier;
@@ -6,7 +7,7 @@ use deno_core::PollEventLoopOptions;
 use deno_core::RuntimeOptions;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::ops::opengateway_runtime_ext;
+use crate::ops::{deno_net, deno_node, deno_telemetry, opengateway_runtime_ext};
 use crate::permissions::InterceptorPermissions;
 use crate::types::{CallOutput, JsBody, JsCall, JsError, ModuleSource, WorkerReady};
 
@@ -23,12 +24,40 @@ pub(crate) fn run_worker(
         .expect("failed to create tokio runtime for JS worker");
 
     rt.block_on(async move {
-        let ext = opengateway_runtime_ext::init();
+        // Extensions must be initialized in dependency order.
+        let blob_store = Arc::new(deno_web::BlobStore::default());
+        let extensions = vec![
+            deno_webidl::deno_webidl::init(),
+            deno_web::deno_web::init(
+                blob_store,
+                None,
+                deno_web::InMemoryBroadcastChannel::default(),
+            ),
+            // A stub deno_net extension that satisfies deno_fetch's import of
+            // ext:deno_net/02_tls.js (loadTlsKeyPair). Must come before deno_fetch.
+            deno_net::init(),
+            // A stub deno_telemetry extension satisfying deno_fetch's imports of
+            // ext:deno_telemetry/telemetry.ts and ext:deno_telemetry/util.ts.
+            // TRACING_ENABLED=false disables all tracing paths. Must come before deno_fetch.
+            deno_telemetry::init(),
+            deno_fetch::deno_fetch::init(deno_fetch::Options::default()),
+            // A stub deno_node extension providing kKeyObject for deno_crypto's 00_crypto.js.
+            // Must come before deno_crypto.
+            deno_node::init(),
+            deno_crypto::deno_crypto::init(None),
+            opengateway_runtime_ext::init(),
+        ];
         let mut runtime = JsRuntime::new(RuntimeOptions {
             module_loader: Some(std::rc::Rc::new(deno_core::FsModuleLoader)),
-            extensions: vec![ext],
+            extensions,
             ..Default::default()
         });
+
+        // Insert both permission types into OpState:
+        //   - PermissionsContainer: used by deno_fetch and deno_web for network/fetch gating
+        //   - InterceptorPermissions: used by our custom op_read_env / op_read_file ops
+        let deno_perms = permissions.to_deno_permissions_container();
+        runtime.op_state().borrow_mut().put(deno_perms);
         runtime.op_state().borrow_mut().put(permissions);
 
         match module_source {

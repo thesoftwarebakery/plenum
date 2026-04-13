@@ -1,5 +1,11 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use deno_permissions::{
+    Permissions, PermissionsContainer, PermissionsOptions, RuntimePermissionDescriptorParser,
+};
+use sys_traits::impls::RealSys;
 
 /// Permissions granted to a single interceptor module.
 /// Constructed from the `permissions` block in the interceptor overlay config.
@@ -50,6 +56,33 @@ impl InterceptorPermissions {
                 "Permission denied: outbound network access to '{host}' is not allowed"
             ))
         }
+    }
+
+    /// Convert to a `deno_permissions::PermissionsContainer` for use by `deno_fetch` and
+    /// `deno_web` extensions. The mapping is:
+    ///
+    /// - `allowed_hosts` -> `allow_net` (hostname strings, e.g. "example.com" or "example.com:443")
+    /// - All other categories -> `None` (deny all)
+    /// - `prompt = false` (never prompt -- deny-all by default)
+    ///
+    /// Our own `InterceptorPermissions` remains in `OpState` for `op_read_env` / `op_read_file`.
+    pub fn to_deno_permissions_container(&self) -> PermissionsContainer {
+        let parser = Arc::new(RuntimePermissionDescriptorParser::new(RealSys));
+        let allow_net = if self.allowed_hosts.is_empty() {
+            None // None = deny all
+        } else {
+            Some(self.allowed_hosts.iter().cloned().collect())
+        };
+        let perms = Permissions::from_options(
+            &*parser,
+            &PermissionsOptions {
+                allow_net,
+                prompt: false,
+                ..Default::default()
+            },
+        )
+        .expect("valid permission options");
+        PermissionsContainer::new(parser, perms)
     }
 }
 
