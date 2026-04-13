@@ -19,15 +19,7 @@ function checkApiKey(request) {
       body: { error: "auth-apikey: missing required options (envVar, header)" }
     };
   }
-  const denoEnv = globalThis.Deno?.env;
-  if (!denoEnv || typeof denoEnv.get !== "function") {
-    return {
-      action: "respond",
-      status: 500,
-      body: { error: "auth-apikey: environment variable access is not available" }
-    };
-  }
-  const expectedKey = denoEnv.get(envVar);
+  const expectedKey = OpenGateway.env.get(envVar);
   if (!expectedKey) {
     return {
       action: "respond",
