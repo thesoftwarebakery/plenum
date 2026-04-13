@@ -51,8 +51,7 @@ pub(crate) fn run_worker(
                         return;
                     }
                 };
-                let loader =
-                    GatewayModuleLoader::with_embedded(specifier.clone(), source.clone());
+                let loader = GatewayModuleLoader::with_embedded(specifier.clone(), source.clone());
                 (loader, specifier)
             }
         };
