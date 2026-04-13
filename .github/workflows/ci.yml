@@ -11,6 +11,11 @@ jobs:
   check-and-test:
     name: Check & Test
     runs-on: ubuntu-latest
+    env:
+      # brotli 3.x (pingora, ffi-api default) and brotli 6.x (deno_web, ffi-api
+      # explicit) both export identical C FFI symbols. GNU ld rejects duplicates;
+      # the symbols are functionally identical so picking either is safe.
+      RUSTFLAGS: "-C link-args=-Wl,--allow-multiple-definition"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

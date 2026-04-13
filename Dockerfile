@@ -18,7 +18,11 @@ COPY openapi-overlay/ openapi-overlay/
 COPY opengateway-js-runtime/ opengateway-js-runtime/
 COPY --from=js-builder /usr/src/opengateway/gateway-core/js/dist/ gateway-core/js/dist/
 
-RUN cargo build --release -p gateway-core
+# --allow-multiple-definition: brotli 3.x (pingora, ffi-api default) and
+# brotli 6.x (deno_web, ffi-api explicit) both export identical C FFI symbols.
+# GNU ld rejects duplicates; macOS ld64 allows them silently. The symbols are
+# functionally identical so picking either definition is safe.
+RUN RUSTFLAGS="-C link-args=-Wl,--allow-multiple-definition" cargo build --release -p gateway-core
 
 FROM debian:bookworm-slim
 
