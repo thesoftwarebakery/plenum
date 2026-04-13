@@ -1,3 +1,4 @@
+mod loader;
 mod ops;
 mod permissions;
 mod types;
@@ -139,7 +140,7 @@ fn start_worker(
 
 /// Spawn a new JS runtime on a dedicated thread, loading the given ES module.
 ///
-/// The module must assign functions to `globalThis` (e.g. `globalThis.hello = function(input) { ... }`).
+/// Interceptor functions must be exported using `export function <name>(...)` syntax.
 pub async fn spawn_runtime(
     module_path: &Path,
     permissions: InterceptorPermissions,
@@ -187,8 +188,8 @@ pub fn spawn_runtime_sync(
 
 /// Spawn a new JS runtime on a dedicated thread, executing the given inline JS source.
 ///
-/// The source must assign functions to `globalThis`. The `name` is used for error messages
-/// and thread naming.
+/// Interceptor functions must be exported using `export function <name>(...)` syntax.
+/// The `name` is used for error messages and thread naming.
 pub async fn spawn_runtime_from_source(
     name: &str,
     source: &str,
@@ -446,9 +447,9 @@ mod tests {
     #[tokio::test]
     async fn test_spawn_from_source() {
         let source = r#"
-            globalThis.hello = function(input) {
+            export function hello(input) {
                 return { greeting: "hi " + input.name };
-            };
+            }
         "#;
         let handle =
             spawn_runtime_from_source("test-inline", source, InterceptorPermissions::default())
@@ -477,7 +478,7 @@ mod tests {
 
     #[test]
     fn test_spawn_from_source_sync() {
-        let source = r#"globalThis.greet = function(i) { return { msg: "ok" }; };"#;
+        let source = r#"export function greet(i) { return { msg: "ok" }; }"#;
         let handle = spawn_runtime_from_source_sync(
             "sync-inline",
             source,
@@ -495,10 +496,10 @@ mod tests {
     #[tokio::test]
     async fn test_env_op_allowed() {
         let source = r#"
-            globalThis.readEnv = function(input) {
+            export function readEnv(input) {
                 const val = Deno.env.get(input.key);
                 return { value: val || null };
-            };
+            }
         "#;
         let mut perms = InterceptorPermissions::default();
         perms.allowed_env_vars.insert("TEST_VAR".to_string());
@@ -524,10 +525,10 @@ mod tests {
     #[tokio::test]
     async fn test_env_op_denied() {
         let source = r#"
-            globalThis.readEnv = function(input) {
+            export function readEnv(input) {
                 const val = Deno.env.get(input.key);
                 return { value: val || null };
-            };
+            }
         "#;
         // Default permissions: no env vars allowed.
         let handle =

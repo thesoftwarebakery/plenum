@@ -1,6 +1,6 @@
-globalThis.onRequest = function(_request) {
+export function onRequest(_request) {
   return {
     action: "continue",
     headers: { "x-intercepted": "true" },
   };
-};
+}

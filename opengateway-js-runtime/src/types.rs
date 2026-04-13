@@ -7,9 +7,8 @@ pub(crate) enum ModuleSource {
     FilePath(std::path::PathBuf),
     /// Inline source code with a logical name.
     ///
-    /// The source is evaluated via `execute_script` (classic script context),
-    /// so ES module syntax (`import`/`export` statements) is not supported.
-    /// Functions must be assigned to `globalThis`.
+    /// The source is loaded as an ES module. Functions must be exported using
+    /// `export function <name>(...)` syntax.
     Inline { name: String, source: String },
 }
 

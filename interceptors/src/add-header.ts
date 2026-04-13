@@ -40,10 +40,7 @@ interface ContinueResult {
   headers?: Record<string, string>;
 }
 
-(globalThis as any).onRequest = function (request: InterceptorRequest): ContinueResult {
-  // Fall back to an empty object if no headers were configured.
+export function onRequest(request: InterceptorRequest): ContinueResult {
   const headers = (request.options && request.options.headers) || {};
   return { action: "continue", headers };
-};
-
-export {};
+}

@@ -1,3 +1,3 @@
-globalThis.hello = function(input) {
+export function hello(input) {
   return { greeting: "hi " + input.name };
-};
+}
