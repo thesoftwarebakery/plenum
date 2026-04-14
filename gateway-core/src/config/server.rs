@@ -17,6 +17,8 @@ pub struct ServerConfig {
     pub listen: String,
     #[serde(default)]
     pub interceptor_default_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub plugin_default_timeout_ms: Option<u64>,
 }
 
 impl Default for ServerConfig {
@@ -26,6 +28,7 @@ impl Default for ServerConfig {
             daemon: false,
             listen: default_listen(),
             interceptor_default_timeout_ms: None,
+            plugin_default_timeout_ms: None,
         }
     }
 }
@@ -78,5 +81,21 @@ mod tests {
         let json = serde_json::json!({});
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.interceptor_default_timeout_ms, None);
+    }
+
+    #[test]
+    fn deserializes_plugin_default_timeout_ms() {
+        let json = serde_json::json!({
+            "plugin_default_timeout_ms": 3000
+        });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.plugin_default_timeout_ms, Some(3000));
+    }
+
+    #[test]
+    fn plugin_default_timeout_ms_defaults_to_none() {
+        let json = serde_json::json!({});
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.plugin_default_timeout_ms, None);
     }
 }

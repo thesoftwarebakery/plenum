@@ -200,9 +200,15 @@ pub fn build_router(
         HashMap::new();
 
     for (path, path_item) in paths {
-        let upstream: UpstreamConfig =
+        let upstream_config: UpstreamConfig =
             config.extension(&path_item.extensions, "opengateway-upstream")?;
-        let peer = make_peer(&upstream);
+        // TODO: Plugin variant handled in next task
+        let peer = match &upstream_config {
+            UpstreamConfig::HTTP { address, port } => make_peer(address, *port),
+            UpstreamConfig::Plugin { .. } => {
+                return Err("plugin upstreams not yet supported".into());
+            }
+        };
 
         // Path-level validation override
         let path_validation: Option<ValidationOverride> = config
