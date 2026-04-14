@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
@@ -6,9 +6,12 @@ use std::time::Duration;
 use bytes::{BufMut, Bytes, BytesMut};
 use config::Config;
 use http::Method;
-use interceptor::{InterceptorOutput, request_input_from_parts, response_input_from_parts};
+use interceptor::{
+    InterceptorOutput, header_map_to_hash_map_pub, request_input_from_parts,
+    response_input_from_parts,
+};
 use opengateway_js_runtime::{JsBody, JsRuntimeHandle};
-use path_match::{OperationSchemas, RouteEntry, build_router};
+use path_match::{OperationSchemas, RouteEntry, Upstream, build_router};
 use pingora_http::{RequestHeader, ResponseHeader};
 use validation::error::ValidationErrorResponse;
 
@@ -33,6 +36,8 @@ pub struct GatewayCtx {
     response_body_buf: BytesMut,
     upstream_response_status: Option<http::StatusCode>,
     upstream_response_content_type: Option<String>,
+    path_params: HashMap<String, String>,
+    plugin_response_sent: bool,
 }
 
 pub struct OpenGateway {
@@ -116,6 +121,44 @@ fn js_body_to_bytes(body: JsBody) -> Bytes {
     }
 }
 
+/// Convert a `HashMap<String, String>` back to an `http::HeaderMap`.
+fn headers_hashmap_to_http_headermap(map: &HashMap<String, String>) -> http::HeaderMap {
+    let mut header_map = http::HeaderMap::new();
+    for (k, v) in map {
+        if let (Ok(name), Ok(value)) = (
+            http::header::HeaderName::from_bytes(k.as_bytes()),
+            http::header::HeaderValue::from_str(v),
+        ) {
+            header_map.insert(name, value);
+        }
+    }
+    header_map
+}
+
+/// Apply header modifications (from a plugin's before_upstream step) to a plain `http::HeaderMap`.
+fn apply_header_modifications_to_map(
+    headers: &mut http::HeaderMap,
+    modifications: &HashMap<String, Option<String>>,
+) {
+    for (name, value) in modifications {
+        match value {
+            Some(v) => {
+                if let (Ok(header_name), Ok(header_value)) = (
+                    http::header::HeaderName::from_bytes(name.as_bytes()),
+                    http::header::HeaderValue::from_str(v),
+                ) {
+                    headers.insert(header_name, header_value);
+                }
+            }
+            None => {
+                if let Ok(header_name) = http::header::HeaderName::from_bytes(name.as_bytes()) {
+                    headers.remove(header_name);
+                }
+            }
+        }
+    }
+}
+
 /// Shared interface for applying header modifications, implemented by both request and
 /// response headers. Keeping this private avoids coupling to pingora's header types.
 trait HeaderEdit {
@@ -170,6 +213,8 @@ impl ProxyHttp for OpenGateway {
             response_body_buf: BytesMut::new(),
             upstream_response_status: None,
             upstream_response_content_type: None,
+            path_params: HashMap::new(),
+            plugin_response_sent: false,
         }
     }
 
@@ -195,6 +240,11 @@ impl ProxyHttp for OpenGateway {
         };
         ctx.matched_route = Some(matched.value.clone());
         ctx.matched_method = Some(session.req_header().method.clone());
+        ctx.path_params = matched
+            .params
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
 
         // Phase 1 of on_request: call with null body so header modifications are applied
         // before the upstream request is built. Fires for all requests including GET.
@@ -205,6 +255,7 @@ impl ProxyHttp for OpenGateway {
                     &session.req_header().method,
                     &session.req_header().uri,
                     &session.req_header().headers,
+                    ctx.path_params.clone(),
                 );
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
@@ -271,8 +322,13 @@ impl ProxyHttp for OpenGateway {
             return Ok(());
         };
 
-        // Skip if neither validation nor on_request interceptor is configured
-        if op.request_body.is_none() && op.interceptors.on_request.is_empty() {
+        let is_plugin = matches!(
+            ctx.matched_route.as_ref().map(|r| &r.upstream),
+            Some(Upstream::Plugin(_))
+        );
+
+        // Skip if neither validation nor on_request interceptor is configured, and not a plugin
+        if op.request_body.is_none() && op.interceptors.on_request.is_empty() && !is_plugin {
             return Ok(());
         }
 
@@ -337,6 +393,7 @@ impl ProxyHttp for OpenGateway {
                         &session.req_header().method,
                         &session.req_header().uri,
                         &session.req_header().headers,
+                        ctx.path_params.clone(),
                     );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
@@ -389,7 +446,264 @@ impl ProxyHttp for OpenGateway {
                 buf
             };
 
-            // Step 3: Restore body for upstream forwarding
+            // Plugin dispatch: run full interceptor lifecycle then call plugin backend.
+            // This block is reached only when end_of_stream is true (guaranteed by the
+            // enclosing `if end_of_stream` block).
+            if is_plugin {
+                if let Some(Upstream::Plugin(plugin)) =
+                    ctx.matched_route.as_ref().map(|r| &r.upstream)
+                {
+                    // Clone values needed for the block to avoid borrow conflicts.
+                    let plugin_runtime = plugin.runtime.clone();
+                    let plugin_timeout = plugin.timeout;
+                    let path_params = ctx.path_params.clone();
+
+                    // --- Step A: before_upstream interceptors ---
+                    let mut request_headers = session.req_header().headers.clone();
+                    for hook in &op.interceptors.before_upstream {
+                        let input = request_input_from_parts(
+                            &session.req_header().method,
+                            &session.req_header().uri,
+                            &request_headers,
+                            path_params.clone(),
+                        );
+                        let mut input_json = serde_json::to_value(&input).unwrap();
+                        merge_options(&mut input_json, hook.options.as_ref());
+                        let span = tracing::debug_span!(
+                            "interceptor_call",
+                            hook = "before_upstream",
+                            function = hook.function.as_str()
+                        );
+                        match call_interceptor(
+                            &hook.runtime,
+                            &hook.function,
+                            input_json,
+                            None,
+                            hook.timeout,
+                        )
+                        .instrument(span)
+                        .await
+                        {
+                            Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
+                                if let Some(mods) = headers {
+                                    apply_header_modifications_to_map(&mut request_headers, &mods);
+                                }
+                            }
+                            Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
+                                session
+                                    .respond_error_with_body(
+                                        status,
+                                        body_out.map(js_body_to_bytes).unwrap_or_default(),
+                                    )
+                                    .await
+                                    .ok();
+                                ctx.plugin_response_sent = true;
+                                return Ok(());
+                            }
+                            Err(e) => {
+                                log::error!("before_upstream interceptor error: {}", e);
+                                session
+                                    .respond_error_with_body(
+                                        500,
+                                        GatewayError::internal(format!(
+                                            "interceptor error: {}",
+                                            e
+                                        ))
+                                        .body(),
+                                    )
+                                    .await
+                                    .ok();
+                                ctx.plugin_response_sent = true;
+                                return Ok(());
+                            }
+                        }
+                    }
+
+                    // --- Step B: call plugin handle() ---
+                    let backend_config =
+                        op.backend_config.clone().unwrap_or(serde_json::Value::Null);
+                    let plugin_input = serde_json::json!({
+                        "request": {
+                            "method": session.req_header().method.to_string(),
+                            "path": session.req_header().uri.path(),
+                            "query": session.req_header().uri.query().unwrap_or(""),
+                            "headers": header_map_to_hash_map_pub(&request_headers),
+                            "params": path_params,
+                        },
+                        "config": backend_config,
+                    });
+                    let js_body = js_body_from_content_type(
+                        session
+                            .req_header()
+                            .headers
+                            .get(http::header::CONTENT_TYPE)
+                            .and_then(|v| v.to_str().ok()),
+                        &final_buf,
+                    );
+
+                    let (mut plugin_status, mut plugin_headers, plugin_body) =
+                        match plugin_runtime
+                            .call("handle", plugin_input, js_body, plugin_timeout)
+                            .await
+                        {
+                            Ok(output) => {
+                                let status = output
+                                    .value
+                                    .get("status")
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(200) as u16;
+                                let headers: HashMap<String, String> = output
+                                    .value
+                                    .get("headers")
+                                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                                    .unwrap_or_default();
+                                (status, headers, output.body)
+                            }
+                            Err(e) => {
+                                log::error!("plugin handle() error: {}", e);
+                                session
+                                    .respond_error_with_body(
+                                        500,
+                                        GatewayError::internal(format!("plugin error: {}", e))
+                                            .body(),
+                                    )
+                                    .await
+                                    .ok();
+                                ctx.plugin_response_sent = true;
+                                return Ok(());
+                            }
+                        };
+
+                    // --- Step C: on_response interceptors ---
+                    for hook in &op.interceptors.on_response {
+                        let input = response_input_from_parts(
+                            http::StatusCode::from_u16(plugin_status)
+                                .unwrap_or(http::StatusCode::OK),
+                            &headers_hashmap_to_http_headermap(&plugin_headers),
+                        );
+                        let mut input_json = serde_json::to_value(&input).unwrap();
+                        merge_options(&mut input_json, hook.options.as_ref());
+                        let span = tracing::debug_span!(
+                            "interceptor_call",
+                            hook = "on_response",
+                            function = hook.function.as_str()
+                        );
+                        match call_interceptor(
+                            &hook.runtime,
+                            &hook.function,
+                            input_json,
+                            None,
+                            hook.timeout,
+                        )
+                        .instrument(span)
+                        .await
+                        {
+                            Ok((InterceptorOutput::Continue { status, headers, .. }, _)) => {
+                                if let Some(s) = status {
+                                    plugin_status = s;
+                                }
+                                if let Some(mods) = headers {
+                                    for (k, v) in mods {
+                                        match v {
+                                            Some(val) => {
+                                                plugin_headers.insert(k, val);
+                                            }
+                                            None => {
+                                                plugin_headers.remove(&k);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Ok((InterceptorOutput::Respond { .. }, _)) => {
+                                log::warn!(
+                                    "on_response interceptor returned 'respond' action for plugin route -- ignored"
+                                );
+                            }
+                            Err(e) => {
+                                log::error!("on_response interceptor error: {}", e);
+                            }
+                        }
+                    }
+
+                    // --- Step D: on_response_body interceptors ---
+                    let mut response_body_bytes =
+                        plugin_body.map(js_body_to_bytes).unwrap_or_default();
+                    let response_content_type = plugin_headers.get("content-type").cloned();
+                    for hook in &op.interceptors.on_response_body {
+                        let js_body = js_body_from_content_type(
+                            response_content_type.as_deref(),
+                            &response_body_bytes,
+                        );
+                        let input = response_input_from_parts(
+                            http::StatusCode::from_u16(plugin_status)
+                                .unwrap_or(http::StatusCode::OK),
+                            &headers_hashmap_to_http_headermap(&plugin_headers),
+                        );
+                        let mut input_json = serde_json::to_value(&input).unwrap();
+                        merge_options(&mut input_json, hook.options.as_ref());
+                        match call_interceptor_blocking(
+                            &hook.runtime,
+                            &hook.function,
+                            input_json,
+                            js_body,
+                            hook.timeout,
+                        ) {
+                            Ok((InterceptorOutput::Continue { .. }, body_out)) => {
+                                if let Some(b) = body_out {
+                                    response_body_bytes = js_body_to_bytes(b);
+                                }
+                            }
+                            Ok((InterceptorOutput::Respond { .. }, _)) => {
+                                log::warn!(
+                                    "on_response_body interceptor returned 'respond' action for plugin route -- ignored"
+                                );
+                            }
+                            Err(e) => {
+                                log::error!("on_response_body interceptor error: {}", e);
+                            }
+                        }
+                    }
+
+                    // --- Step E: write response ---
+                    let mut resp_header =
+                        pingora_http::ResponseHeader::build(plugin_status, None).map_err(|e| {
+                            pingora_core::Error::because(
+                                pingora_core::ErrorType::InternalError,
+                                "build response header",
+                                e,
+                            )
+                        })?;
+                    for (name, value) in &plugin_headers {
+                        resp_header.insert_header(name.clone(), value.as_str()).ok();
+                    }
+                    session
+                        .write_response_header(Box::new(resp_header), false)
+                        .await
+                        .map_err(|e| {
+                            pingora_core::Error::because(
+                                pingora_core::ErrorType::InternalError,
+                                "write response header",
+                                e,
+                            )
+                        })?;
+                    session
+                        .write_response_body(Some(response_body_bytes.into()), true)
+                        .await
+                        .map_err(|e| {
+                            pingora_core::Error::because(
+                                pingora_core::ErrorType::InternalError,
+                                "write response body",
+                                e,
+                            )
+                        })?;
+
+                    ctx.plugin_response_sent = true;
+                    return Ok(());
+                }
+            }
+
+            // Step 3: Restore body for upstream forwarding (HTTP upstreams only)
             *body = Some(final_buf);
         }
 
@@ -405,6 +719,10 @@ impl ProxyHttp for OpenGateway {
     where
         Self::CTX: Send + Sync,
     {
+        if ctx.plugin_response_sent {
+            return Ok(());
+        }
+
         let Some(op) = matched_op(&ctx.matched_route, &ctx.matched_method) else {
             return Ok(());
         };
@@ -432,6 +750,7 @@ impl ProxyHttp for OpenGateway {
                 &upstream_request.method,
                 &upstream_request.uri,
                 &upstream_request.headers,
+                ctx.path_params.clone(),
             );
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
@@ -479,6 +798,10 @@ impl ProxyHttp for OpenGateway {
     where
         Self::CTX: Send + Sync,
     {
+        if ctx.plugin_response_sent {
+            return Ok(());
+        }
+
         let Some(op) = matched_op(&ctx.matched_route, &ctx.matched_method) else {
             return Ok(());
         };
@@ -550,6 +873,10 @@ impl ProxyHttp for OpenGateway {
     where
         Self::CTX: Send + Sync,
     {
+        if ctx.plugin_response_sent {
+            return Ok(None);
+        }
+
         let Some(op) = matched_op(&ctx.matched_route, &ctx.matched_method) else {
             return Ok(None);
         };
@@ -619,7 +946,7 @@ impl ProxyHttp for OpenGateway {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        if ctx.request_body_validation_failed {
+        if ctx.request_body_validation_failed || ctx.plugin_response_sent {
             return Err(pingora_core::Error::new(
                 pingora_core::ErrorType::HTTPStatus(400),
             ));
@@ -631,7 +958,8 @@ impl ProxyHttp for OpenGateway {
         match &route.upstream {
             crate::path_match::Upstream::Http(peer) => Ok(Box::new(peer.clone())),
             crate::path_match::Upstream::Plugin(_) => {
-                // Plugin dispatch is not yet implemented -- will be replaced in the proxy layer task
+                // Should not be reached -- plugin routes set plugin_response_sent = true
+                // in request_body_filter and are caught above. This branch is a safety net.
                 Err(pingora_core::Error::new(pingora_core::ErrorType::InternalError))
             }
         }
