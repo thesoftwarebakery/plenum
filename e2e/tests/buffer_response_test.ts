@@ -1,7 +1,7 @@
 import { assertEquals, assert } from "@std/assert";
 import { Network } from "testcontainers";
 import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
+import { startGateway, GatewayContainer } from "../src/containers/gateway.ts";
 import { WireMockClient } from "../src/helpers/wiremock-client.ts";
 
 // Permutation 1: buffer-response false (default), no on_response_body interceptor
@@ -56,7 +56,7 @@ Deno.test({ name: "buffer-response default (false) with on_response_body: gatewa
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
 
-  let gateway = null;
+  let gateway: GatewayContainer | null = null;
   let threw = false;
   try {
     gateway = await startGateway({
