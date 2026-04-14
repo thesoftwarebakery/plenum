@@ -5,6 +5,7 @@ export interface StubMapping {
   };
   response: {
     status: number;
+    body?: string;
     jsonBody?: unknown;
     headers?: Record<string, string>;
   };
