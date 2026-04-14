@@ -51,13 +51,15 @@ Deno.test({ name: "buffer-response default (false): Content-Length preserved whe
 
 // Permutation 2: buffer-response false (default), on_response_body interceptor configured
 // Gateway should refuse to start (boot-time validation failure).
+// (Permutation 3: buffer-response true + on_response_body is covered by interceptor_body_test.ts)
 Deno.test({ name: "buffer-response default (false) with on_response_body: gateway refuses to start", sanitizeResources: false, sanitizeOps: false }, async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
 
+  let gateway = null;
   let threw = false;
   try {
-    const gateway = await startGateway({
+    gateway = await startGateway({
       network,
       fixtures: {
         openapi: "openapi-interceptor-body.yaml",
@@ -70,8 +72,6 @@ Deno.test({ name: "buffer-response default (false) with on_response_body: gatewa
         ],
       },
     });
-    // If startGateway somehow succeeded, clean up and fail the assertion
-    await gateway.container.stop();
   } catch (_e) {
     threw = true;
   }
@@ -79,6 +79,7 @@ Deno.test({ name: "buffer-response default (false) with on_response_body: gatewa
   try {
     assert(threw, "gateway should have failed to start when on_response_body is configured without buffer-response: true");
   } finally {
+    if (gateway) await gateway.container.stop();
     await wiremock.container.stop();
     await network.stop();
   }
