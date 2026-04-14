@@ -1,0 +1,14 @@
+overlay: 1.1.0
+info:
+  title: Add interceptor to plugin route
+  version: 1.0.0
+actions:
+  - target: $.paths['/echo'].get
+    update:
+      x-opengateway-interceptor:
+        - module: "internal:add-header"
+          hook: on_request
+          function: onRequest
+          options:
+            headers:
+              x-intercepted: "true"
