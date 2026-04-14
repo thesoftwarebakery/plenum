@@ -3,7 +3,7 @@ use serde::Deserialize;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "kind")]
 pub enum UpstreamConfig {
-    #[serde(alias = "http")]
+    #[serde(rename = "HTTP")]
     HTTP {
         address: String,
         port: u16,
@@ -18,6 +18,7 @@ pub enum UpstreamConfig {
     },
 }
 
+// TODO: called in build_router for Plugin upstream options
 /// Replace `${VAR_NAME}` patterns in a JSON value with environment variable values.
 /// Missing variables resolve to empty string with a warning log.
 pub fn resolve_env_vars(value: serde_json::Value) -> serde_json::Value {
@@ -158,6 +159,22 @@ mod tests {
         let value = serde_json::json!("no substitution here");
         let result = resolve_env_vars(value);
         assert_eq!(result, serde_json::json!("no substitution here"));
+    }
+
+    #[test]
+    fn resolve_env_vars_handles_array_values() {
+        // SAFETY: single-threaded test
+        unsafe { std::env::set_var("OPENGATEWAY_TEST_ARRAY_VAR", "item") };
+        let value = serde_json::json!(["${OPENGATEWAY_TEST_ARRAY_VAR}", "literal"]);
+        let result = resolve_env_vars(value);
+        assert_eq!(result, serde_json::json!(["item", "literal"]));
+    }
+
+    #[test]
+    fn rejects_upstream_config_with_missing_kind() {
+        let json = serde_json::json!({ "address": "localhost", "port": 8080 });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(result.is_err());
     }
 
     #[test]
