@@ -419,9 +419,10 @@ impl ProxyHttp for OpenGateway {
                 .ok();
         }
 
-        // When on_response_body is configured, we need to buffer and inspect the response body.
+        // When buffering the response, we need to inspect the full body.
         // Prevent gzip encoding from the upstream so we receive raw bytes.
-        if !op.interceptors.on_response_body.is_empty() {
+        let buffer_response = ctx.matched_route.as_ref().map_or(false, |r| r.buffer_response);
+        if buffer_response {
             upstream_request
                 .insert_header("accept-encoding", "identity")
                 .ok();
@@ -525,9 +526,10 @@ impl ProxyHttp for OpenGateway {
             }
         }
 
-        // When on_response_body is configured, strip Content-Length (body size may change)
+        // When buffering the response, strip Content-Length (body may be modified by interceptors)
         // and store metadata in ctx for use in upstream_response_body_filter.
-        if !op.interceptors.on_response_body.is_empty() {
+        let buffer_response = ctx.matched_route.as_ref().map_or(false, |r| r.buffer_response);
+        if buffer_response {
             upstream_response.remove_header(&http::header::CONTENT_LENGTH);
             ctx.upstream_response_status = Some(upstream_response.status);
             ctx.upstream_response_content_type = upstream_response
@@ -550,13 +552,14 @@ impl ProxyHttp for OpenGateway {
     where
         Self::CTX: Send + Sync,
     {
+        let buffer_response = ctx.matched_route.as_ref().map_or(false, |r| r.buffer_response);
+        if !buffer_response {
+            return Ok(None);
+        }
+
         let Some(op) = matched_op(&ctx.matched_route, &ctx.matched_method) else {
             return Ok(None);
         };
-
-        if op.interceptors.on_response_body.is_empty() {
-            return Ok(None);
-        }
 
         // Buffer chunks, suppressing forwarding until end_of_stream
         if let Some(b) = body {
