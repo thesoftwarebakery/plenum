@@ -628,7 +628,13 @@ impl ProxyHttp for OpenGateway {
             .matched_route
             .as_ref()
             .ok_or_else(|| pingora_core::Error::new(pingora_core::ErrorType::InternalError))?;
-        Ok(Box::new(route.peer.clone()))
+        match &route.upstream {
+            crate::path_match::Upstream::Http(peer) => Ok(Box::new(peer.clone())),
+            crate::path_match::Upstream::Plugin(_) => {
+                // Plugin routes are handled in request_body_filter -- should not reach here
+                Err(pingora_core::Error::new(pingora_core::ErrorType::InternalError))
+            }
+        }
     }
 }
 

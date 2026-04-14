@@ -12,9 +12,23 @@ use oas3::spec::{Operation, PathItem, Spec};
 use opengateway_js_runtime::JsRuntimeHandle;
 use pingora_core::upstreams::peer::HttpPeer;
 
-use crate::config::{Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride};
+use crate::config::{
+    resolve_env_vars, Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride,
+};
 use crate::upstream_http::make_peer;
 use crate::validation::schema::CompiledSchema;
+
+/// Handle to a spawned Deno backend plugin runtime.
+pub struct PluginHandle {
+    pub runtime: Arc<JsRuntimeHandle>,
+    pub timeout: Duration,
+}
+
+/// The upstream target for a route -- either an HTTP peer or a Deno backend plugin.
+pub enum Upstream {
+    Http(HttpPeer),
+    Plugin(Arc<PluginHandle>),
+}
 
 /// A resolved interceptor hook: runtime handle, JS function name, call timeout, and options.
 pub struct HookHandle {
@@ -41,13 +55,15 @@ pub struct OperationSchemas {
     pub default_response: Option<CompiledSchema>,
     pub validation_override: Option<ValidationOverride>,
     pub interceptors: OperationInterceptors,
+    /// Raw `x-opengateway-backend` extension value from the operation, passed opaquely to the
+    /// plugin's `handle()` function. Never interpreted by the gateway itself.
+    pub backend_config: Option<serde_json::Value>,
 }
 
-/// A route entry stored in the router, containing the upstream peer
+/// A route entry stored in the router, containing the upstream target
 /// and per-operation schema information for validation.
 pub struct RouteEntry {
-    pub peer: HttpPeer,
-    pub buffer_response: bool,
+    pub upstream: Upstream,
     pub operations: HashMap<Method, OperationSchemas>,
     pub validation_override: Option<ValidationOverride>,
 }
@@ -194,6 +210,11 @@ pub fn build_router(
             .interceptor_default_timeout_ms
             .unwrap_or(30_000),
     );
+    let default_plugin_timeout = Duration::from_millis(
+        server_config
+            .plugin_default_timeout_ms
+            .unwrap_or(30_000),
+    );
 
     let mut router = Router::new();
     let mut runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
@@ -202,11 +223,57 @@ pub fn build_router(
     for (path, path_item) in paths {
         let upstream_config: UpstreamConfig =
             config.extension(&path_item.extensions, "opengateway-upstream")?;
-        // TODO: Plugin variant handled in next task
-        let peer = match &upstream_config {
-            UpstreamConfig::HTTP { address, port } => make_peer(address, *port),
-            UpstreamConfig::Plugin { .. } => {
-                return Err("plugin upstreams not yet supported".into());
+
+        let upstream = match &upstream_config {
+            UpstreamConfig::HTTP { address, port } => Upstream::Http(make_peer(address, *port)),
+            UpstreamConfig::Plugin { plugin, options, permissions } => {
+                let resolved = module_resolver::resolve_module(plugin, config_base)?;
+                let cache_key = resolved.cache_key();
+
+                let h = match runtime_cache.entry(cache_key) {
+                    std::collections::hash_map::Entry::Occupied(e) => {
+                        if permissions.is_some() {
+                            log::warn!(
+                                "plugin module '{}' is referenced multiple times; permissions \
+                                 declared here are ignored -- only the first reference's permissions \
+                                 take effect",
+                                plugin
+                            );
+                        }
+                        e.get().clone()
+                    }
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        let perms = permissions
+                            .clone()
+                            .map(|p| p.into_runtime_permissions())
+                            .unwrap_or_default();
+
+                        let h = Arc::new(match &resolved {
+                            module_resolver::ResolvedModule::File(path) => {
+                                opengateway_js_runtime::spawn_runtime_sync(path, perms)?
+                            }
+                            module_resolver::ResolvedModule::Internal { name, source } => {
+                                opengateway_js_runtime::spawn_runtime_from_source_sync(
+                                    name, source, perms,
+                                )?
+                            }
+                        });
+
+                        // Call init() with resolved options (empty object when not specified)
+                        let init_options = options
+                            .as_ref()
+                            .map(|o| resolve_env_vars(o.clone()))
+                            .unwrap_or_else(|| serde_json::json!({}));
+                        h.call_blocking("init", init_options, None, default_plugin_timeout)?;
+
+                        e.insert(h).clone()
+                    }
+                };
+
+                Upstream::Plugin(Arc::new(PluginHandle {
+                    runtime: h,
+                    timeout: default_plugin_timeout,
+                }))
             }
         };
 
@@ -235,6 +302,12 @@ pub fn build_router(
                 default_interceptor_timeout,
             )?;
 
+            // Operation-level backend config (opaque, passed to plugin's handle())
+            let backend_config: Option<serde_json::Value> = operation
+                .extensions
+                .get("opengateway-backend")
+                .cloned();
+
             operations.insert(
                 method,
                 OperationSchemas {
@@ -243,6 +316,7 @@ pub fn build_router(
                     default_response,
                     validation_override: op_validation,
                     interceptors,
+                    backend_config,
                 },
             );
         }
@@ -262,8 +336,7 @@ pub fn build_router(
         }
 
         let entry = Arc::new(RouteEntry {
-            peer,
-            buffer_response: upstream.buffer_response,
+            upstream,
             operations,
             validation_override: path_validation,
         });
@@ -741,6 +814,79 @@ mod tests {
         assert_eq!(get.interceptors.on_request[0].function, "onRequest");
         assert!(get.interceptors.before_upstream.is_empty());
         assert!(get.interceptors.on_response.is_empty());
+    }
+
+    #[test]
+    fn plugin_upstream_creates_upstream_plugin_variant() {
+        let plugin_path = fixture_path("echo_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        assert!(matches!(matched.value.upstream, Upstream::Plugin(_)));
+    }
+
+    #[test]
+    fn http_upstream_still_creates_upstream_http_variant() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/items").unwrap();
+        assert!(matches!(matched.value.upstream, Upstream::Http(_)));
+    }
+
+    #[test]
+    fn backend_config_parsed_from_operation_extension() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-backend": { "table": "users", "query": "find_by_id" },
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        let backend = get.backend_config.as_ref().unwrap();
+        assert_eq!(backend["table"].as_str().unwrap(), "users");
+        assert_eq!(backend["query"].as_str().unwrap(), "find_by_id");
+    }
+
+    #[test]
+    fn backend_config_is_none_when_extension_absent() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/items").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert!(get.backend_config.is_none());
     }
 
     #[test]
