@@ -148,7 +148,7 @@ Deno.test({ name: "on_response_body modifies response body before forwarding to 
     fixtures: {
       openapi: "openapi-interceptor-body.yaml",
       overlays: [
-        "overlay-interceptor-body-upstream.yaml",
+        "overlay-interceptor-body-upstream-buffered.yaml",
         "overlay-interceptor-modify-response-body.yaml",
       ],
       extraFiles: BODY_FIXTURES,

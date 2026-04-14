@@ -47,6 +47,7 @@ pub struct OperationSchemas {
 /// and per-operation schema information for validation.
 pub struct RouteEntry {
     pub peer: HttpPeer,
+    pub buffer_response: bool,
     pub operations: HashMap<Method, OperationSchemas>,
     pub validation_override: Option<ValidationOverride>,
 }
@@ -240,8 +241,23 @@ pub fn build_router(
             );
         }
 
+        // Validate: on_response_body interceptors require buffer-response: true on HTTP upstreams
+        if upstream.kind == "HTTP" && !upstream.buffer_response {
+            for (method, op_schemas) in &operations {
+                if !op_schemas.interceptors.on_response_body.is_empty() {
+                    return Err(format!(
+                        "path '{}' method {} has on_response_body interceptors but upstream \
+                         does not set buffer-response: true",
+                        path, method
+                    )
+                    .into());
+                }
+            }
+        }
+
         let entry = Arc::new(RouteEntry {
             peer,
+            buffer_response: upstream.buffer_response,
             operations,
             validation_override: path_validation,
         });
@@ -772,5 +788,97 @@ mod tests {
             get_op.extensions.contains_key("opengateway-interceptor"),
             "oas3 should preserve the extension (x- stripped)"
         );
+    }
+
+    #[test]
+    fn buffer_response_defaults_to_false() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        assert!(!matched.value.buffer_response);
+    }
+
+    #[test]
+    fn rejects_on_response_body_without_buffer_response() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_response_body",
+                            "function": "onResponseBody"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("buffer-response"),
+            "expected error mentioning buffer-response, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn accepts_on_response_body_with_buffer_response() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_response_body",
+                            "function": "onResponseBody"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080,
+                        "buffer-response": true
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_ok());
     }
 }
