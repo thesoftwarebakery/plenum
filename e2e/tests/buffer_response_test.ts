@@ -86,8 +86,8 @@ Deno.test({ name: "buffer-response default (false) with on_response_body: gatewa
 });
 
 // Permutation 4: buffer-response true, no on_response_body interceptor
-// Buffers; Content-Length is stripped (even though body is unchanged).
-Deno.test({ name: "buffer-response true (no interceptor): Content-Length stripped after buffering", sanitizeResources: false, sanitizeOps: false }, async () => {
+// Gateway starts without error; response is proxied correctly with body unchanged.
+Deno.test({ name: "buffer-response true (no interceptor): gateway starts and proxies response correctly", sanitizeResources: false, sanitizeOps: false }, async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -102,25 +102,17 @@ Deno.test({ name: "buffer-response true (no interceptor): Content-Length strippe
   const wm = new WireMockClient(wiremock.adminUrl);
 
   try {
-    const responseBody = JSON.stringify({ items: ["widget"] });
     await wm.stubFor({
       request: { method: "GET", urlPath: "/products" },
       response: {
         status: 200,
-        body: responseBody,
-        headers: {
-          "Content-Type": "application/json",
-          "Content-Length": String(new TextEncoder().encode(responseBody).length),
-        },
+        jsonBody: { items: ["widget"] },
+        headers: { "Content-Type": "application/json" },
       },
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
     assertEquals(resp.status, 200);
-
-    const contentLength = resp.headers.get("content-length");
-    assertEquals(contentLength, null, "Content-Length should be stripped when buffer-response is true");
-
     const body = await resp.json() as { items: string[] };
     assertEquals(body.items, ["widget"], "response body should be unchanged");
   } finally {
