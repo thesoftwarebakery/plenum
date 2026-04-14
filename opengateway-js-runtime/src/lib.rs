@@ -492,12 +492,12 @@ mod tests {
         assert_eq!(result.value, serde_json::json!({"msg": "ok"}));
     }
 
-    /// Interceptor that reads Deno.env.get("TEST_VAR") and returns it.
+    /// Interceptor that reads OpenGateway.env.get("TEST_VAR") and returns it.
     #[tokio::test]
     async fn test_env_op_allowed() {
         let source = r#"
             export function readEnv(input) {
-                const val = Deno.env.get(input.key);
+                const val = OpenGateway.env.get(input.key);
                 return { value: val || null };
             }
         "#;
@@ -521,12 +521,12 @@ mod tests {
         assert_eq!(result.value, serde_json::json!({"value": "hello_from_env"}));
     }
 
-    /// Interceptor that tries to read Deno.env.get("SECRET") without permission should fail.
+    /// Interceptor that tries to read OpenGateway.env.get("SECRET") without permission should fail.
     #[tokio::test]
     async fn test_env_op_denied() {
         let source = r#"
             export function readEnv(input) {
-                const val = Deno.env.get(input.key);
+                const val = OpenGateway.env.get(input.key);
                 return { value: val || null };
             }
         "#;
