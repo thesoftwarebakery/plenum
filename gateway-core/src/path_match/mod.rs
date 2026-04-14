@@ -71,6 +71,10 @@ pub struct OperationSchemas {
 /// and per-operation schema information for validation.
 pub struct RouteEntry {
     pub upstream: Upstream,
+    /// True only for HTTP upstreams with `buffer-response: true`. Plugin upstreams are always
+    /// buffered implicitly (they return a complete response object). This flag gates boot-time
+    /// validation for `on_response_body` interceptors on HTTP routes.
+    pub buffer_response: bool,
     pub operations: HashMap<Method, OperationSchemas>,
     pub validation_override: Option<ValidationOverride>,
 }
@@ -233,8 +237,9 @@ pub fn build_router(
         let upstream_config: UpstreamConfig =
             config.extension(&path_item.extensions, "opengateway-upstream")?;
 
+        let upstream_buffer_response = matches!(&upstream_config, UpstreamConfig::HTTP { buffer_response: true, .. });
         let upstream = match &upstream_config {
-            UpstreamConfig::HTTP { address, port } => Upstream::Http(make_peer(address, *port)),
+            UpstreamConfig::HTTP { address, port, .. } => Upstream::Http(make_peer(address, *port)),
             UpstreamConfig::Plugin { plugin, options, permissions } => {
                 let resolved = module_resolver::resolve_module(plugin, config_base)?;
                 let cache_key = resolved.cache_key();
@@ -330,8 +335,9 @@ pub fn build_router(
             );
         }
 
-        // Validate: on_response_body interceptors require buffer-response: true on HTTP upstreams
-        if upstream.kind == "HTTP" && !upstream.buffer_response {
+        // HTTP upstreams: on_response_body interceptors require buffer-response: true.
+        // Plugin upstreams: response is always fully buffered (no restriction needed).
+        if matches!(upstream, Upstream::Http(_)) && !upstream_buffer_response {
             for (method, op_schemas) in &operations {
                 if !op_schemas.interceptors.on_response_body.is_empty() {
                     return Err(format!(
@@ -346,6 +352,7 @@ pub fn build_router(
 
         let entry = Arc::new(RouteEntry {
             upstream,
+            buffer_response: upstream_buffer_response,
             operations,
             validation_override: path_validation,
         });
@@ -1041,5 +1048,37 @@ mod tests {
         let paths = config.spec.paths.as_ref().unwrap();
         let result = build_router(&config, paths, Path::new("/"));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn plugin_upstream_skips_buffer_response_validation() {
+        // Plugin upstreams always return a full response -- on_response_body interceptors
+        // work without buffer-response: true.
+        let noop_path = fixture_path("noop.js");
+        let plugin_path = fixture_path("echo_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_response_body",
+                            "function": "onResponseBody"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_ok(), "plugin upstream should not require buffer-response");
     }
 }

@@ -7,6 +7,8 @@ pub enum UpstreamConfig {
     HTTP {
         address: String,
         port: u16,
+        #[serde(default, rename = "buffer-response")]
+        buffer_response: bool,
     },
     #[serde(rename = "plugin")]
     Plugin {
@@ -80,9 +82,10 @@ mod tests {
         });
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
         match config {
-            UpstreamConfig::HTTP { address, port } => {
+            UpstreamConfig::HTTP { address, port, buffer_response } => {
                 assert_eq!(address, "127.0.0.1");
                 assert_eq!(port, 8080);
+                assert!(!buffer_response);
             }
             _ => panic!("expected HTTP variant"),
         }
