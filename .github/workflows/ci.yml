@@ -34,16 +34,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
       
-      # Build the workspace for tests, avoiding duplicate recompilation across different targets
-      - name: Build workspace
-        run: cargo build --workspace --tests
-
       - name: Run unit tests
         run: cargo test --workspace
 
   e2e:
     name: E2E Tests
-    needs: check-and-test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
