@@ -24,10 +24,17 @@ pub struct PluginHandle {
     pub timeout: Duration,
 }
 
+impl std::fmt::Debug for PluginHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginHandle").field("timeout", &self.timeout).finish_non_exhaustive()
+    }
+}
+
 /// The upstream target for a route -- either an HTTP peer or a Deno backend plugin.
+#[derive(Debug)]
 pub enum Upstream {
     Http(HttpPeer),
-    Plugin(Arc<PluginHandle>),
+    Plugin(PluginHandle),
 }
 
 /// A resolved interceptor hook: runtime handle, JS function name, call timeout, and options.
@@ -217,7 +224,9 @@ pub fn build_router(
     );
 
     let mut router = Router::new();
-    let mut runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
+    let mut interceptor_runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
+        HashMap::new();
+    let mut plugin_runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
         HashMap::new();
 
     for (path, path_item) in paths {
@@ -230,7 +239,7 @@ pub fn build_router(
                 let resolved = module_resolver::resolve_module(plugin, config_base)?;
                 let cache_key = resolved.cache_key();
 
-                let h = match runtime_cache.entry(cache_key) {
+                let h = match plugin_runtime_cache.entry(cache_key) {
                     std::collections::hash_map::Entry::Occupied(e) => {
                         if permissions.is_some() {
                             log::warn!(
@@ -270,10 +279,10 @@ pub fn build_router(
                     }
                 };
 
-                Upstream::Plugin(Arc::new(PluginHandle {
+                Upstream::Plugin(PluginHandle {
                     runtime: h,
                     timeout: default_plugin_timeout,
-                }))
+                })
             }
         };
 
@@ -298,7 +307,7 @@ pub fn build_router(
             let interceptors = build_operation_interceptors(
                 operation,
                 config_base,
-                &mut runtime_cache,
+                &mut interceptor_runtime_cache,
                 default_interceptor_timeout,
             )?;
 
