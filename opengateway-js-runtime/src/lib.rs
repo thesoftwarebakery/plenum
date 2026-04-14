@@ -591,15 +591,14 @@ mod tests {
         let (port, _server) = start_stub_http_server(r#"{"ok":true}"#).await;
         let url = format!("http://127.0.0.1:{port}/test");
 
-        let source = format!(
-            r#"
-            export async function doFetch(input) {{
+        let source = r#"
+            export async function doFetch(input) {
                 const resp = await fetch(input.url);
                 const data = await resp.json();
-                return {{ status: resp.status, ok: data.ok }};
-            }}
+                return { status: resp.status, ok: data.ok };
+            }
             "#
-        );
+        .to_string();
 
         let mut perms = InterceptorPermissions::default();
         perms.allowed_hosts.insert("127.0.0.1".to_string());
