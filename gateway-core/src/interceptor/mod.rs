@@ -64,11 +64,6 @@ pub fn request_input_from_parts(
     }
 }
 
-/// Convert an `http::HeaderMap` to a `HashMap<String, String>`.
-/// Public so that `lib.rs` can use it for plugin dispatch without going through RequestInput.
-pub fn header_map_to_hash_map_pub(headers: &http::HeaderMap) -> HashMap<String, String> {
-    header_map_to_hash_map(headers)
-}
 
 /// Build a `ResponseInput` from an HTTP response's components.
 pub fn response_input_from_parts(
@@ -81,7 +76,7 @@ pub fn response_input_from_parts(
     }
 }
 
-fn header_map_to_hash_map(headers: &http::HeaderMap) -> HashMap<String, String> {
+pub(crate) fn header_map_to_hash_map(headers: &http::HeaderMap) -> HashMap<String, String> {
     headers
         .iter()
         .map(|(name, value)| {

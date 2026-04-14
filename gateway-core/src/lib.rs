@@ -7,7 +7,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use config::Config;
 use http::Method;
 use interceptor::{
-    InterceptorOutput, header_map_to_hash_map_pub, request_input_from_parts,
+    InterceptorOutput, header_map_to_hash_map, request_input_from_parts,
     response_input_from_parts,
 };
 use opengateway_js_runtime::{JsBody, JsRuntimeHandle};
@@ -135,30 +135,6 @@ fn headers_hashmap_to_http_headermap(map: &HashMap<String, String>) -> http::Hea
     header_map
 }
 
-/// Apply header modifications (from a plugin's before_upstream step) to a plain `http::HeaderMap`.
-fn apply_header_modifications_to_map(
-    headers: &mut http::HeaderMap,
-    modifications: &HashMap<String, Option<String>>,
-) {
-    for (name, value) in modifications {
-        match value {
-            Some(v) => {
-                if let (Ok(header_name), Ok(header_value)) = (
-                    http::header::HeaderName::from_bytes(name.as_bytes()),
-                    http::header::HeaderValue::from_str(v),
-                ) {
-                    headers.insert(header_name, header_value);
-                }
-            }
-            None => {
-                if let Ok(header_name) = http::header::HeaderName::from_bytes(name.as_bytes()) {
-                    headers.remove(header_name);
-                }
-            }
-        }
-    }
-}
-
 /// Shared interface for applying header modifications, implemented by both request and
 /// response headers. Keeping this private avoids coupling to pingora's header types.
 trait HeaderEdit {
@@ -185,6 +161,24 @@ impl HeaderEdit for ResponseHeader {
     }
     fn del_header(&mut self, name: &str) {
         let _ = self.remove_header(name);
+    }
+}
+
+impl HeaderEdit for http::HeaderMap {
+    fn set_header(&mut self, name: &str, value: &str) {
+        if let (Ok(n), Ok(v)) = (
+            http::header::HeaderName::from_bytes(name.as_bytes()),
+            http::HeaderValue::from_str(value),
+        ) {
+            self.insert(n, v);
+        } else {
+            log::warn!("interceptor: failed to set header {}", name);
+        }
+    }
+    fn del_header(&mut self, name: &str) {
+        if let Ok(n) = http::header::HeaderName::from_bytes(name.as_bytes()) {
+            self.remove(n);
+        }
     }
 }
 
@@ -450,8 +444,8 @@ impl ProxyHttp for OpenGateway {
             // This block is reached only when end_of_stream is true (guaranteed by the
             // enclosing `if end_of_stream` block).
             if is_plugin {
-                if let Some(Upstream::Plugin(plugin)) =
-                    ctx.matched_route.as_ref().map(|r| &r.upstream)
+                let route = ctx.matched_route.as_ref().unwrap(); // safe: is_plugin means route was matched
+                let Upstream::Plugin(plugin) = &route.upstream else { unreachable!() };
                 {
                     // Clone values needed for the block to avoid borrow conflicts.
                     let plugin_runtime = plugin.runtime.clone();
@@ -486,7 +480,7 @@ impl ProxyHttp for OpenGateway {
                         {
                             Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
                                 if let Some(mods) = headers {
-                                    apply_header_modifications_to_map(&mut request_headers, &mods);
+                                    apply_header_modifications(&mut request_headers, &mods);
                                 }
                             }
                             Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
@@ -527,7 +521,7 @@ impl ProxyHttp for OpenGateway {
                             "method": session.req_header().method.to_string(),
                             "path": session.req_header().uri.path(),
                             "query": session.req_header().uri.query().unwrap_or(""),
-                            "headers": header_map_to_hash_map_pub(&request_headers),
+                            "headers": header_map_to_hash_map(&request_headers),
                             "params": path_params,
                         },
                         "config": backend_config,
@@ -642,13 +636,7 @@ impl ProxyHttp for OpenGateway {
                         );
                         let mut input_json = serde_json::to_value(&input).unwrap();
                         merge_options(&mut input_json, hook.options.as_ref());
-                        match call_interceptor_blocking(
-                            &hook.runtime,
-                            &hook.function,
-                            input_json,
-                            js_body,
-                            hook.timeout,
-                        ) {
+                        match call_interceptor(&hook.runtime, &hook.function, input_json, js_body, hook.timeout).await {
                             Ok((InterceptorOutput::Continue { .. }, body_out)) => {
                                 if let Some(b) = body_out {
                                     response_body_bytes = js_body_to_bytes(b);
@@ -946,9 +934,14 @@ impl ProxyHttp for OpenGateway {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        if ctx.request_body_validation_failed || ctx.plugin_response_sent {
+        if ctx.request_body_validation_failed {
             return Err(pingora_core::Error::new(
                 pingora_core::ErrorType::HTTPStatus(400),
+            ));
+        }
+        if ctx.plugin_response_sent {
+            return Err(pingora_core::Error::new(
+                pingora_core::ErrorType::InternalError,
             ));
         }
         let route = ctx
