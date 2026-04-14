@@ -13,7 +13,7 @@ use opengateway_js_runtime::JsRuntimeHandle;
 use pingora_core::upstreams::peer::HttpPeer;
 
 use crate::config::{
-    resolve_env_vars, Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride,
+    Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
 };
 use crate::upstream_http::make_peer;
 use crate::validation::schema::CompiledSchema;
@@ -26,7 +26,9 @@ pub struct PluginHandle {
 
 impl std::fmt::Debug for PluginHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PluginHandle").field("timeout", &self.timeout).finish_non_exhaustive()
+        f.debug_struct("PluginHandle")
+            .field("timeout", &self.timeout)
+            .finish_non_exhaustive()
     }
 }
 
@@ -221,15 +223,14 @@ pub fn build_router(
             .interceptor_default_timeout_ms
             .unwrap_or(30_000),
     );
-    let default_plugin_timeout = Duration::from_millis(
-        server_config
-            .plugin_default_timeout_ms
-            .unwrap_or(30_000),
-    );
+    let default_plugin_timeout =
+        Duration::from_millis(server_config.plugin_default_timeout_ms.unwrap_or(30_000));
 
     let mut router = Router::new();
-    let mut interceptor_runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
-        HashMap::new();
+    let mut interceptor_runtime_cache: HashMap<
+        module_resolver::ModuleCacheKey,
+        Arc<JsRuntimeHandle>,
+    > = HashMap::new();
     let mut plugin_runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
         HashMap::new();
 
@@ -237,10 +238,20 @@ pub fn build_router(
         let upstream_config: UpstreamConfig =
             config.extension(&path_item.extensions, "opengateway-upstream")?;
 
-        let upstream_buffer_response = matches!(&upstream_config, UpstreamConfig::HTTP { buffer_response: true, .. });
+        let upstream_buffer_response = matches!(
+            &upstream_config,
+            UpstreamConfig::HTTP {
+                buffer_response: true,
+                ..
+            }
+        );
         let upstream = match &upstream_config {
             UpstreamConfig::HTTP { address, port, .. } => Upstream::Http(make_peer(address, *port)),
-            UpstreamConfig::Plugin { plugin, options, permissions } => {
+            UpstreamConfig::Plugin {
+                plugin,
+                options,
+                permissions,
+            } => {
                 let resolved = module_resolver::resolve_module(plugin, config_base)?;
                 let cache_key = resolved.cache_key();
 
@@ -317,10 +328,8 @@ pub fn build_router(
             )?;
 
             // Operation-level backend config (opaque, passed to plugin's handle())
-            let backend_config: Option<serde_json::Value> = operation
-                .extensions
-                .get("opengateway-backend")
-                .cloned();
+            let backend_config: Option<serde_json::Value> =
+                operation.extensions.get("opengateway-backend").cloned();
 
             operations.insert(
                 method,
@@ -1079,6 +1088,9 @@ mod tests {
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
         let result = build_router(&config, paths, Path::new("/"));
-        assert!(result.is_ok(), "plugin upstream should not require buffer-response");
+        assert!(
+            result.is_ok(),
+            "plugin upstream should not require buffer-response"
+        );
     }
 }

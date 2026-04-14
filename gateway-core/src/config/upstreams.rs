@@ -82,7 +82,11 @@ mod tests {
         });
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
         match config {
-            UpstreamConfig::HTTP { address, port, buffer_response } => {
+            UpstreamConfig::HTTP {
+                address,
+                port,
+                buffer_response,
+            } => {
                 assert_eq!(address, "127.0.0.1");
                 assert_eq!(port, 8080);
                 assert!(!buffer_response);
@@ -100,7 +104,11 @@ mod tests {
         });
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
         match config {
-            UpstreamConfig::Plugin { plugin, options, permissions } => {
+            UpstreamConfig::Plugin {
+                plugin,
+                options,
+                permissions,
+            } => {
                 assert_eq!(plugin, "my-plugin");
                 assert!(options.is_some());
                 assert_eq!(options.unwrap()["key"], "value");
@@ -118,7 +126,11 @@ mod tests {
         });
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
         match config {
-            UpstreamConfig::Plugin { plugin, options, permissions } => {
+            UpstreamConfig::Plugin {
+                plugin,
+                options,
+                permissions,
+            } => {
                 assert_eq!(plugin, "my-plugin");
                 assert!(options.is_none());
                 assert!(permissions.is_none());

@@ -7,8 +7,7 @@ use bytes::{BufMut, Bytes, BytesMut};
 use config::Config;
 use http::Method;
 use interceptor::{
-    InterceptorOutput, header_map_to_hash_map, request_input_from_parts,
-    response_input_from_parts,
+    InterceptorOutput, header_map_to_hash_map, request_input_from_parts, response_input_from_parts,
 };
 use opengateway_js_runtime::{JsBody, JsRuntimeHandle};
 use path_match::{OperationSchemas, RouteEntry, Upstream, build_router};
@@ -320,8 +319,11 @@ impl ProxyHttp for OpenGateway {
                         session
                             .respond_error_with_body(
                                 500,
-                                GatewayError::internal(format!("error reading request body: {}", e))
-                                    .body(),
+                                GatewayError::internal(format!(
+                                    "error reading request body: {}",
+                                    e
+                                ))
+                                .body(),
                             )
                             .await
                             .ok();
@@ -373,8 +375,7 @@ impl ProxyHttp for OpenGateway {
                     .map(|s| s.to_string());
                 let mut current_buf = buf;
                 for hook in &op.interceptors.on_request {
-                    let js_body =
-                        js_body_from_content_type(content_type.as_deref(), &current_buf);
+                    let js_body = js_body_from_content_type(content_type.as_deref(), &current_buf);
                     let input = request_input_from_parts(
                         &session.req_header().method,
                         &session.req_header().uri,
@@ -399,8 +400,7 @@ impl ProxyHttp for OpenGateway {
                     .await
                     {
                         Ok((InterceptorOutput::Continue { .. }, body_out)) => {
-                            current_buf =
-                                body_out.map(js_body_to_bytes).unwrap_or(current_buf);
+                            current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
                         }
                         Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
                             session
@@ -417,11 +417,8 @@ impl ProxyHttp for OpenGateway {
                             session
                                 .respond_error_with_body(
                                     500,
-                                    GatewayError::internal(format!(
-                                        "interceptor error: {}",
-                                        e
-                                    ))
-                                    .body(),
+                                    GatewayError::internal(format!("interceptor error: {}", e))
+                                        .body(),
                                 )
                                 .await
                                 .ok();
@@ -489,8 +486,7 @@ impl ProxyHttp for OpenGateway {
                         session
                             .respond_error_with_body(
                                 500,
-                                GatewayError::internal(format!("interceptor error: {}", e))
-                                    .body(),
+                                GatewayError::internal(format!("interceptor error: {}", e)).body(),
                             )
                             .await
                             .ok();
@@ -520,36 +516,35 @@ impl ProxyHttp for OpenGateway {
                 &final_buf,
             );
 
-            let (mut plugin_status, mut plugin_headers, plugin_body) =
-                match plugin_runtime
-                    .call("handle", plugin_input, js_body, plugin_timeout)
-                    .await
-                {
-                    Ok(output) => {
-                        let status = output
-                            .value
-                            .get("status")
-                            .and_then(|v| v.as_u64())
-                            .unwrap_or(200) as u16;
-                        let headers: HashMap<String, String> = output
-                            .value
-                            .get("headers")
-                            .and_then(|v| serde_json::from_value(v.clone()).ok())
-                            .unwrap_or_default();
-                        (status, headers, output.body)
-                    }
-                    Err(e) => {
-                        log::error!("plugin handle() error: {}", e);
-                        session
-                            .respond_error_with_body(
-                                500,
-                                GatewayError::internal(format!("plugin error: {}", e)).body(),
-                            )
-                            .await
-                            .ok();
-                        return Ok(true);
-                    }
-                };
+            let (mut plugin_status, mut plugin_headers, plugin_body) = match plugin_runtime
+                .call("handle", plugin_input, js_body, plugin_timeout)
+                .await
+            {
+                Ok(output) => {
+                    let status = output
+                        .value
+                        .get("status")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(200) as u16;
+                    let headers: HashMap<String, String> = output
+                        .value
+                        .get("headers")
+                        .and_then(|v| serde_json::from_value(v.clone()).ok())
+                        .unwrap_or_default();
+                    (status, headers, output.body)
+                }
+                Err(e) => {
+                    log::error!("plugin handle() error: {}", e);
+                    session
+                        .respond_error_with_body(
+                            500,
+                            GatewayError::internal(format!("plugin error: {}", e)).body(),
+                        )
+                        .await
+                        .ok();
+                    return Ok(true);
+                }
+            };
 
             // Step C: on_response interceptors
             for hook in &op.interceptors.on_response {
@@ -574,7 +569,12 @@ impl ProxyHttp for OpenGateway {
                 .instrument(span)
                 .await
                 {
-                    Ok((InterceptorOutput::Continue { status, headers, .. }, _)) => {
+                    Ok((
+                        InterceptorOutput::Continue {
+                            status, headers, ..
+                        },
+                        _,
+                    )) => {
                         if let Some(s) = status {
                             plugin_status = s;
                         }
@@ -642,8 +642,8 @@ impl ProxyHttp for OpenGateway {
             }
 
             // Step E: write response
-            let mut resp_header =
-                pingora_http::ResponseHeader::build(plugin_status, None).map_err(|e| {
+            let mut resp_header = pingora_http::ResponseHeader::build(plugin_status, None)
+                .map_err(|e| {
                     pingora_core::Error::because(
                         pingora_core::ErrorType::InternalError,
                         "build response header",
@@ -1059,7 +1059,9 @@ impl ProxyHttp for OpenGateway {
             crate::path_match::Upstream::Plugin(_) => {
                 // Should never be reached -- plugin routes return Ok(true) from request_filter,
                 // skipping upstream_peer entirely. This branch is a safety net.
-                Err(pingora_core::Error::new(pingora_core::ErrorType::InternalError))
+                Err(pingora_core::Error::new(
+                    pingora_core::ErrorType::InternalError,
+                ))
             }
         }
     }

@@ -64,7 +64,6 @@ pub fn request_input_from_parts(
     }
 }
 
-
 /// Build a `ResponseInput` from an HTTP response's components.
 pub fn response_input_from_parts(
     status: http::StatusCode,
