@@ -95,6 +95,7 @@ fn bench_interceptor_serialization(c: &mut Criterion) {
             m
         },
         params: HashMap::new(),
+        operation: None,
     };
 
     let continue_json = serde_json::json!({
