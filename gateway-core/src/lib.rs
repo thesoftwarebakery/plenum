@@ -836,8 +836,10 @@ impl ProxyHttp for OpenGateway {
                 buf
             };
 
-            // Step 3: Restore body for upstream forwarding
-            *body = Some(final_buf);
+            // Step 3: Restore body for upstream forwarding (only if non-empty)
+            if !final_buf.is_empty() {
+                *body = Some(final_buf);
+            }
         }
 
         Ok(())
@@ -859,7 +861,12 @@ impl ProxyHttp for OpenGateway {
         // When on_request is configured, the body may be modified in request_body_filter.
         // Replace Content-Length with Transfer-Encoding: chunked so pingora will stream
         // the (possibly resized) body to the upstream without a fixed length constraint.
-        if !op.interceptors.on_request.is_empty() {
+        // Only apply to requests that actually carry a body (have Content-Length set).
+        if !op.interceptors.on_request.is_empty()
+            && upstream_request
+                .headers
+                .contains_key(http::header::CONTENT_LENGTH)
+        {
             upstream_request.remove_header(&http::header::CONTENT_LENGTH);
             upstream_request
                 .insert_header(http::header::TRANSFER_ENCODING, "chunked")
