@@ -251,7 +251,7 @@ impl ProxyHttp for OpenGateway {
                 &session.req_header().uri,
                 &session.req_header().headers,
                 ctx.path_params.clone(),
-                None,
+                Some(op.operation_meta.clone()),
             );
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
@@ -382,7 +382,7 @@ impl ProxyHttp for OpenGateway {
                         &session.req_header().uri,
                         &session.req_header().headers,
                         ctx.path_params.clone(),
-                        None,
+                        Some(op.operation_meta.clone()),
                     );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
@@ -450,7 +450,7 @@ impl ProxyHttp for OpenGateway {
                     &session.req_header().uri,
                     &request_headers,
                     path_params.clone(),
-                    None,
+                    Some(op.operation_meta.clone()),
                 );
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
@@ -509,6 +509,7 @@ impl ProxyHttp for OpenGateway {
                     "params": path_params,
                 },
                 "config": backend_config,
+                "operation": op.operation_meta,
             });
             let js_body = js_body_from_content_type(
                 session
@@ -554,7 +555,7 @@ impl ProxyHttp for OpenGateway {
                 let input = response_input_from_parts(
                     http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
                     &headers_hashmap_to_http_headermap(&plugin_headers),
-                    None,
+                    Some(op.operation_meta.clone()),
                 );
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
@@ -617,7 +618,7 @@ impl ProxyHttp for OpenGateway {
                 let input = response_input_from_parts(
                     http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
                     &headers_hashmap_to_http_headermap(&plugin_headers),
-                    None,
+                    Some(op.operation_meta.clone()),
                 );
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
@@ -767,7 +768,7 @@ impl ProxyHttp for OpenGateway {
                         &session.req_header().uri,
                         &session.req_header().headers,
                         ctx.path_params.clone(),
-                        None,
+                        Some(op.operation_meta.clone()),
                     );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
@@ -864,7 +865,7 @@ impl ProxyHttp for OpenGateway {
                 &upstream_request.uri,
                 &upstream_request.headers,
                 ctx.path_params.clone(),
-                None,
+                Some(op.operation_meta.clone()),
             );
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
@@ -920,7 +921,7 @@ impl ProxyHttp for OpenGateway {
             let input = response_input_from_parts(
                 upstream_response.status,
                 &upstream_response.headers,
-                None,
+                Some(op.operation_meta.clone()),
             );
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
@@ -1011,7 +1012,11 @@ impl ProxyHttp for OpenGateway {
                         ctx.upstream_response_content_type.as_deref(),
                         &current_buf,
                     );
-                    let input = response_input_from_parts(status, &http::HeaderMap::new(), None);
+                    let input = response_input_from_parts(
+                        status,
+                        &http::HeaderMap::new(),
+                        Some(op.operation_meta.clone()),
+                    );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
 
