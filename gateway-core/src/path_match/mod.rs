@@ -341,9 +341,8 @@ fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_json::Value
 
     // requestBody
     if let Ok(Some(req_body)) = operation.request_body(spec)
-        && let Ok(mut val) = serde_json::to_value(&req_body)
+        && let Ok(val) = serde_json::to_value(&req_body)
     {
-        strip_opengateway_extensions(&mut val);
         result.insert("requestBody".to_owned(), val);
     }
 
@@ -352,8 +351,7 @@ fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_json::Value
     if !responses_map.is_empty() {
         let mut responses_obj = serde_json::Map::new();
         for (status, response) in &responses_map {
-            if let Ok(mut val) = serde_json::to_value(response) {
-                strip_opengateway_extensions(&mut val);
+            if let Ok(val) = serde_json::to_value(response) {
                 responses_obj.insert(status.clone(), val);
             }
         }
@@ -366,11 +364,11 @@ fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_json::Value
     }
 
     // Collect all $ref strings from current result and bundle referenced component schemas.
-    let mut current_value = serde_json::Value::Object(result.clone());
+    let partial = serde_json::Value::Object(result.clone());
     let mut visited: HashSet<String> = HashSet::new();
     let mut to_visit: Vec<String> = {
         let mut refs = HashSet::new();
-        collect_schema_refs(&current_value, &mut refs);
+        collect_schema_refs(&partial, &mut refs);
         refs.into_iter().collect()
     };
 
@@ -414,9 +412,9 @@ fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_json::Value
     }
 
     // Strip x-opengateway-* from the whole result
-    current_value = serde_json::Value::Object(result);
-    strip_opengateway_extensions(&mut current_value);
-    current_value
+    let mut output = serde_json::Value::Object(result);
+    strip_opengateway_extensions(&mut output);
+    output
 }
 
 pub fn build_router(
@@ -1610,16 +1608,26 @@ mod tests {
         });
 
         let meta = get_operation_meta(doc, "/items", http::Method::GET);
-        // Walk every key in the top-level object and ensure no x-opengateway- key leaks
-        let obj = meta.as_object().unwrap();
-        for key in obj.keys() {
-            assert!(
-                !key.starts_with("x-opengateway-"),
-                "unexpected x-opengateway- key in meta: {}",
-                key
-            );
-        }
+        assert_no_opengateway_keys(&meta, "meta");
         assert_eq!(meta["operationId"].as_str().unwrap(), "listItems");
+    }
+
+    fn assert_no_opengateway_keys(val: &serde_json::Value, path: &str) {
+        if let Some(obj) = val.as_object() {
+            for (k, v) in obj {
+                assert!(
+                    !k.starts_with("x-opengateway-"),
+                    "x-opengateway- key '{}' found at {}",
+                    k,
+                    path
+                );
+                assert_no_opengateway_keys(v, &format!("{}.{}", path, k));
+            }
+        } else if let Some(arr) = val.as_array() {
+            for (i, v) in arr.iter().enumerate() {
+                assert_no_opengateway_keys(v, &format!("{}[{}]", path, i));
+            }
+        }
     }
 
     #[test]
@@ -1657,25 +1665,6 @@ mod tests {
         });
 
         let meta = get_operation_meta(doc, "/items", http::Method::POST);
-
-        // Helper to recursively assert no x-opengateway-* keys anywhere
-        fn assert_no_opengateway_keys(val: &serde_json::Value, path: &str) {
-            if let Some(obj) = val.as_object() {
-                for (k, v) in obj {
-                    assert!(
-                        !k.starts_with("x-opengateway-"),
-                        "x-opengateway- key '{}' found at {}",
-                        k,
-                        path
-                    );
-                    assert_no_opengateway_keys(v, &format!("{}.{}", path, k));
-                }
-            } else if let Some(arr) = val.as_array() {
-                for (i, v) in arr.iter().enumerate() {
-                    assert_no_opengateway_keys(v, &format!("{}[{}]", path, i));
-                }
-            }
-        }
         assert_no_opengateway_keys(&meta, "meta");
     }
 
