@@ -336,7 +336,14 @@ impl ProxyHttp for OpenGateway {
             let buf = body_bytes.freeze();
 
             // Step 1: Validate against schema (if configured)
-            if let Some(schema) = op.request_body.as_ref() {
+            let req_content_type = session
+                .req_header()
+                .headers
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+                .unwrap_or_else(|| "application/json".to_string());
+            if let Some(schema) = op.request_body.get(&req_content_type) {
                 let parsed: serde_json::Value = match serde_json::from_slice(&buf) {
                     Ok(v) => v,
                     Err(_) => {
@@ -703,7 +710,7 @@ impl ProxyHttp for OpenGateway {
 
         // Skip if neither validation nor on_request interceptor is configured.
         // Plugin routes are fully handled in request_filter and never reach here.
-        if op.request_body.is_none() && op.interceptors.on_request.is_empty() {
+        if op.request_body.is_empty() && op.interceptors.on_request.is_empty() {
             return Ok(());
         }
 
@@ -717,7 +724,14 @@ impl ProxyHttp for OpenGateway {
             let buf = ctx.request_body_buf.split().freeze();
 
             // Step 1: Validate against schema (if configured)
-            if let Some(schema) = op.request_body.as_ref() {
+            let req_content_type = session
+                .req_header()
+                .headers
+                .get(http::header::CONTENT_TYPE)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+                .unwrap_or_else(|| "application/json".to_string());
+            if let Some(schema) = op.request_body.get(&req_content_type) {
                 let parsed: serde_json::Value = match serde_json::from_slice(&buf) {
                     Ok(v) => v,
                     Err(_) => {
