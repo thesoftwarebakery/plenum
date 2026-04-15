@@ -1,0 +1,141 @@
+overlay: 1.1.0
+info:
+  title: Wire upstreams and interceptors for response validation tests
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-opengateway-config:
+        threads: 1
+        daemon: false
+        listen: "0.0.0.0:6188"
+
+  # Plugin upstream for /plugin/* routes
+  - target: $.paths["/plugin/valid"]
+    update:
+      x-opengateway-upstream:
+        kind: "plugin"
+        plugin: "./plugins/response-validation-test.js"
+
+  - target: $.paths["/plugin/invalid"]
+    update:
+      x-opengateway-upstream:
+        kind: "plugin"
+        plugin: "./plugins/response-validation-test.js"
+
+  - target: $.paths["/plugin/no-validation"]
+    update:
+      x-opengateway-upstream:
+        kind: "plugin"
+        plugin: "./plugins/response-validation-test.js"
+
+  # x-opengateway-backend is operation-level
+  - target: $.paths["/plugin/valid"].get
+    update:
+      x-opengateway-backend:
+        mode: "valid"
+
+  - target: $.paths["/plugin/invalid"].get
+    update:
+      x-opengateway-backend:
+        mode: "invalid"
+
+  - target: $.paths["/plugin/no-validation"].get
+    update:
+      x-opengateway-backend:
+        mode: "invalid"
+
+  # HTTP upstream for /http/* routes (buffer-response required for on_response_body)
+  - target: $.paths["/http/valid"]
+    update:
+      x-opengateway-upstream:
+        kind: "HTTP"
+        address: "wiremock"
+        port: 8080
+        buffer-response: true
+
+  - target: $.paths["/http/invalid"]
+    update:
+      x-opengateway-upstream:
+        kind: "HTTP"
+        address: "wiremock"
+        port: 8080
+        buffer-response: true
+
+  # Attach validate-response interceptor to routes that need it.
+  # The schema is passed explicitly as interceptor options.
+  - target: $.paths["/plugin/valid"].get
+    update:
+      x-opengateway-interceptor:
+        - module: "internal:validate-response"
+          hook: "on_response_body"
+          function: "validateResponse"
+          options:
+            schemas:
+              "200":
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name
+
+  - target: $.paths["/plugin/invalid"].get
+    update:
+      x-opengateway-interceptor:
+        - module: "internal:validate-response"
+          hook: "on_response_body"
+          function: "validateResponse"
+          options:
+            schemas:
+              "200":
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name
+
+  - target: $.paths["/http/valid"].get
+    update:
+      x-opengateway-interceptor:
+        - module: "internal:validate-response"
+          hook: "on_response_body"
+          function: "validateResponse"
+          options:
+            schemas:
+              "200":
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name
+
+  - target: $.paths["/http/invalid"].get
+    update:
+      x-opengateway-interceptor:
+        - module: "internal:validate-response"
+          hook: "on_response_body"
+          function: "validateResponse"
+          options:
+            schemas:
+              "200":
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name

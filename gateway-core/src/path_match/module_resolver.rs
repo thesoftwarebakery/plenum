@@ -63,6 +63,10 @@ const BUILTINS: &[(&str, &str)] = &[
         include_str!("../../js/dist/validate-request.js"),
     ),
     ("auth-apikey", include_str!("../../js/dist/auth-apikey.js")),
+    (
+        "validate-response",
+        include_str!("../../js/dist/validate-response.js"),
+    ),
 ];
 
 fn lookup_builtin(name: &str) -> Option<&'static str> {
@@ -82,6 +86,14 @@ mod tests {
     fn resolves_internal_add_header() {
         let result = resolve_module("internal:add-header", Path::new("/any/path")).unwrap();
         assert!(matches!(result, ResolvedModule::Internal { name, .. } if name == "add-header"));
+    }
+
+    #[test]
+    fn resolves_internal_validate_response() {
+        let result = resolve_module("internal:validate-response", Path::new("/any/path")).unwrap();
+        assert!(
+            matches!(result, ResolvedModule::Internal { name, .. } if name == "validate-response")
+        );
     }
 
     #[test]
