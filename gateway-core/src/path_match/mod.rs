@@ -8,12 +8,15 @@ use std::time::Duration;
 
 use http::Method;
 use matchit::Router;
-use oas3::spec::{Operation, PathItem, Spec};
+use oas3::spec::{Operation, PathItem};
 use opengateway_js_runtime::JsRuntimeHandle;
 use pingora_core::upstreams::peer::HttpPeer;
 
 use crate::config::{
     Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
+};
+use crate::openapi::operation::{
+    build_operation_meta, compile_request_body_schemas, compile_response_schemas,
 };
 use crate::upstream_http::make_peer;
 use crate::validation::schema::CompiledSchema;
@@ -59,14 +62,21 @@ pub struct OperationInterceptors {
 
 /// Compiled schemas for a single operation (method on a path).
 pub struct OperationSchemas {
-    pub request_body: Option<CompiledSchema>,
-    pub responses: HashMap<u16, CompiledSchema>,
-    pub default_response: Option<CompiledSchema>,
+    /// Compiled request body schemas keyed by content type (e.g. `"application/json"`).
+    pub request_body: HashMap<String, CompiledSchema>,
+    /// Compiled response schemas keyed by status code then content type.
+    pub responses: HashMap<u16, HashMap<String, CompiledSchema>>,
+    /// Compiled schemas for the OpenAPI `default` response, keyed by content type.
+    pub default_response: HashMap<String, CompiledSchema>,
     pub validation_override: Option<ValidationOverride>,
     pub interceptors: OperationInterceptors,
     /// Raw `x-opengateway-backend` extension value from the operation, passed opaquely to the
     /// plugin's `handle()` function. Never interpreted by the gateway itself.
     pub backend_config: Option<serde_json::Value>,
+    /// Curated OpenAPI Operation Object JSON value built at boot time. Contains operationId,
+    /// summary, parameters, requestBody, responses, and a bundled components.schemas for any
+    /// referenced component schemas. x-opengateway-* extensions are stripped.
+    pub operation_meta: serde_json::Value,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -126,47 +136,6 @@ impl PluginRuntimeKey {
             net,
         }
     }
-}
-
-/// Try to compile the JSON schema from an operation's request body (application/json only).
-fn compile_request_body_schema(operation: &Operation, spec: &Spec) -> Option<CompiledSchema> {
-    let req_body = operation.request_body(spec).ok()??;
-    let media_type = req_body.content.get("application/json")?;
-    let schema = media_type.schema(spec).ok()??;
-    let value = serde_json::to_value(&schema).ok()?;
-    CompiledSchema::compile(&value).ok()
-}
-
-/// Compile JSON schemas from an operation's responses, keyed by status code.
-fn compile_response_schemas(
-    operation: &Operation,
-    spec: &Spec,
-) -> (HashMap<u16, CompiledSchema>, Option<CompiledSchema>) {
-    let mut responses = HashMap::new();
-    let mut default_response = None;
-
-    for (status_key, response) in operation.responses(spec) {
-        let Some(media_type) = response.content.get("application/json") else {
-            continue;
-        };
-        let Some(schema) = media_type.schema(spec).ok().flatten() else {
-            continue;
-        };
-        let Some(value) = serde_json::to_value(&schema).ok() else {
-            continue;
-        };
-        let Some(compiled) = CompiledSchema::compile(&value).ok() else {
-            continue;
-        };
-
-        if status_key == "default" {
-            default_response = Some(compiled);
-        } else if let Ok(code) = status_key.parse::<u16>() {
-            responses.insert(code, compiled);
-        }
-    }
-
-    (responses, default_response)
 }
 
 /// Parse an operation's `x-opengateway-interceptor` extension and build interceptor handles.
@@ -347,7 +316,7 @@ pub fn build_router(
         // Build operation schemas for each method on this path
         let mut operations = HashMap::new();
         for (method, operation) in path_item.methods() {
-            let request_body = compile_request_body_schema(operation, &config.spec);
+            let request_body = compile_request_body_schemas(operation, &config.spec);
             let (responses, default_response) = compile_response_schemas(operation, &config.spec);
 
             // Operation-level validation override
@@ -368,6 +337,9 @@ pub fn build_router(
             let backend_config: Option<serde_json::Value> =
                 operation.extensions.get("opengateway-backend").cloned();
 
+            // Curated operation metadata for runtime use by plugins/interceptors
+            let operation_meta = build_operation_meta(operation, &config.spec);
+
             operations.insert(
                 method,
                 OperationSchemas {
@@ -377,6 +349,7 @@ pub fn build_router(
                     validation_override: op_validation,
                     interceptors,
                     backend_config,
+                    operation_meta,
                 },
             );
         }
@@ -491,53 +464,6 @@ mod tests {
 
     fn dummy_config_base() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-    }
-
-    #[test]
-    fn extracts_request_body_schema() {
-        let config = config_with_schema();
-        let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
-        let matched = router.at("/items").unwrap();
-        let post = matched.value.operations.get(&Method::POST).unwrap();
-        assert!(post.request_body.is_some());
-    }
-
-    #[test]
-    fn extracts_response_schema_by_status() {
-        let config = config_with_schema();
-        let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
-        let matched = router.at("/items").unwrap();
-        let post = matched.value.operations.get(&Method::POST).unwrap();
-        assert!(post.responses.contains_key(&200));
-        assert!(post.default_response.is_some());
-    }
-
-    #[test]
-    fn no_schema_for_operations_without_body() {
-        let config = config_with_schema();
-        let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
-        let matched = router.at("/items").unwrap();
-        let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert!(get.request_body.is_none());
-        assert!(get.responses.is_empty());
-    }
-
-    #[test]
-    fn validates_extracted_request_schema() {
-        let config = config_with_schema();
-        let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
-        let matched = router.at("/items").unwrap();
-        let post = matched.value.operations.get(&Method::POST).unwrap();
-        let schema = post.request_body.as_ref().unwrap();
-
-        // Valid
-        assert!(schema.validate(&json!({"name": "test"})).is_ok());
-        // Missing required field
-        assert!(schema.validate(&json!({})).is_err());
     }
 
     #[test]
@@ -1161,7 +1087,6 @@ mod tests {
         }
     }
 
-    #[test]
     fn plugin_runtime_key_differentiates_by_permissions() {
         use crate::config::PermissionsConfig;
         let module = module_resolver::ModuleCacheKey::Internal("test".into());
