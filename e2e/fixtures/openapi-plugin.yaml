@@ -6,11 +6,22 @@ paths:
   /echo:
     get:
       operationId: echoGet
+      summary: Echo a GET request
       responses:
         "200":
           description: Echo response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  method:
+                    type: string
+                  path:
+                    type: string
     post:
       operationId: echoPost
+      summary: Echo a POST request
       requestBody:
         content:
           application/json:
@@ -19,9 +30,14 @@ paths:
       responses:
         "200":
           description: Echo response
+          content:
+            application/json:
+              schema:
+                type: object
   /echo/{id}:
     get:
       operationId: echoById
+      summary: Echo a GET request with path param
       parameters:
         - name: id
           in: path
@@ -31,3 +47,7 @@ paths:
       responses:
         "200":
           description: Echo response
+          content:
+            application/json:
+              schema:
+                type: object

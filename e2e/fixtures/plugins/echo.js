@@ -16,6 +16,7 @@ export function handle(input) {
       headers: input.request.headers,
       config: input.config,
       requestBody: input.body,
+      operation: input.operation,
     },
   };
 }
