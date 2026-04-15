@@ -1623,6 +1623,63 @@ mod tests {
     }
 
     #[test]
+    fn operation_meta_strips_opengateway_extensions_nested() {
+        // Extensions nested inside requestBody and responses should also be stripped.
+        let doc = serde_json::json!({
+            "openapi": "3.1.0",
+            "info": { "title": "T", "version": "0.0.1" },
+            "paths": {
+                "/items": {
+                    "post": {
+                        "operationId": "createItem",
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": { "type": "object" },
+                                    "x-opengateway-custom": "should-be-stripped"
+                                }
+                            }
+                        },
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "x-opengateway-custom": "should-be-stripped"
+                            }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+
+        let meta = get_operation_meta(doc, "/items", http::Method::POST);
+
+        // Helper to recursively assert no x-opengateway-* keys anywhere
+        fn assert_no_opengateway_keys(val: &serde_json::Value, path: &str) {
+            if let Some(obj) = val.as_object() {
+                for (k, v) in obj {
+                    assert!(
+                        !k.starts_with("x-opengateway-"),
+                        "x-opengateway- key '{}' found at {}",
+                        k,
+                        path
+                    );
+                    assert_no_opengateway_keys(v, &format!("{}.{}", path, k));
+                }
+            } else if let Some(arr) = val.as_array() {
+                for (i, v) in arr.iter().enumerate() {
+                    assert_no_opengateway_keys(v, &format!("{}[{}]", path, i));
+                }
+            }
+        }
+        assert_no_opengateway_keys(&meta, "meta");
+    }
+
+    #[test]
     fn plugin_runtime_key_differentiates_by_permissions() {
         use crate::config::PermissionsConfig;
         let module = module_resolver::ModuleCacheKey::Internal("test".into());
