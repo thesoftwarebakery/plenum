@@ -23,6 +23,7 @@ jsonschema = "0.45"
 bytes = "1"
 opengateway-js-runtime = { path = "../opengateway-js-runtime" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
+shellexpand = "3"
 
 [dev-dependencies]
 wiremock = "0.6"

@@ -83,6 +83,51 @@ pub struct RouteEntry {
 
 pub type OpenGatewayRouter = Router<Arc<RouteEntry>>;
 
+/// Cache key for plugin runtimes. Incorporates both the module identity and
+/// the normalized (sorted, order-independent) permissions so that the same
+/// module file used with different permission sets gets separate runtimes.
+#[derive(Debug, Hash, Eq, PartialEq)]
+struct PluginRuntimeKey {
+    module: module_resolver::ModuleCacheKey,
+    env: Vec<String>,  // sorted
+    read: Vec<String>, // sorted canonical paths
+    net: Vec<String>,  // sorted
+}
+
+impl PluginRuntimeKey {
+    fn new(
+        module: module_resolver::ModuleCacheKey,
+        permissions: &Option<crate::config::PermissionsConfig>,
+    ) -> Self {
+        let (mut env, mut read, mut net) = match permissions {
+            None => (vec![], vec![], vec![]),
+            Some(p) => {
+                let read_paths: Vec<String> = p
+                    .read
+                    .iter()
+                    .map(|s| {
+                        let path = std::path::PathBuf::from(s);
+                        path.canonicalize()
+                            .unwrap_or(path)
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect();
+                (p.env.clone(), read_paths, p.net.clone())
+            }
+        };
+        env.sort();
+        read.sort();
+        net.sort();
+        Self {
+            module,
+            env,
+            read,
+            net,
+        }
+    }
+}
+
 /// Try to compile the JSON schema from an operation's request body (application/json only).
 fn compile_request_body_schema(operation: &Operation, spec: &Spec) -> Option<CompiledSchema> {
     let req_body = operation.request_body(spec).ok()??;
@@ -218,21 +263,16 @@ pub fn build_router(
     let server_config: ServerConfig = config
         .extension(&config.spec.extensions, "opengateway-config")
         .unwrap_or_else(|_| ServerConfig::default());
-    let default_interceptor_timeout = Duration::from_millis(
-        server_config
-            .interceptor_default_timeout_ms
-            .unwrap_or(30_000),
-    );
-    let default_plugin_timeout =
-        Duration::from_millis(server_config.plugin_default_timeout_ms.unwrap_or(30_000));
+    let default_interceptor_timeout =
+        Duration::from_millis(server_config.interceptor_default_timeout_ms);
+    let default_plugin_timeout = Duration::from_millis(server_config.plugin_default_timeout_ms);
 
     let mut router = Router::new();
     let mut interceptor_runtime_cache: HashMap<
         module_resolver::ModuleCacheKey,
         Arc<JsRuntimeHandle>,
     > = HashMap::new();
-    let mut plugin_runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
-        HashMap::new();
+    let mut plugin_runtime_cache: HashMap<PluginRuntimeKey, Arc<JsRuntimeHandle>> = HashMap::new();
 
     for (path, path_item) in paths {
         let upstream_config: UpstreamConfig =
@@ -253,22 +293,17 @@ pub fn build_router(
                 plugin,
                 options,
                 permissions,
+                timeout_ms: upstream_config_timeout_ms,
             } => {
                 let resolved = module_resolver::resolve_module(plugin, config_base)?;
-                let cache_key = resolved.cache_key();
+                let cache_key = PluginRuntimeKey::new(resolved.cache_key(), permissions);
+
+                let plugin_timeout = upstream_config_timeout_ms
+                    .map(Duration::from_millis)
+                    .unwrap_or(default_plugin_timeout);
 
                 let h = match plugin_runtime_cache.entry(cache_key) {
-                    std::collections::hash_map::Entry::Occupied(e) => {
-                        if permissions.is_some() {
-                            log::warn!(
-                                "plugin module '{}' is referenced multiple times; permissions \
-                                 declared here are ignored -- only the first reference's permissions \
-                                 take effect",
-                                plugin
-                            );
-                        }
-                        e.get().clone()
-                    }
+                    std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
                     std::collections::hash_map::Entry::Vacant(e) => {
                         let perms = permissions
                             .clone()
@@ -291,7 +326,7 @@ pub fn build_router(
                             .as_ref()
                             .map(|o| resolve_env_vars(o.clone()))
                             .unwrap_or_else(|| serde_json::json!({}));
-                        h.call_blocking("init", init_options, None, default_plugin_timeout)?;
+                        h.call_blocking("init", init_options, None, plugin_timeout)?;
 
                         e.insert(h).clone()
                     }
@@ -299,7 +334,7 @@ pub fn build_router(
 
                 Upstream::Plugin(PluginHandle {
                     runtime: h,
-                    timeout: default_plugin_timeout,
+                    timeout: plugin_timeout,
                 })
             }
         };
@@ -1094,5 +1129,71 @@ mod tests {
             result.is_ok(),
             "plugin upstream should not require buffer-response"
         );
+    }
+
+    #[test]
+    fn plugin_upstream_uses_per_plugin_timeout_ms() {
+        let plugin_path = fixture_path("echo_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path,
+                        "timeout_ms": 12345
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        if let Upstream::Plugin(handle) = &matched.value.upstream {
+            assert_eq!(handle.timeout, Duration::from_millis(12345));
+        } else {
+            panic!("expected Plugin upstream");
+        }
+    }
+
+    #[test]
+    fn plugin_runtime_key_differentiates_by_permissions() {
+        use crate::config::PermissionsConfig;
+        let module = module_resolver::ModuleCacheKey::Internal("test".into());
+
+        let key_none = PluginRuntimeKey::new(module.clone(), &None);
+        let key_with_env = PluginRuntimeKey::new(
+            module.clone(),
+            &Some(PermissionsConfig {
+                env: vec!["FOO".into()],
+                read: vec![],
+                net: vec![],
+            }),
+        );
+        let key_env_reordered = PluginRuntimeKey::new(
+            module.clone(),
+            &Some(PermissionsConfig {
+                env: vec!["BAR".into(), "FOO".into()],
+                read: vec![],
+                net: vec![],
+            }),
+        );
+        let key_env_same_order_independent = PluginRuntimeKey::new(
+            module.clone(),
+            &Some(PermissionsConfig {
+                env: vec!["BAR".into(), "FOO".into()],
+                read: vec![],
+                net: vec![],
+            }),
+        );
+
+        assert_ne!(key_none, key_with_env);
+        assert_ne!(key_with_env, key_env_reordered);
+        assert_eq!(key_env_reordered, key_env_same_order_independent);
     }
 }
