@@ -23,6 +23,7 @@ use tracing::Instrument;
 pub mod config;
 pub mod gateway_error;
 pub mod interceptor;
+mod openapi;
 pub mod path_match;
 pub mod upstream_http;
 pub mod validation;
