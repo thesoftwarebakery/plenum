@@ -35,7 +35,7 @@ impl std::fmt::Debug for PluginHandle {
 /// The upstream target for a route -- either an HTTP peer or a Deno backend plugin.
 #[derive(Debug)]
 pub enum Upstream {
-    Http(HttpPeer),
+    Http(Box<HttpPeer>),
     Plugin(PluginHandle),
 }
 
@@ -246,7 +246,7 @@ pub fn build_router(
             }
         );
         let upstream = match &upstream_config {
-            UpstreamConfig::HTTP { address, port, .. } => Upstream::Http(make_peer(address, *port)),
+            UpstreamConfig::HTTP { address, port, .. } => Upstream::Http(Box::new(make_peer(address, *port))),
             UpstreamConfig::Plugin {
                 plugin,
                 options,

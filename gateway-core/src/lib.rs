@@ -664,7 +664,7 @@ impl ProxyHttp for OpenGateway {
                     )
                 })?;
             session
-                .write_response_body(Some(response_body_bytes.into()), true)
+                .write_response_body(Some(response_body_bytes), true)
                 .await
                 .map_err(|e| {
                     pingora_core::Error::because(
@@ -1055,7 +1055,7 @@ impl ProxyHttp for OpenGateway {
             .as_ref()
             .ok_or_else(|| pingora_core::Error::new(pingora_core::ErrorType::InternalError))?;
         match &route.upstream {
-            crate::path_match::Upstream::Http(peer) => Ok(Box::new(peer.clone())),
+            crate::path_match::Upstream::Http(peer) => Ok(Box::new(*peer.clone())),
             crate::path_match::Upstream::Plugin(_) => {
                 // Should never be reached -- plugin routes return Ok(true) from request_filter,
                 // skipping upstream_peer entirely. This branch is a safety net.
