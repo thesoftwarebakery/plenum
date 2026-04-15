@@ -10,8 +10,7 @@ pub struct RequestInput {
     pub headers: HashMap<String, String>,
     pub query: String,
     pub params: HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub operation: Option<serde_json::Value>,
+    pub operation: serde_json::Value,
 }
 
 /// Input passed to on_response interceptors.
@@ -19,8 +18,7 @@ pub struct RequestInput {
 pub struct ResponseInput {
     pub status: u16,
     pub headers: HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub operation: Option<serde_json::Value>,
+    pub operation: serde_json::Value,
 }
 
 /// Output returned by any interceptor.
@@ -58,7 +56,7 @@ pub fn request_input_from_parts(
     uri: &http::Uri,
     headers: &http::HeaderMap,
     params: HashMap<String, String>,
-    operation: Option<serde_json::Value>,
+    operation: serde_json::Value,
 ) -> RequestInput {
     RequestInput {
         method: method.to_string(),
@@ -74,7 +72,7 @@ pub fn request_input_from_parts(
 pub fn response_input_from_parts(
     status: http::StatusCode,
     headers: &http::HeaderMap,
-    operation: Option<serde_json::Value>,
+    operation: serde_json::Value,
 ) -> ResponseInput {
     ResponseInput {
         status: status.as_u16(),
@@ -238,7 +236,7 @@ mod tests {
             ]),
             query: "page=1".into(),
             params: HashMap::from([("id".into(), "123".into())]),
-            operation: None,
+            operation: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&input).unwrap();
         assert_eq!(json["method"], "POST");
@@ -255,7 +253,7 @@ mod tests {
         let input = ResponseInput {
             status: 200,
             headers: HashMap::from([("x-request-id".into(), "abc".into())]),
-            operation: None,
+            operation: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&input).unwrap();
         assert_eq!(json["status"], 200);
@@ -271,7 +269,13 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("x-custom", "value".parse().unwrap());
 
-        let input = request_input_from_parts(&method, &uri, &headers, HashMap::new(), None);
+        let input = request_input_from_parts(
+            &method,
+            &uri,
+            &headers,
+            HashMap::new(),
+            serde_json::Value::Null,
+        );
         assert_eq!(input.method, "GET");
         assert_eq!(input.path, "/items");
         assert_eq!(input.query, "page=2&limit=10");
@@ -286,7 +290,8 @@ mod tests {
         let headers = http::HeaderMap::new();
         let params = HashMap::from([("id".to_string(), "42".to_string())]);
 
-        let input = request_input_from_parts(&method, &uri, &headers, params, None);
+        let input =
+            request_input_from_parts(&method, &uri, &headers, params, serde_json::Value::Null);
         assert_eq!(input.params.get("id").unwrap(), "42");
     }
 
@@ -296,7 +301,7 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("content-type", "text/plain".parse().unwrap());
 
-        let input = response_input_from_parts(status, &headers, None);
+        let input = response_input_from_parts(status, &headers, serde_json::Value::Null);
         assert_eq!(input.status, 404);
         assert_eq!(input.headers.get("content-type").unwrap(), "text/plain");
     }
