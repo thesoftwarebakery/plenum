@@ -3,20 +3,18 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
+use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use config::Config;
+use gateway_error::GatewayError;
 use http::Method;
 use interceptor::{
     InterceptorOutput, header_map_to_hash_map, request_input_from_parts, response_input_from_parts,
 };
 use opengateway_js_runtime::{JsBody, JsRuntimeHandle};
 use path_match::{OperationSchemas, RouteEntry, Upstream, build_router};
-use pingora_http::{RequestHeader, ResponseHeader};
-use validation::error::ValidationErrorResponse;
-
-use async_trait::async_trait;
-use gateway_error::GatewayError;
 use pingora_core::upstreams::peer::HttpPeer;
+use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{ProxyHttp, Session};
 use tracing::Instrument;
 
@@ -26,13 +24,15 @@ pub mod interceptor;
 mod openapi;
 pub mod path_match;
 pub mod upstream_http;
-pub mod validation;
 
 pub struct GatewayCtx {
     matched_route: Option<Arc<RouteEntry>>,
     matched_method: Option<Method>,
     request_body_buf: BytesMut,
-    request_body_validation_failed: bool,
+    /// Set when `request_body_filter` has already written an inline response (e.g. a
+    /// `respond` action from an `on_request` interceptor). Signals `upstream_peer` to
+    /// abort the upstream connection so the pipeline stops cleanly.
+    filter_responded: bool,
     response_body_buf: BytesMut,
     upstream_response_status: Option<http::StatusCode>,
     upstream_response_content_type: Option<String>,
@@ -202,7 +202,7 @@ impl ProxyHttp for OpenGateway {
             matched_route: None,
             matched_method: None,
             request_body_buf: BytesMut::new(),
-            request_body_validation_failed: false,
+            filter_responded: false,
             response_body_buf: BytesMut::new(),
             upstream_response_status: None,
             upstream_response_content_type: None,
@@ -334,45 +334,6 @@ impl ProxyHttp for OpenGateway {
                 }
             }
             let buf = body_bytes.freeze();
-
-            // Step 1: Validate against schema (if configured)
-            let req_content_type = session
-                .req_header()
-                .headers
-                .get(http::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-                .unwrap_or_else(|| "application/json".to_string());
-            if let Some(schema) = op.request_body.get(&req_content_type) {
-                let parsed: serde_json::Value = match serde_json::from_slice(&buf) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        let err = ValidationErrorResponse::request_error(vec![
-                            validation::error::ValidationIssue {
-                                path: "".into(),
-                                message: "request body is not valid JSON".into(),
-                            },
-                        ]);
-                        session
-                            .respond_error_with_body(400, Bytes::from(err.to_json()))
-                            .await
-                            .ok();
-                        return Ok(true);
-                    }
-                };
-                if let Err(issues) = {
-                    let _span =
-                        tracing::debug_span!("validation", phase = "request_body").entered();
-                    schema.validate(&parsed)
-                } {
-                    let err = ValidationErrorResponse::request_error(issues);
-                    session
-                        .respond_error_with_body(400, Bytes::from(err.to_json()))
-                        .await
-                        .ok();
-                    return Ok(true);
-                }
-            }
 
             // Step 2: Phase 2 of on_request with body access.
             let final_buf = if !op.interceptors.on_request.is_empty() && !buf.is_empty() {
@@ -639,7 +600,27 @@ impl ProxyHttp for OpenGateway {
                 )
                 .await
                 {
-                    Ok((InterceptorOutput::Continue { .. }, body_out)) => {
+                    Ok((
+                        InterceptorOutput::Continue {
+                            status, headers, ..
+                        },
+                        body_out,
+                    )) => {
+                        if let Some(s) = status {
+                            plugin_status = s;
+                        }
+                        if let Some(mods) = headers {
+                            for (k, v) in mods {
+                                match v {
+                                    Some(val) => {
+                                        plugin_headers.insert(k, val);
+                                    }
+                                    None => {
+                                        plugin_headers.remove(&k);
+                                    }
+                                }
+                            }
+                        }
                         if let Some(b) = body_out {
                             response_body_bytes = js_body_to_bytes(b);
                         }
@@ -708,9 +689,9 @@ impl ProxyHttp for OpenGateway {
             return Ok(());
         };
 
-        // Skip if neither validation nor on_request interceptor is configured.
+        // Skip if no on_request interceptors are configured.
         // Plugin routes are fully handled in request_filter and never reach here.
-        if op.request_body.is_empty() && op.interceptors.on_request.is_empty() {
+        if op.interceptors.on_request.is_empty() {
             return Ok(());
         }
 
@@ -722,47 +703,6 @@ impl ProxyHttp for OpenGateway {
 
         if end_of_stream {
             let buf = ctx.request_body_buf.split().freeze();
-
-            // Step 1: Validate against schema (if configured)
-            let req_content_type = session
-                .req_header()
-                .headers
-                .get(http::header::CONTENT_TYPE)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-                .unwrap_or_else(|| "application/json".to_string());
-            if let Some(schema) = op.request_body.get(&req_content_type) {
-                let parsed: serde_json::Value = match serde_json::from_slice(&buf) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        let err = ValidationErrorResponse::request_error(vec![
-                            validation::error::ValidationIssue {
-                                path: "".into(),
-                                message: "request body is not valid JSON".into(),
-                            },
-                        ]);
-                        session
-                            .respond_error_with_body(400, Bytes::from(err.to_json()))
-                            .await
-                            .ok();
-                        ctx.request_body_validation_failed = true;
-                        return Ok(());
-                    }
-                };
-                if let Err(issues) = {
-                    let _span =
-                        tracing::debug_span!("validation", phase = "request_body").entered();
-                    schema.validate(&parsed)
-                } {
-                    let err = ValidationErrorResponse::request_error(issues);
-                    session
-                        .respond_error_with_body(400, Bytes::from(err.to_json()))
-                        .await
-                        .ok();
-                    ctx.request_body_validation_failed = true;
-                    return Ok(());
-                }
-            }
 
             // Step 2: Phase 2 of on_request (body access). Only fires for non-empty bodies;
             // phase 1 in request_filter already ran. Here we apply body changes only --
@@ -813,7 +753,7 @@ impl ProxyHttp for OpenGateway {
                                 )
                                 .await
                                 .ok();
-                            ctx.request_body_validation_failed = true;
+                            ctx.filter_responded = true;
                             return Ok(());
                         }
                         Err(e) => {
@@ -826,7 +766,7 @@ impl ProxyHttp for OpenGateway {
                                 )
                                 .await
                                 .ok();
-                            ctx.request_body_validation_failed = true;
+                            ctx.filter_responded = true;
                             return Ok(());
                         }
                     }
@@ -1082,7 +1022,7 @@ impl ProxyHttp for OpenGateway {
         _session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        if ctx.request_body_validation_failed {
+        if ctx.filter_responded {
             return Err(pingora_core::Error::new(
                 pingora_core::ErrorType::HTTPStatus(400),
             ));

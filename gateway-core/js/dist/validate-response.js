@@ -6476,9 +6476,9 @@ var require_ajv = __commonJS({
   }
 });
 
-// src/validate-request.ts
+// src/validate-response.ts
 var import_ajv = __toESM(require_ajv());
-var ajv = new import_ajv.default({ strict: false, allErrors: true });
+var ajv = new import_ajv.default({ strict: false });
 var validatorCache = /* @__PURE__ */ new WeakMap();
 function getValidator(schema) {
   let validate = validatorCache.get(schema);
@@ -6488,12 +6488,17 @@ function getValidator(schema) {
   }
   return validate;
 }
-function validateRequest(request) {
-  const schema = request.options && request.options.schema;
-  if (!schema) {
+function validateResponse(request) {
+  const schemas = request.options && request.options.schemas;
+  if (!schemas) {
     return { action: "continue" };
   }
   if (request.body === null || request.body === void 0) {
+    return { action: "continue" };
+  }
+  const statusKey = request.status !== void 0 ? String(request.status) : "";
+  const schema = schemas[statusKey] ?? schemas["default"];
+  if (!schema) {
     return { action: "continue" };
   }
   let parsed;
@@ -6505,13 +6510,12 @@ function validateRequest(request) {
       parsed = JSON.parse(request.body);
     } catch {
       return {
-        action: "respond",
-        status: 400,
+        action: "continue",
+        status: 502,
         body: {
-          type: "request-validation-error",
-          title: "Request Validation Failed",
-          status: 400,
-          errors: [{ path: "", message: "Request body is not valid JSON" }]
+          type: "response-validation-error",
+          title: "Response Validation Failed",
+          status: 502
         }
       };
     }
@@ -6523,23 +6527,16 @@ function validateRequest(request) {
   if (valid) {
     return { action: "continue" };
   }
-  const errors = (validate.errors ?? []).map(
-    (e) => ({
-      path: e.instancePath || "/",
-      message: e.message ?? "validation failed"
-    })
-  );
   return {
-    action: "respond",
-    status: 400,
+    action: "continue",
+    status: 502,
     body: {
-      type: "request-validation-error",
-      title: "Request Validation Failed",
-      status: 400,
-      errors
+      type: "response-validation-error",
+      title: "Response Validation Failed",
+      status: 502
     }
   };
 }
 export {
-  validateRequest
+  validateResponse
 };

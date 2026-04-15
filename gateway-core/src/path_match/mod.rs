@@ -15,11 +15,8 @@ use pingora_core::upstreams::peer::HttpPeer;
 use crate::config::{
     Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
 };
-use crate::openapi::operation::{
-    build_operation_meta, compile_request_body_schemas, compile_response_schemas,
-};
+use crate::openapi::operation::build_operation_meta;
 use crate::upstream_http::make_peer;
-use crate::validation::schema::CompiledSchema;
 
 /// Handle to a spawned Deno backend plugin runtime.
 pub struct PluginHandle {
@@ -60,14 +57,8 @@ pub struct OperationInterceptors {
     pub on_response_body: Vec<HookHandle>,
 }
 
-/// Compiled schemas for a single operation (method on a path).
+/// Per-operation metadata resolved at boot time.
 pub struct OperationSchemas {
-    /// Compiled request body schemas keyed by content type (e.g. `"application/json"`).
-    pub request_body: HashMap<String, CompiledSchema>,
-    /// Compiled response schemas keyed by status code then content type.
-    pub responses: HashMap<u16, HashMap<String, CompiledSchema>>,
-    /// Compiled schemas for the OpenAPI `default` response, keyed by content type.
-    pub default_response: HashMap<String, CompiledSchema>,
     pub validation_override: Option<ValidationOverride>,
     pub interceptors: OperationInterceptors,
     /// Raw `x-opengateway-backend` extension value from the operation, passed opaquely to the
@@ -313,12 +304,9 @@ pub fn build_router(
             .extension(&path_item.extensions, "opengateway-validation")
             .ok();
 
-        // Build operation schemas for each method on this path
+        // Build operation metadata for each method on this path
         let mut operations = HashMap::new();
         for (method, operation) in path_item.methods() {
-            let request_body = compile_request_body_schemas(operation, &config.spec);
-            let (responses, default_response) = compile_response_schemas(operation, &config.spec);
-
             // Operation-level validation override
             let op_validation: Option<ValidationOverride> = operation
                 .extensions
@@ -343,9 +331,6 @@ pub fn build_router(
             operations.insert(
                 method,
                 OperationSchemas {
-                    request_body,
-                    responses,
-                    default_response,
                     validation_override: op_validation,
                     interceptors,
                     backend_config,
@@ -464,6 +449,20 @@ mod tests {
 
     fn dummy_config_base() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    }
+
+    #[test]
+    fn builds_router_for_spec_with_schemas() {
+        // Verifies that build_router succeeds on specs containing request body and response
+        // schemas (schemas are no longer stored on OperationSchemas -- validation is done
+        // by the user-configured internal:validate-request / internal:validate-response
+        // interceptors).
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/items").unwrap();
+        assert!(matched.value.operations.contains_key(&Method::POST));
+        assert!(matched.value.operations.contains_key(&Method::GET));
     }
 
     #[test]

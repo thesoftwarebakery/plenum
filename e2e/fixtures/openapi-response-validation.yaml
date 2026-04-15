@@ -1,0 +1,83 @@
+openapi: 3.1.0
+info:
+  title: Response Validation Test API
+  version: 1.0.0
+paths:
+  /plugin/valid:
+    get:
+      operationId: pluginValidResponse
+      responses:
+        "200":
+          description: A valid item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name
+  /plugin/invalid:
+    get:
+      operationId: pluginInvalidResponse
+      responses:
+        "200":
+          description: A valid item (but plugin will return invalid body)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name
+  /plugin/no-validation:
+    get:
+      operationId: pluginNoValidation
+      responses:
+        "200":
+          description: No schema defined, validation not configured
+  /http/valid:
+    get:
+      operationId: httpValidResponse
+      responses:
+        "200":
+          description: A valid item
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name
+  /http/invalid:
+    get:
+      operationId: httpInvalidResponse
+      responses:
+        "200":
+          description: A valid item (but upstream will return invalid body)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  name:
+                    type: string
+                required:
+                  - id
+                  - name

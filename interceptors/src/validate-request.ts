@@ -13,7 +13,7 @@
  *
  * Return value:
  *   On success:   { action: "continue" }
- *   On failure:   { action: "respond", status: 400, body: { error, details } }
+ *   On failure:   { action: "respond", status: 400, body: { type, title, status, errors } }
  */
 
 import Ajv from "ajv";
@@ -43,8 +43,10 @@ interface RespondResult {
   action: "respond";
   status: number;
   body: {
-    error: string;
-    details: unknown;
+    type: string;
+    title: string;
+    status: number;
+    errors: Array<{ path: string; message: string }>;
   };
 }
 
@@ -54,7 +56,7 @@ type InterceptorResult = ContinueResult | RespondResult;
 // requests, avoiding repeated compilation overhead.
 // strict: false enables compatibility with plain JSON Schema (draft-07) without
 // requiring the additional AJV meta-schema keywords.
-const ajv = new Ajv({ strict: false });
+const ajv = new Ajv({ strict: false, allErrors: true });
 
 // Cache compiled validators by schema object identity. Schemas passed via
 // `options` are typically the same object reference across requests (the
@@ -99,8 +101,10 @@ export function validateRequest(
         action: "respond",
         status: 400,
         body: {
-          error: "Request validation failed",
-          details: [{ message: "Request body is not valid JSON" }],
+          type: "request-validation-error",
+          title: "Request Validation Failed",
+          status: 400,
+          errors: [{ path: "", message: "Request body is not valid JSON" }],
         },
       };
     }
@@ -116,12 +120,21 @@ export function validateRequest(
     return { action: "continue" };
   }
 
+  const errors = (validate.errors ?? []).map(
+    (e: { instancePath?: string; message?: string }) => ({
+      path: e.instancePath || "/",
+      message: e.message ?? "validation failed",
+    })
+  );
+
   return {
     action: "respond",
     status: 400,
     body: {
-      error: "Request validation failed",
-      details: validate.errors,
+      type: "request-validation-error",
+      title: "Request Validation Failed",
+      status: 400,
+      errors,
     },
   };
 }

@@ -71,8 +71,8 @@ Deno.test({ name: "validate-request: invalid body returns 400", sanitizeResource
       body: JSON.stringify({}),
     });
     assertEquals(resp.status, 400);
-    const body = await resp.json() as { error: string; details?: unknown[] };
-    assertEquals(body.error, "Request validation failed");
+    const body = await resp.json() as { type: string; errors?: unknown[] };
+    assertEquals(body.type, "request-validation-error");
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();

@@ -11,7 +11,10 @@ Deno.test({ name: "request validation", sanitizeResources: false, sanitizeOps: f
     network,
     fixtures: {
       openapi: "openapi-validation.yaml",
-      overlays: ["overlay-upstream-validation.yaml"],
+      overlays: [
+        "overlay-upstream-validation.yaml",
+        "overlay-validation-interceptors.yaml",
+      ],
     },
   });
   const wm = new WireMockClient(wiremock.adminUrl);
