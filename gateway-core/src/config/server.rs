@@ -11,6 +11,7 @@ fn default_timeout_ms() -> u64 {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ServerConfig {
     #[serde(default = "default_threads")]
     pub threads: usize,
@@ -100,5 +101,15 @@ mod tests {
         let json = serde_json::json!({});
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.plugin_default_timeout_ms, 30_000);
+    }
+
+    #[test]
+    fn rejects_unknown_field() {
+        let json = serde_json::json!({ "threads": 1, "unknown_key": true });
+        let result: Result<ServerConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected error for unknown field unknown_key"
+        );
     }
 }

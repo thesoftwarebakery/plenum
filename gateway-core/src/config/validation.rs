@@ -3,6 +3,7 @@ use serde::Deserialize;
 /// Per-level validation override. Fields are optional so that
 /// only explicitly set values override the inherited defaults.
 #[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ValidationOverride {
     pub request: Option<bool>,
     pub response: Option<bool>,
@@ -39,5 +40,12 @@ mod tests {
         let v: ValidationOverride = serde_json::from_value(json!({})).unwrap();
         assert_eq!(v.request, None);
         assert_eq!(v.response, None);
+    }
+
+    #[test]
+    fn rejects_unknown_field() {
+        let result: Result<ValidationOverride, _> =
+            serde_json::from_value(json!({ "request": true, "typo": false }));
+        assert!(result.is_err(), "expected error for unknown field typo");
     }
 }

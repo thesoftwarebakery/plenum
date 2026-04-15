@@ -1,25 +1,84 @@
 use serde::Deserialize;
+use serde_json::Value;
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "kind")]
+#[serde(deny_unknown_fields)]
+struct HttpUpstreamFields {
+    address: String,
+    port: u16,
+    #[serde(default, rename = "buffer-response")]
+    buffer_response: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PluginUpstreamFields {
+    plugin: String,
+    #[serde(default)]
+    options: Option<Value>,
+    #[serde(default)]
+    permissions: Option<super::PermissionsConfig>,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+#[derive(Debug)]
 pub enum UpstreamConfig {
-    #[serde(rename = "HTTP")]
     HTTP {
         address: String,
         port: u16,
-        #[serde(default, rename = "buffer-response")]
         buffer_response: bool,
     },
-    #[serde(rename = "plugin")]
     Plugin {
         plugin: String,
-        #[serde(default)]
-        options: Option<serde_json::Value>,
-        #[serde(default)]
+        options: Option<Value>,
         permissions: Option<super::PermissionsConfig>,
-        #[serde(default)]
         timeout_ms: Option<u64>,
     },
+}
+
+impl<'de> serde::Deserialize<'de> for UpstreamConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mut map =
+            serde_json::Map::deserialize(deserializer).map_err(serde::de::Error::custom)?;
+
+        let kind = map
+            .remove("kind")
+            .ok_or_else(|| serde::de::Error::missing_field("kind"))?;
+        let kind_str = kind
+            .as_str()
+            .ok_or_else(|| serde::de::Error::custom("field `kind` must be a string"))?;
+
+        let remaining = Value::Object(map);
+
+        match kind_str {
+            "HTTP" => {
+                let fields: HttpUpstreamFields =
+                    serde_json::from_value(remaining).map_err(serde::de::Error::custom)?;
+                Ok(UpstreamConfig::HTTP {
+                    address: fields.address,
+                    port: fields.port,
+                    buffer_response: fields.buffer_response,
+                })
+            }
+            "plugin" => {
+                let fields: PluginUpstreamFields =
+                    serde_json::from_value(remaining).map_err(serde::de::Error::custom)?;
+                Ok(UpstreamConfig::Plugin {
+                    plugin: fields.plugin,
+                    options: fields.options,
+                    permissions: fields.permissions,
+                    timeout_ms: fields.timeout_ms,
+                })
+            }
+            other => Err(serde::de::Error::custom(format!(
+                "unknown upstream kind `{other}`; expected `HTTP` or `plugin`"
+            ))),
+        }
+    }
 }
 
 /// Replace `${VAR_NAME}` (and `${VAR:-default}`) patterns in a JSON value with environment
@@ -185,7 +244,39 @@ mod tests {
             "port": 9090
         });
         let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
-        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown upstream kind"), "got: {err}");
+        assert!(err.contains("HTTP"), "got: {err}");
+        assert!(err.contains("plugin"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_unknown_field_on_http_variant() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "address": "x",
+            "port": 80,
+            "buffer-responce": true
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected error for unknown field buffer-responce"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_field_on_plugin_variant() {
+        let json = serde_json::json!({
+            "kind": "plugin",
+            "plugin": "x",
+            "typo_field": 1
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected error for unknown field typo_field"
+        );
     }
 
     #[test]
@@ -235,7 +326,8 @@ mod tests {
     fn rejects_upstream_config_with_missing_kind() {
         let json = serde_json::json!({ "address": "localhost", "port": 8080 });
         let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
-        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("kind"), "got: {err}");
     }
 
     #[test]
