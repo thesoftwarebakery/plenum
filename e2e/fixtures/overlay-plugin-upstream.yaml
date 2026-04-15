@@ -11,8 +11,10 @@ actions:
   - target: $.paths['/echo'].get
     update:
       x-opengateway-backend:
-        operation: "listEcho"
+        table: echo
+        query: list
   - target: $.paths['/echo/{id}'].get
     update:
       x-opengateway-backend:
-        operation: "echoById"
+        table: echo
+        query: get_by_id
