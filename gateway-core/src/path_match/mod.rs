@@ -67,6 +67,10 @@ pub struct OperationSchemas {
     /// Raw `x-opengateway-backend` extension value from the operation, passed opaquely to the
     /// plugin's `handle()` function. Never interpreted by the gateway itself.
     pub backend_config: Option<serde_json::Value>,
+    /// Curated OpenAPI Operation Object JSON value built at boot time. Contains operationId,
+    /// summary, parameters, requestBody, responses, and a bundled components.schemas for any
+    /// referenced component schemas. x-opengateway-* extensions are stripped.
+    pub operation_meta: serde_json::Value,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -255,6 +259,166 @@ fn build_operation_interceptors(
     Ok(interceptors)
 }
 
+/// Walk a JSON value and collect all `#/components/schemas/<name>` $ref targets.
+fn collect_schema_refs(value: &serde_json::Value, refs: &mut std::collections::HashSet<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::String(ref_str)) = map.get("$ref")
+                && let Some(name) = ref_str.strip_prefix("#/components/schemas/")
+            {
+                refs.insert(name.to_owned());
+            }
+            for v in map.values() {
+                collect_schema_refs(v, refs);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr {
+                collect_schema_refs(v, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recursively remove object keys starting with `"x-opengateway-"` from a JSON value.
+fn strip_opengateway_extensions(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|k, _| !k.starts_with("x-opengateway-"));
+            for v in map.values_mut() {
+                strip_opengateway_extensions(v);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                strip_opengateway_extensions(v);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Build a curated OpenAPI Operation Object JSON value for runtime use.
+///
+/// Includes operationId, summary, parameters, requestBody, responses, and bundled
+/// component schemas for any $ref references found (transitively). All x-opengateway-*
+/// extension keys are stripped from the output.
+fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_json::Value {
+    use std::collections::HashSet;
+
+    let mut result = serde_json::Map::new();
+
+    if let Some(id) = &operation.operation_id {
+        result.insert(
+            "operationId".to_owned(),
+            serde_json::Value::String(id.clone()),
+        );
+    }
+
+    if let Some(summary) = &operation.summary {
+        result.insert(
+            "summary".to_owned(),
+            serde_json::Value::String(summary.clone()),
+        );
+    }
+
+    // Parameters
+    if let Ok(params) = operation.parameters(spec)
+        && !params.is_empty()
+    {
+        let param_values: Vec<serde_json::Value> = params
+            .iter()
+            .filter_map(|p| serde_json::to_value(p).ok())
+            .collect();
+        if !param_values.is_empty() {
+            result.insert(
+                "parameters".to_owned(),
+                serde_json::Value::Array(param_values),
+            );
+        }
+    }
+
+    // requestBody
+    if let Ok(Some(req_body)) = operation.request_body(spec)
+        && let Ok(mut val) = serde_json::to_value(&req_body)
+    {
+        strip_opengateway_extensions(&mut val);
+        result.insert("requestBody".to_owned(), val);
+    }
+
+    // responses
+    let responses_map = operation.responses(spec);
+    if !responses_map.is_empty() {
+        let mut responses_obj = serde_json::Map::new();
+        for (status, response) in &responses_map {
+            if let Ok(mut val) = serde_json::to_value(response) {
+                strip_opengateway_extensions(&mut val);
+                responses_obj.insert(status.clone(), val);
+            }
+        }
+        if !responses_obj.is_empty() {
+            result.insert(
+                "responses".to_owned(),
+                serde_json::Value::Object(responses_obj),
+            );
+        }
+    }
+
+    // Collect all $ref strings from current result and bundle referenced component schemas.
+    let mut current_value = serde_json::Value::Object(result.clone());
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut to_visit: Vec<String> = {
+        let mut refs = HashSet::new();
+        collect_schema_refs(&current_value, &mut refs);
+        refs.into_iter().collect()
+    };
+
+    let mut bundled_schemas: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+
+    while let Some(schema_name) = to_visit.pop() {
+        if visited.contains(&schema_name) {
+            continue;
+        }
+        visited.insert(schema_name.clone());
+
+        let schema_value = spec
+            .components
+            .as_ref()
+            .and_then(|c| c.schemas.get(&schema_name))
+            .and_then(|s| serde_json::to_value(s).ok());
+
+        if let Some(schema_val) = schema_value {
+            // Find any new $refs inside this schema
+            let mut new_refs = HashSet::new();
+            collect_schema_refs(&schema_val, &mut new_refs);
+            for r in new_refs {
+                if !visited.contains(&r) {
+                    to_visit.push(r);
+                }
+            }
+            bundled_schemas.insert(schema_name, schema_val);
+        }
+    }
+
+    if !bundled_schemas.is_empty() {
+        let mut components_obj = serde_json::Map::new();
+        components_obj.insert(
+            "schemas".to_owned(),
+            serde_json::Value::Object(bundled_schemas),
+        );
+        result.insert(
+            "components".to_owned(),
+            serde_json::Value::Object(components_obj),
+        );
+    }
+
+    // Strip x-opengateway-* from the whole result
+    current_value = serde_json::Value::Object(result);
+    strip_opengateway_extensions(&mut current_value);
+    current_value
+}
+
 pub fn build_router(
     config: &Config,
     paths: &BTreeMap<String, PathItem>,
@@ -368,6 +532,9 @@ pub fn build_router(
             let backend_config: Option<serde_json::Value> =
                 operation.extensions.get("opengateway-backend").cloned();
 
+            // Curated operation metadata for runtime use by plugins/interceptors
+            let operation_meta = build_operation_meta(operation, &config.spec);
+
             operations.insert(
                 method,
                 OperationSchemas {
@@ -377,6 +544,7 @@ pub fn build_router(
                     validation_override: op_validation,
                     interceptors,
                     backend_config,
+                    operation_meta,
                 },
             );
         }
@@ -1159,6 +1327,299 @@ mod tests {
         } else {
             panic!("expected Plugin upstream");
         }
+    }
+
+    // --- build_operation_meta tests ---
+
+    fn get_operation_meta(
+        doc: serde_json::Value,
+        path: &str,
+        method: http::Method,
+    ) -> serde_json::Value {
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at(path).unwrap();
+        let op = matched.value.operations.get(&method).unwrap();
+        op.operation_meta.clone()
+    }
+
+    #[test]
+    fn operation_meta_basic_fields() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/items": {
+                    "get": {
+                        "operationId": "listItems",
+                        "summary": "List all items",
+                        "parameters": [{
+                            "name": "limit",
+                            "in": "query",
+                            "schema": { "type": "integer" }
+                        }],
+                        "requestBody": {
+                            "content": {
+                                "application/json": {
+                                    "schema": { "type": "object" }
+                                }
+                            }
+                        },
+                        "responses": {
+                            "200": { "description": "ok" }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+
+        let meta = get_operation_meta(doc, "/items", http::Method::GET);
+        assert_eq!(meta["operationId"].as_str().unwrap(), "listItems");
+        assert_eq!(meta["summary"].as_str().unwrap(), "List all items");
+        assert!(meta["parameters"].is_array());
+        assert_eq!(meta["parameters"].as_array().unwrap().len(), 1);
+        assert_eq!(meta["parameters"][0]["name"].as_str().unwrap(), "limit");
+        assert!(meta["requestBody"].is_object());
+        assert!(meta["responses"].is_object());
+        assert!(meta["responses"]["200"].is_object());
+    }
+
+    #[test]
+    fn operation_meta_ref_bundling() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "components": {
+                "schemas": {
+                    "Foo": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "string" }
+                        }
+                    }
+                }
+            },
+            "paths": {
+                "/items": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "schema": { "$ref": "#/components/schemas/Foo" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+
+        let meta = get_operation_meta(doc, "/items", http::Method::GET);
+        // The response schema $ref should be preserved
+        let schema = &meta["responses"]["200"]["content"]["application/json"]["schema"];
+        assert_eq!(schema["$ref"].as_str().unwrap(), "#/components/schemas/Foo");
+        // The referenced schema should be bundled
+        assert!(
+            meta["components"]["schemas"]["Foo"].is_object(),
+            "Foo should be bundled under components.schemas"
+        );
+    }
+
+    #[test]
+    fn operation_meta_transitive_ref_bundling() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "components": {
+                "schemas": {
+                    "Foo": {
+                        "type": "object",
+                        "properties": {
+                            "bar": { "$ref": "#/components/schemas/Bar" }
+                        }
+                    },
+                    "Bar": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" }
+                        }
+                    }
+                }
+            },
+            "paths": {
+                "/items": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "schema": { "$ref": "#/components/schemas/Foo" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+
+        let meta = get_operation_meta(doc, "/items", http::Method::GET);
+        assert!(
+            meta["components"]["schemas"]["Foo"].is_object(),
+            "Foo should be bundled"
+        );
+        assert!(
+            meta["components"]["schemas"]["Bar"].is_object(),
+            "Bar should be transitively bundled"
+        );
+    }
+
+    #[test]
+    fn operation_meta_circular_ref_does_not_hang() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "components": {
+                "schemas": {
+                    "Foo": {
+                        "type": "object",
+                        "properties": {
+                            "self": { "$ref": "#/components/schemas/Foo" }
+                        }
+                    }
+                }
+            },
+            "paths": {
+                "/items": {
+                    "get": {
+                        "responses": {
+                            "200": {
+                                "description": "ok",
+                                "content": {
+                                    "application/json": {
+                                        "schema": { "$ref": "#/components/schemas/Foo" }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+
+        let meta = get_operation_meta(doc, "/items", http::Method::GET);
+        // Must not loop infinitely; Foo should appear exactly once
+        assert!(
+            meta["components"]["schemas"]["Foo"].is_object(),
+            "Foo should be bundled once"
+        );
+    }
+
+    #[test]
+    fn operation_meta_empty_operation_omits_optional_fields() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/items": {
+                    "get": {
+                        "responses": {
+                            "200": { "description": "ok" }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+
+        let meta = get_operation_meta(doc, "/items", http::Method::GET);
+        assert!(
+            meta.get("operationId").is_none(),
+            "operationId should be absent when not set"
+        );
+        assert!(
+            meta.get("summary").is_none(),
+            "summary should be absent when not set"
+        );
+        assert!(
+            meta.get("parameters").is_none(),
+            "parameters should be absent when empty"
+        );
+        assert!(
+            meta.get("requestBody").is_none(),
+            "requestBody should be absent when not set"
+        );
+        // responses with only description and no schema content still appear
+        assert!(meta["responses"].is_object());
+    }
+
+    #[test]
+    fn operation_meta_strips_opengateway_extensions() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/items": {
+                    "get": {
+                        "operationId": "listItems",
+                        "x-opengateway-interceptor": [{
+                            "module": "internal:add-header",
+                            "hook": "on_request",
+                            "function": "onRequest"
+                        }],
+                        "responses": {
+                            "200": { "description": "ok" }
+                        }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+
+        let meta = get_operation_meta(doc, "/items", http::Method::GET);
+        // Walk every key in the top-level object and ensure no x-opengateway- key leaks
+        let obj = meta.as_object().unwrap();
+        for key in obj.keys() {
+            assert!(
+                !key.starts_with("x-opengateway-"),
+                "unexpected x-opengateway- key in meta: {}",
+                key
+            );
+        }
+        assert_eq!(meta["operationId"].as_str().unwrap(), "listItems");
     }
 
     #[test]
