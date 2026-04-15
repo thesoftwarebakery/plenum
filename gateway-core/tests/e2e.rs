@@ -34,7 +34,7 @@ fn start_gateway(upstream_host: &str, upstream_port: u16) -> String {
         },
         "x-opengateway-upstreams": {
             "default": {
-                "kind": "http",
+                "kind": "HTTP",
                 "address": upstream_host,
                 "port": upstream_port
             }

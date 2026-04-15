@@ -12,9 +12,32 @@ use oas3::spec::{Operation, PathItem, Spec};
 use opengateway_js_runtime::JsRuntimeHandle;
 use pingora_core::upstreams::peer::HttpPeer;
 
-use crate::config::{Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride};
+use crate::config::{
+    Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
+};
 use crate::upstream_http::make_peer;
 use crate::validation::schema::CompiledSchema;
+
+/// Handle to a spawned Deno backend plugin runtime.
+pub struct PluginHandle {
+    pub runtime: Arc<JsRuntimeHandle>,
+    pub timeout: Duration,
+}
+
+impl std::fmt::Debug for PluginHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PluginHandle")
+            .field("timeout", &self.timeout)
+            .finish_non_exhaustive()
+    }
+}
+
+/// The upstream target for a route -- either an HTTP peer or a Deno backend plugin.
+#[derive(Debug)]
+pub enum Upstream {
+    Http(Box<HttpPeer>),
+    Plugin(PluginHandle),
+}
 
 /// A resolved interceptor hook: runtime handle, JS function name, call timeout, and options.
 pub struct HookHandle {
@@ -41,18 +64,69 @@ pub struct OperationSchemas {
     pub default_response: Option<CompiledSchema>,
     pub validation_override: Option<ValidationOverride>,
     pub interceptors: OperationInterceptors,
+    /// Raw `x-opengateway-backend` extension value from the operation, passed opaquely to the
+    /// plugin's `handle()` function. Never interpreted by the gateway itself.
+    pub backend_config: Option<serde_json::Value>,
 }
 
-/// A route entry stored in the router, containing the upstream peer
+/// A route entry stored in the router, containing the upstream target
 /// and per-operation schema information for validation.
 pub struct RouteEntry {
-    pub peer: HttpPeer,
+    pub upstream: Upstream,
+    /// True only for HTTP upstreams with `buffer-response: true`. Plugin upstreams are always
+    /// buffered implicitly (they return a complete response object). This flag gates boot-time
+    /// validation for `on_response_body` interceptors on HTTP routes.
     pub buffer_response: bool,
     pub operations: HashMap<Method, OperationSchemas>,
     pub validation_override: Option<ValidationOverride>,
 }
 
 pub type OpenGatewayRouter = Router<Arc<RouteEntry>>;
+
+/// Cache key for plugin runtimes. Incorporates both the module identity and
+/// the normalized (sorted, order-independent) permissions so that the same
+/// module file used with different permission sets gets separate runtimes.
+#[derive(Debug, Hash, Eq, PartialEq)]
+struct PluginRuntimeKey {
+    module: module_resolver::ModuleCacheKey,
+    env: Vec<String>,  // sorted
+    read: Vec<String>, // sorted canonical paths
+    net: Vec<String>,  // sorted
+}
+
+impl PluginRuntimeKey {
+    fn new(
+        module: module_resolver::ModuleCacheKey,
+        permissions: &Option<crate::config::PermissionsConfig>,
+    ) -> Self {
+        let (mut env, mut read, mut net) = match permissions {
+            None => (vec![], vec![], vec![]),
+            Some(p) => {
+                let read_paths: Vec<String> = p
+                    .read
+                    .iter()
+                    .map(|s| {
+                        let path = std::path::PathBuf::from(s);
+                        path.canonicalize()
+                            .unwrap_or(path)
+                            .to_string_lossy()
+                            .into_owned()
+                    })
+                    .collect();
+                (p.env.clone(), read_paths, p.net.clone())
+            }
+        };
+        env.sort();
+        read.sort();
+        net.sort();
+        Self {
+            module,
+            env,
+            read,
+            net,
+        }
+    }
+}
 
 /// Try to compile the JSON schema from an operation's request body (application/json only).
 fn compile_request_body_schema(operation: &Operation, spec: &Spec) -> Option<CompiledSchema> {
@@ -189,20 +263,81 @@ pub fn build_router(
     let server_config: ServerConfig = config
         .extension(&config.spec.extensions, "opengateway-config")
         .unwrap_or_else(|_| ServerConfig::default());
-    let default_interceptor_timeout = Duration::from_millis(
-        server_config
-            .interceptor_default_timeout_ms
-            .unwrap_or(30_000),
-    );
+    let default_interceptor_timeout =
+        Duration::from_millis(server_config.interceptor_default_timeout_ms);
+    let default_plugin_timeout = Duration::from_millis(server_config.plugin_default_timeout_ms);
 
     let mut router = Router::new();
-    let mut runtime_cache: HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>> =
-        HashMap::new();
+    let mut interceptor_runtime_cache: HashMap<
+        module_resolver::ModuleCacheKey,
+        Arc<JsRuntimeHandle>,
+    > = HashMap::new();
+    let mut plugin_runtime_cache: HashMap<PluginRuntimeKey, Arc<JsRuntimeHandle>> = HashMap::new();
 
     for (path, path_item) in paths {
-        let upstream: UpstreamConfig =
+        let upstream_config: UpstreamConfig =
             config.extension(&path_item.extensions, "opengateway-upstream")?;
-        let peer = make_peer(&upstream);
+
+        let upstream_buffer_response = matches!(
+            &upstream_config,
+            UpstreamConfig::HTTP {
+                buffer_response: true,
+                ..
+            }
+        );
+        let upstream = match &upstream_config {
+            UpstreamConfig::HTTP { address, port, .. } => {
+                Upstream::Http(Box::new(make_peer(address, *port)))
+            }
+            UpstreamConfig::Plugin {
+                plugin,
+                options,
+                permissions,
+                timeout_ms: upstream_config_timeout_ms,
+            } => {
+                let resolved = module_resolver::resolve_module(plugin, config_base)?;
+                let cache_key = PluginRuntimeKey::new(resolved.cache_key(), permissions);
+
+                let plugin_timeout = upstream_config_timeout_ms
+                    .map(Duration::from_millis)
+                    .unwrap_or(default_plugin_timeout);
+
+                let h = match plugin_runtime_cache.entry(cache_key) {
+                    std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+                    std::collections::hash_map::Entry::Vacant(e) => {
+                        let perms = permissions
+                            .clone()
+                            .map(|p| p.into_runtime_permissions())
+                            .unwrap_or_default();
+
+                        let h = Arc::new(match &resolved {
+                            module_resolver::ResolvedModule::File(path) => {
+                                opengateway_js_runtime::spawn_runtime_sync(path, perms)?
+                            }
+                            module_resolver::ResolvedModule::Internal { name, source } => {
+                                opengateway_js_runtime::spawn_runtime_from_source_sync(
+                                    name, source, perms,
+                                )?
+                            }
+                        });
+
+                        // Call init() with resolved options (empty object when not specified)
+                        let init_options = options
+                            .as_ref()
+                            .map(|o| resolve_env_vars(o.clone()))
+                            .unwrap_or_else(|| serde_json::json!({}));
+                        h.call_blocking("init", init_options, None, plugin_timeout)?;
+
+                        e.insert(h).clone()
+                    }
+                };
+
+                Upstream::Plugin(PluginHandle {
+                    runtime: h,
+                    timeout: plugin_timeout,
+                })
+            }
+        };
 
         // Path-level validation override
         let path_validation: Option<ValidationOverride> = config
@@ -225,9 +360,13 @@ pub fn build_router(
             let interceptors = build_operation_interceptors(
                 operation,
                 config_base,
-                &mut runtime_cache,
+                &mut interceptor_runtime_cache,
                 default_interceptor_timeout,
             )?;
+
+            // Operation-level backend config (opaque, passed to plugin's handle())
+            let backend_config: Option<serde_json::Value> =
+                operation.extensions.get("opengateway-backend").cloned();
 
             operations.insert(
                 method,
@@ -237,12 +376,14 @@ pub fn build_router(
                     default_response,
                     validation_override: op_validation,
                     interceptors,
+                    backend_config,
                 },
             );
         }
 
-        // Validate: on_response_body interceptors require buffer-response: true on HTTP upstreams
-        if upstream.kind == "HTTP" && !upstream.buffer_response {
+        // HTTP upstreams: on_response_body interceptors require buffer-response: true.
+        // Plugin upstreams: response is always fully buffered (no restriction needed).
+        if matches!(upstream, Upstream::Http(_)) && !upstream_buffer_response {
             for (method, op_schemas) in &operations {
                 if !op_schemas.interceptors.on_response_body.is_empty() {
                     return Err(format!(
@@ -256,8 +397,8 @@ pub fn build_router(
         }
 
         let entry = Arc::new(RouteEntry {
-            peer,
-            buffer_response: upstream.buffer_response,
+            upstream,
+            buffer_response: upstream_buffer_response,
             operations,
             validation_override: path_validation,
         });
@@ -738,6 +879,79 @@ mod tests {
     }
 
     #[test]
+    fn plugin_upstream_creates_upstream_plugin_variant() {
+        let plugin_path = fixture_path("echo_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        assert!(matches!(matched.value.upstream, Upstream::Plugin(_)));
+    }
+
+    #[test]
+    fn http_upstream_still_creates_upstream_http_variant() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/items").unwrap();
+        assert!(matches!(matched.value.upstream, Upstream::Http(_)));
+    }
+
+    #[test]
+    fn backend_config_parsed_from_operation_extension() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-backend": { "table": "users", "query": "find_by_id" },
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        let backend = get.backend_config.as_ref().unwrap();
+        assert_eq!(backend["table"].as_str().unwrap(), "users");
+        assert_eq!(backend["query"].as_str().unwrap(), "find_by_id");
+    }
+
+    #[test]
+    fn backend_config_is_none_when_extension_absent() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/items").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert!(get.backend_config.is_none());
+    }
+
+    #[test]
     fn overlay_applies_interceptor_extension() {
         let fixtures = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -880,5 +1094,106 @@ mod tests {
         let paths = config.spec.paths.as_ref().unwrap();
         let result = build_router(&config, paths, Path::new("/"));
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn plugin_upstream_skips_buffer_response_validation() {
+        // Plugin upstreams always return a full response -- on_response_body interceptors
+        // work without buffer-response: true.
+        let noop_path = fixture_path("noop.js");
+        let plugin_path = fixture_path("echo_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_response_body",
+                            "function": "onResponseBody"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(
+            result.is_ok(),
+            "plugin upstream should not require buffer-response"
+        );
+    }
+
+    #[test]
+    fn plugin_upstream_uses_per_plugin_timeout_ms() {
+        let plugin_path = fixture_path("echo_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path,
+                        "timeout_ms": 12345
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let matched = router.at("/test").unwrap();
+        if let Upstream::Plugin(handle) = &matched.value.upstream {
+            assert_eq!(handle.timeout, Duration::from_millis(12345));
+        } else {
+            panic!("expected Plugin upstream");
+        }
+    }
+
+    #[test]
+    fn plugin_runtime_key_differentiates_by_permissions() {
+        use crate::config::PermissionsConfig;
+        let module = module_resolver::ModuleCacheKey::Internal("test".into());
+
+        let key_none = PluginRuntimeKey::new(module.clone(), &None);
+        let key_with_env = PluginRuntimeKey::new(
+            module.clone(),
+            &Some(PermissionsConfig {
+                env: vec!["FOO".into()],
+                read: vec![],
+                net: vec![],
+            }),
+        );
+        let key_env_reordered = PluginRuntimeKey::new(
+            module.clone(),
+            &Some(PermissionsConfig {
+                env: vec!["BAR".into(), "FOO".into()],
+                read: vec![],
+                net: vec![],
+            }),
+        );
+        let key_env_same_order_independent = PluginRuntimeKey::new(
+            module.clone(),
+            &Some(PermissionsConfig {
+                env: vec!["BAR".into(), "FOO".into()],
+                read: vec![],
+                net: vec![],
+            }),
+        );
+
+        assert_ne!(key_none, key_with_env);
+        assert_ne!(key_with_env, key_env_reordered);
+        assert_eq!(key_env_reordered, key_env_same_order_independent);
     }
 }

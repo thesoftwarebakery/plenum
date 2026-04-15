@@ -9,6 +9,7 @@ pub struct RequestInput {
     pub path: String,
     pub headers: HashMap<String, String>,
     pub query: String,
+    pub params: HashMap<String, String>,
 }
 
 /// Input passed to on_response interceptors.
@@ -52,12 +53,14 @@ pub fn request_input_from_parts(
     method: &http::Method,
     uri: &http::Uri,
     headers: &http::HeaderMap,
+    params: HashMap<String, String>,
 ) -> RequestInput {
     RequestInput {
         method: method.to_string(),
         path: uri.path().to_string(),
         headers: header_map_to_hash_map(headers),
         query: uri.query().unwrap_or("").to_string(),
+        params,
     }
 }
 
@@ -72,7 +75,7 @@ pub fn response_input_from_parts(
     }
 }
 
-fn header_map_to_hash_map(headers: &http::HeaderMap) -> HashMap<String, String> {
+pub(crate) fn header_map_to_hash_map(headers: &http::HeaderMap) -> HashMap<String, String> {
     headers
         .iter()
         .map(|(name, value)| {
@@ -226,12 +229,14 @@ mod tests {
                 ("authorization".into(), "Bearer tok".into()),
             ]),
             query: "page=1".into(),
+            params: HashMap::from([("id".into(), "123".into())]),
         };
         let json = serde_json::to_value(&input).unwrap();
         assert_eq!(json["method"], "POST");
         assert_eq!(json["path"], "/items/123");
         assert_eq!(json["query"], "page=1");
         assert_eq!(json["headers"]["content-type"], "application/json");
+        assert_eq!(json["params"]["id"], "123");
     }
 
     // -- ResponseInput serialization --
@@ -256,11 +261,23 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("x-custom", "value".parse().unwrap());
 
-        let input = request_input_from_parts(&method, &uri, &headers);
+        let input = request_input_from_parts(&method, &uri, &headers, HashMap::new());
         assert_eq!(input.method, "GET");
         assert_eq!(input.path, "/items");
         assert_eq!(input.query, "page=2&limit=10");
         assert_eq!(input.headers.get("x-custom").unwrap(), "value");
+        assert!(input.params.is_empty());
+    }
+
+    #[test]
+    fn request_input_includes_path_params() {
+        let uri: http::Uri = "https://example.com/items/42".parse().unwrap();
+        let method = http::Method::GET;
+        let headers = http::HeaderMap::new();
+        let params = HashMap::from([("id".to_string(), "42".to_string())]);
+
+        let input = request_input_from_parts(&method, &uri, &headers, params);
+        assert_eq!(input.params.get("id").unwrap(), "42");
     }
 
     #[test]

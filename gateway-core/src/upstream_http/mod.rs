@@ -1,10 +1,5 @@
-use crate::config::UpstreamConfig;
 use pingora_core::upstreams::peer::HttpPeer;
 
-pub fn make_peer(config: &UpstreamConfig) -> HttpPeer {
-    HttpPeer::new(
-        (config.address.as_str(), config.port),
-        false,
-        config.address.clone(),
-    )
+pub fn make_peer(address: &str, port: u16) -> HttpPeer {
+    HttpPeer::new((address, port), false, address.to_string())
 }
