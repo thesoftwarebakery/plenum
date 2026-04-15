@@ -246,7 +246,9 @@ pub fn build_router(
             }
         );
         let upstream = match &upstream_config {
-            UpstreamConfig::HTTP { address, port, .. } => Upstream::Http(Box::new(make_peer(address, *port))),
+            UpstreamConfig::HTTP { address, port, .. } => {
+                Upstream::Http(Box::new(make_peer(address, *port)))
+            }
             UpstreamConfig::Plugin {
                 plugin,
                 options,
