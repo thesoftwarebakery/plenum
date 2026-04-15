@@ -57,6 +57,29 @@ Deno.test({
     const requestBody = body.requestBody as Record<string, unknown>;
     assertEquals(requestBody.name, "Alice");
   });
+
+  await t.step("GET /echo passes operation metadata to plugin", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo`);
+    assertEquals(resp.status, 200);
+    const body = await resp.json() as Record<string, unknown>;
+    const operation = body.operation as Record<string, unknown>;
+    assertEquals(operation.operationId, "echoGet");
+    assertEquals(operation.summary, "Echo a GET request");
+    assert(operation.responses !== undefined, "operation.responses should be present");
+  });
+
+  await t.step("GET /echo/{id} passes parameters in operation metadata", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo/42`);
+    assertEquals(resp.status, 200);
+    const body = await resp.json() as Record<string, unknown>;
+    const operation = body.operation as Record<string, unknown>;
+    assertEquals(operation.operationId, "echoById");
+    const parameters = operation.parameters as Array<Record<string, unknown>>;
+    assert(Array.isArray(parameters), "operation.parameters should be an array");
+    assertEquals(parameters.length, 1);
+    assertEquals(parameters[0].name, "id");
+    assertEquals(parameters[0].in, "path");
+  });
 });
 
 Deno.test({

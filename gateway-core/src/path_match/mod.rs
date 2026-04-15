@@ -15,6 +15,7 @@ use pingora_core::upstreams::peer::HttpPeer;
 use crate::config::{
     Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
 };
+use crate::openapi::operation::build_operation_meta;
 use crate::upstream_http::make_peer;
 
 /// Handle to a spawned Deno backend plugin runtime.
@@ -63,6 +64,10 @@ pub struct OperationSchemas {
     /// Raw `x-opengateway-backend` extension value from the operation, passed opaquely to the
     /// plugin's `handle()` function. Never interpreted by the gateway itself.
     pub backend_config: Option<serde_json::Value>,
+    /// Curated OpenAPI Operation Object JSON value built at boot time. Contains operationId,
+    /// summary, parameters, requestBody, responses, and a bundled components.schemas for any
+    /// referenced component schemas. x-opengateway-* extensions are stripped.
+    pub operation_meta: serde_json::Value,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -320,12 +325,16 @@ pub fn build_router(
             let backend_config: Option<serde_json::Value> =
                 operation.extensions.get("opengateway-backend").cloned();
 
+            // Curated operation metadata for runtime use by plugins/interceptors
+            let operation_meta = build_operation_meta(operation, &config.spec);
+
             operations.insert(
                 method,
                 OperationSchemas {
                     validation_override: op_validation,
                     interceptors,
                     backend_config,
+                    operation_meta,
                 },
             );
         }
@@ -1077,7 +1086,6 @@ mod tests {
         }
     }
 
-    #[test]
     fn plugin_runtime_key_differentiates_by_permissions() {
         use crate::config::PermissionsConfig;
         let module = module_resolver::ModuleCacheKey::Internal("test".into());

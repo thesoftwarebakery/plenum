@@ -21,6 +21,7 @@ use tracing::Instrument;
 pub mod config;
 pub mod gateway_error;
 pub mod interceptor;
+mod openapi;
 pub mod path_match;
 pub mod upstream_http;
 
@@ -251,6 +252,7 @@ impl ProxyHttp for OpenGateway {
                 &session.req_header().uri,
                 &session.req_header().headers,
                 ctx.path_params.clone(),
+                op.operation_meta.clone(),
             );
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
@@ -349,6 +351,7 @@ impl ProxyHttp for OpenGateway {
                         &session.req_header().uri,
                         &session.req_header().headers,
                         ctx.path_params.clone(),
+                        op.operation_meta.clone(),
                     );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
@@ -416,6 +419,7 @@ impl ProxyHttp for OpenGateway {
                     &session.req_header().uri,
                     &request_headers,
                     path_params.clone(),
+                    op.operation_meta.clone(),
                 );
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
@@ -474,6 +478,7 @@ impl ProxyHttp for OpenGateway {
                     "params": path_params,
                 },
                 "config": backend_config,
+                "operation": op.operation_meta,
             });
             let js_body = js_body_from_content_type(
                 session
@@ -519,6 +524,7 @@ impl ProxyHttp for OpenGateway {
                 let input = response_input_from_parts(
                     http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
                     &headers_hashmap_to_http_headermap(&plugin_headers),
+                    op.operation_meta.clone(),
                 );
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
@@ -581,6 +587,7 @@ impl ProxyHttp for OpenGateway {
                 let input = response_input_from_parts(
                     http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
                     &headers_hashmap_to_http_headermap(&plugin_headers),
+                    op.operation_meta.clone(),
                 );
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
@@ -716,6 +723,7 @@ impl ProxyHttp for OpenGateway {
                         &session.req_header().uri,
                         &session.req_header().headers,
                         ctx.path_params.clone(),
+                        op.operation_meta.clone(),
                     );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
@@ -768,8 +776,10 @@ impl ProxyHttp for OpenGateway {
                 buf
             };
 
-            // Step 3: Restore body for upstream forwarding
-            *body = Some(final_buf);
+            // Step 3: Restore body for upstream forwarding (only if non-empty)
+            if !final_buf.is_empty() {
+                *body = Some(final_buf);
+            }
         }
 
         Ok(())
@@ -791,7 +801,12 @@ impl ProxyHttp for OpenGateway {
         // When on_request is configured, the body may be modified in request_body_filter.
         // Replace Content-Length with Transfer-Encoding: chunked so pingora will stream
         // the (possibly resized) body to the upstream without a fixed length constraint.
-        if !op.interceptors.on_request.is_empty() {
+        // Only apply to requests that actually carry a body (have Content-Length set).
+        if !op.interceptors.on_request.is_empty()
+            && upstream_request
+                .headers
+                .contains_key(http::header::CONTENT_LENGTH)
+        {
             upstream_request.remove_header(&http::header::CONTENT_LENGTH);
             upstream_request
                 .insert_header(http::header::TRANSFER_ENCODING, "chunked")
@@ -812,6 +827,7 @@ impl ProxyHttp for OpenGateway {
                 &upstream_request.uri,
                 &upstream_request.headers,
                 ctx.path_params.clone(),
+                op.operation_meta.clone(),
             );
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
@@ -864,8 +880,11 @@ impl ProxyHttp for OpenGateway {
         };
 
         for hook in &op.interceptors.on_response {
-            let input =
-                response_input_from_parts(upstream_response.status, &upstream_response.headers);
+            let input = response_input_from_parts(
+                upstream_response.status,
+                &upstream_response.headers,
+                op.operation_meta.clone(),
+            );
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
 
@@ -955,7 +974,11 @@ impl ProxyHttp for OpenGateway {
                         ctx.upstream_response_content_type.as_deref(),
                         &current_buf,
                     );
-                    let input = response_input_from_parts(status, &http::HeaderMap::new());
+                    let input = response_input_from_parts(
+                        status,
+                        &http::HeaderMap::new(),
+                        op.operation_meta.clone(),
+                    );
                     let mut input_json = serde_json::to_value(&input).unwrap();
                     merge_options(&mut input_json, hook.options.as_ref());
 
