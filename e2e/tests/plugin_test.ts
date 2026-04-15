@@ -43,7 +43,8 @@ Deno.test({
     assertEquals(resp.status, 200);
     const body = await resp.json() as Record<string, unknown>;
     const config = body.config as Record<string, unknown>;
-    assertEquals(config.operation, "listEcho");
+    assertEquals(config.table, "echo");
+    assertEquals(config.query, "list");
   });
 
   await t.step("POST /echo passes request body to plugin", async () => {
