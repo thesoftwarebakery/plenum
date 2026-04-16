@@ -3364,10 +3364,13 @@ dependencies = [
  "deno_tls",
  "deno_web",
  "deno_webidl",
+ "rustls",
  "serde",
  "serde_json",
+ "socket2 0.5.10",
  "sys_traits",
  "tokio",
+ "tokio-rustls",
  "url",
 ]
 

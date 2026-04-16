@@ -13,7 +13,10 @@ deno_fetch = "0.269"
 deno_crypto = "0.259"
 deno_tls = "0.232"
 sys_traits = { version = "0.1", features = ["real", "libc"] }
-tokio = { version = "1", features = ["sync", "rt", "time"] }
+tokio = { version = "1", features = ["sync", "rt", "time", "net"] }
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
+socket2 = "0.5"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 url = "2"
