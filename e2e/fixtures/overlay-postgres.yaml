@@ -1,0 +1,55 @@
+overlay: 1.1.0
+info:
+  title: PostgreSQL upstream config
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-opengateway-config:
+        threads: 1
+        daemon: false
+        listen: "0.0.0.0:6188"
+      x-opengateway-upstreams:
+        db:
+          kind: "plugin"
+          plugin: "internal:postgres"
+          options:
+            host: "${DB_HOST}"
+            port: "${DB_PORT:-5432}"
+            database: "${DB_NAME}"
+            user: "${DB_USER}"
+            password: "${DB_PASSWORD}"
+  - target: $.paths[*]
+    update:
+      x-opengateway-upstream:
+        $ref: "#/x-opengateway-upstreams/db"
+  - target: $.paths['/users'].get
+    update:
+      x-opengateway-backend:
+        query: "SELECT id, name, created_at FROM users ORDER BY id"
+        fields:
+          created_at: "createdAt"
+  - target: $.paths['/users'].post
+    update:
+      x-opengateway-backend:
+        query: "INSERT INTO users (name, created_at) VALUES ($body.name, NOW()) RETURNING id, name, created_at"
+        fields:
+          created_at: "createdAt"
+  - target: $.paths['/users/{id}'].get
+    update:
+      x-opengateway-backend:
+        query: "SELECT id, name, created_at FROM users WHERE id = $path.id"
+        fields:
+          created_at: "createdAt"
+        returns: "/0"
+  - target: $.paths['/users/{id}'].put
+    update:
+      x-opengateway-backend:
+        query: "UPDATE users SET name = $body.name WHERE id = $path.id RETURNING id, name, created_at"
+        fields:
+          created_at: "createdAt"
+        returns: "/0"
+  - target: $.paths['/users/{id}'].delete
+    update:
+      x-opengateway-backend:
+        query: "DELETE FROM users WHERE id = $path.id"
