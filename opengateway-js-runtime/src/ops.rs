@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use deno_core::{JsBuffer, OpState, Resource, ResourceId, extension, op2};
 use deno_error::JsErrorBox;
-use rustls::ClientConfig;
+use deno_tls::{TlsClientConfigOptions, create_client_config};
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -74,13 +74,10 @@ fn socket_addr_to_js(addr: SocketAddr) -> AddrJs {
     }
 }
 
-/// Build a TLS ClientConfig that trusts the Mozilla root certificate set.
-fn build_tls_config() -> ClientConfig {
-    let mut roots = rustls::RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-    ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth()
+/// Build a TLS ClientConfig via deno_tls, which handles Mozilla roots, custom
+/// CAs, and client certificates. GeneralSsl = no ALPN (correct for databases).
+fn build_tls_config() -> Result<rustls::ClientConfig, deno_tls::TlsError> {
+    create_client_config(TlsClientConfigOptions::default())
 }
 
 // ── Custom ops ─────────────────────────────────────────────────────────────────
@@ -311,7 +308,8 @@ async fn op_net_start_tls(
         .map_err(|_| JsErrorBox::generic("failed to reunite TCP halves for TLS upgrade"))?;
 
     // Build TLS config and perform the handshake.
-    let tls_config = build_tls_config();
+    let tls_config = build_tls_config()
+        .map_err(|e| JsErrorBox::generic(format!("TLS config: {e}")))?;
     let connector = TlsConnector::from(Arc::new(tls_config));
     let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
         .map_err(|e| JsErrorBox::generic(format!("invalid TLS hostname '{hostname}': {e}")))?;
