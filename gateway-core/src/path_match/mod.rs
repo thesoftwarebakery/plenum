@@ -132,6 +132,7 @@ impl PluginRuntimeKey {
 /// Parse an operation's `x-opengateway-interceptor` extension and build interceptor handles.
 fn build_operation_interceptors(
     operation: &Operation,
+    path: &str,
     config_base: &Path,
     runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>>,
     default_timeout: Duration,
@@ -142,11 +143,13 @@ fn build_operation_interceptors(
     };
 
     let interceptor_configs: Vec<InterceptorConfig> =
-        serde_json::from_value(interceptor_value.clone())?;
+        serde_json::from_value(interceptor_value.clone())
+            .map_err(|e| format!("path '{}': x-opengateway-interceptor: {}", path, e))?;
 
     let mut interceptors = OperationInterceptors::default();
     for config in &interceptor_configs {
-        let resolved = module_resolver::resolve_module(&config.module, config_base)?;
+        let resolved = module_resolver::resolve_module(&config.module, config_base)
+            .map_err(|e| format!("path '{}': interceptor '{}': {}", path, config.module, e))?;
         let cache_key = resolved.cache_key();
 
         // Deduplicate: reuse handle if this module was already spawned.
@@ -174,15 +177,28 @@ fn build_operation_interceptors(
                     .unwrap_or_default();
 
                 let h = Arc::new(match &resolved {
-                    module_resolver::ResolvedModule::File(path) => {
-                        opengateway_js_runtime::spawn_runtime_sync(path, permissions)?
+                    module_resolver::ResolvedModule::File(file_path) => {
+                        opengateway_js_runtime::spawn_runtime_sync(file_path, permissions).map_err(
+                            |e| {
+                                format!(
+                                    "path '{}': interceptor '{}': failed to load module: {}",
+                                    path, config.module, e
+                                )
+                            },
+                        )?
                     }
                     module_resolver::ResolvedModule::Internal { name, source } => {
                         opengateway_js_runtime::spawn_runtime_from_source_sync(
                             name,
                             source,
                             permissions,
-                        )?
+                        )
+                        .map_err(|e| {
+                            format!(
+                                "path '{}': interceptor '{}': failed to load module: {}",
+                                path, config.module, e
+                            )
+                        })?
                     }
                 });
                 e.insert(h).clone()
@@ -193,6 +209,19 @@ fn build_operation_interceptors(
             .timeout_ms
             .map(Duration::from_millis)
             .unwrap_or(default_timeout);
+
+        let validate_arg = serde_json::to_value(config).unwrap();
+        match runtime.call_blocking("validate", validate_arg, None, timeout) {
+            Ok(_) => {}
+            Err(opengateway_js_runtime::JsError::FunctionNotFound(_)) => {}
+            Err(e) => {
+                return Err(format!(
+                    "path '{}': interceptor '{}': validate() failed: {}",
+                    path, config.module, e
+                )
+                .into());
+            }
+        }
 
         let hook_handle = HookHandle {
             runtime,
@@ -235,8 +264,9 @@ pub fn build_router(
     let mut plugin_runtime_cache: HashMap<PluginRuntimeKey, Arc<JsRuntimeHandle>> = HashMap::new();
 
     for (path, path_item) in paths {
-        let upstream_config: UpstreamConfig =
-            config.extension(&path_item.extensions, "opengateway-upstream")?;
+        let upstream_config: UpstreamConfig = config
+            .extension(&path_item.extensions, "opengateway-upstream")
+            .map_err(|e| format!("path '{}': x-opengateway-upstream: {}", path, e))?;
 
         let upstream_buffer_response = matches!(
             &upstream_config,
@@ -255,7 +285,8 @@ pub fn build_router(
                 permissions,
                 timeout_ms: upstream_config_timeout_ms,
             } => {
-                let resolved = module_resolver::resolve_module(plugin, config_base)?;
+                let resolved = module_resolver::resolve_module(plugin, config_base)
+                    .map_err(|e| format!("path '{}': plugin '{}': {}", path, plugin, e))?;
                 let cache_key = PluginRuntimeKey::new(resolved.cache_key(), permissions);
 
                 let plugin_timeout = upstream_config_timeout_ms
@@ -271,22 +302,41 @@ pub fn build_router(
                             .unwrap_or_default();
 
                         let h = Arc::new(match &resolved {
-                            module_resolver::ResolvedModule::File(path) => {
-                                opengateway_js_runtime::spawn_runtime_sync(path, perms)?
+                            module_resolver::ResolvedModule::File(file_path) => {
+                                opengateway_js_runtime::spawn_runtime_sync(file_path, perms)
+                                    .map_err(|e| {
+                                        format!(
+                                            "path '{}': plugin '{}': failed to load module: {}",
+                                            path, plugin, e
+                                        )
+                                    })?
                             }
                             module_resolver::ResolvedModule::Internal { name, source } => {
                                 opengateway_js_runtime::spawn_runtime_from_source_sync(
                                     name, source, perms,
-                                )?
+                                )
+                                .map_err(|e| {
+                                    format!(
+                                        "path '{}': plugin '{}': failed to load module: {}",
+                                        path, plugin, e
+                                    )
+                                })?
                             }
                         });
 
                         // Call init() with resolved options (empty object when not specified)
-                        let init_options = options
-                            .as_ref()
-                            .map(|o| resolve_env_vars(o.clone()))
-                            .unwrap_or_else(|| serde_json::json!({}));
-                        h.call_blocking("init", init_options, None, plugin_timeout)?;
+                        let init_options = match options.as_ref() {
+                            Some(o) => resolve_env_vars(o.clone())
+                                .map_err(|e| -> Box<dyn Error> { e.into() })?,
+                            None => serde_json::json!({}),
+                        };
+                        h.call_blocking("init", init_options, None, plugin_timeout)
+                            .map_err(|e| {
+                                format!(
+                                    "path '{}': plugin '{}': init() failed: {}",
+                                    path, plugin, e
+                                )
+                            })?;
 
                         e.insert(h).clone()
                     }
@@ -316,6 +366,7 @@ pub fn build_router(
             // Operation-level interceptors
             let interceptors = build_operation_interceptors(
                 operation,
+                path,
                 config_base,
                 &mut interceptor_runtime_cache,
                 default_interceptor_timeout,
@@ -339,6 +390,32 @@ pub fn build_router(
             );
         }
 
+        // If this is a plugin upstream, call validate() for each operation's backend_config
+        if let Upstream::Plugin(ref plugin_handle) = upstream {
+            for (method, op_schemas) in &operations {
+                let validate_arg = op_schemas
+                    .backend_config
+                    .clone()
+                    .unwrap_or(serde_json::Value::Null);
+                match plugin_handle.runtime.call_blocking(
+                    "validate",
+                    validate_arg,
+                    None,
+                    plugin_handle.timeout,
+                ) {
+                    Ok(_) => {}
+                    Err(opengateway_js_runtime::JsError::FunctionNotFound(_)) => {}
+                    Err(e) => {
+                        return Err(format!(
+                            "path '{}' method {}: plugin validate() failed: {}",
+                            path, method, e
+                        )
+                        .into());
+                    }
+                }
+            }
+        }
+
         // HTTP upstreams: on_response_body interceptors require buffer-response: true.
         // Plugin upstreams: response is always fully buffered (no restriction needed).
         if matches!(upstream, Upstream::Http(_)) && !upstream_buffer_response {
@@ -360,7 +437,9 @@ pub fn build_router(
             operations,
             validation_override: path_validation,
         });
-        router.insert(path, entry)?;
+        router
+            .insert(path, entry)
+            .map_err(|e| format!("path '{}': {}", path, e))?;
     }
     Ok(router)
 }
@@ -1086,6 +1165,198 @@ mod tests {
         }
     }
 
+    #[test]
+    fn plugin_validate_fails_with_bad_backend_config() {
+        let plugin_path = fixture_path("validate_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-backend": {},
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("validate() failed"),
+            "expected error mentioning validate() failed, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn plugin_validate_passes_with_good_backend_config() {
+        let plugin_path = fixture_path("validate_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-backend": { "table": "users" },
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_ok(), "expected Ok but got: {:?}", result.err());
+    }
+
+    #[test]
+    fn plugin_validate_called_with_null_when_no_backend_config() {
+        // validate_plugin.js throws when config is null/falsy.
+        // This operation has no x-opengateway-backend, so validate() should be called with null
+        // and build_router should return Err containing "validate() failed".
+        let plugin_path = fixture_path("validate_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("validate() failed"),
+            "expected error mentioning validate() failed, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn plugin_without_validate_export_succeeds() {
+        // echo_plugin.js has no validate() export -- FunctionNotFound is silently ignored.
+        let plugin_path = fixture_path("echo_plugin.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-backend": { "table": "users" },
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "plugin",
+                        "plugin": &plugin_path
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(
+            result.is_ok(),
+            "plugin without validate() should start fine, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn interceptor_validate_fails_with_bad_config() {
+        let interceptor_path = fixture_path("validate_interceptor.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &interceptor_path,
+                            "hook": "on_request",
+                            "function": "onRequest",
+                            "options": {}
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("validate() failed"),
+            "expected error mentioning validate() failed, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn interceptor_without_validate_export_succeeds() {
+        // noop.js has no validate() export -- FunctionNotFound is silently ignored.
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-opengateway-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_request",
+                            "function": "onRequest"
+                        }],
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-opengateway-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(
+            result.is_ok(),
+            "interceptor without validate() should start fine, got: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
     fn plugin_runtime_key_differentiates_by_permissions() {
         use crate::config::PermissionsConfig;
         let module = module_resolver::ModuleCacheKey::Internal("test".into());

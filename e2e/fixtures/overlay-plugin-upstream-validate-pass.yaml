@@ -1,0 +1,22 @@
+overlay: 1.1.0
+info:
+  title: Plugin upstream with validate() that passes
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-opengateway-upstream:
+        kind: "plugin"
+        plugin: "./plugins/validate_echo.js"
+  - target: $.paths['/echo'].get
+    update:
+      x-opengateway-backend:
+        table: users
+  - target: $.paths['/echo'].post
+    update:
+      x-opengateway-backend:
+        table: users
+  - target: $.paths['/echo/{id}'].get
+    update:
+      x-opengateway-backend:
+        table: users

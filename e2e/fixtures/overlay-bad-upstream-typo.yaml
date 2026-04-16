@@ -1,0 +1,17 @@
+overlay: 1.1.0
+info:
+  title: Upstream config with typo in field name (should cause startup failure)
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-opengateway-upstreams:
+        default:
+          kind: "HTTP"
+          address: "wiremock"
+          port: 8080
+          buffer-responce: true
+  - target: $.paths[*]
+    update:
+      x-opengateway-upstream:
+        $ref: "#/x-opengateway-upstreams/default"

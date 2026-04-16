@@ -1,0 +1,14 @@
+overlay: 1.1.0
+info:
+  title: Plugin upstream with no validate() export (echo.js)
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-opengateway-upstream:
+        kind: "plugin"
+        plugin: "./plugins/echo.js"
+  - target: $.paths['/echo'].get
+    update:
+      x-opengateway-backend:
+        table: users

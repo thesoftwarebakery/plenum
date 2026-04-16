@@ -1,6 +1,7 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct PermissionsConfig {
     #[serde(default)]
     pub env: Vec<String>,
@@ -27,7 +28,8 @@ impl PermissionsConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct InterceptorConfig {
     pub module: String,
     pub hook: String,
@@ -140,6 +142,28 @@ mod tests {
         assert!(perms.env.is_empty());
         assert!(perms.read.is_empty());
         assert!(perms.net.is_empty());
+    }
+
+    #[test]
+    fn interceptor_config_rejects_unknown_field() {
+        let json = serde_json::json!({
+            "module": "./interceptors/auth.js",
+            "hook": "on_request",
+            "function": "checkAuth",
+            "typo": 1
+        });
+        let result: Result<InterceptorConfig, _> = serde_json::from_value(json);
+        assert!(result.is_err(), "expected error for unknown field typo");
+    }
+
+    #[test]
+    fn permissions_config_rejects_unknown_field() {
+        let json = serde_json::json!({
+            "env": ["API_KEY"],
+            "typo": 1
+        });
+        let result: Result<PermissionsConfig, _> = serde_json::from_value(json);
+        assert!(result.is_err(), "expected error for unknown field typo");
     }
 
     #[test]
