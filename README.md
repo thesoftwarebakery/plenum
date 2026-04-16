@@ -48,5 +48,13 @@ The core routing and HTTP proxying pipeline is functional:
 - Overlay application for configuration injection
 - Path-based request routing (including parameterised paths)
 - HTTP/HTTPS reverse proxying via pingora
+- JS interceptors with configurable hooks, timeouts, and permissions
+- Request/response validation against OpenAPI schemas
+
+### Database plugins (in development)
+
+Built-in database plugins (PostgreSQL, MySQL, MongoDB) let you define SQL/NoSQL queries directly in your OpenAPI spec. The plugin code, query interpolation engine, response shaping, and e2e tests are all implemented.
+
+**Status:** Blocked by a runtime limitation — the embedded `deno_core` JS runtime does not yet support TCP sockets, which database drivers require. See [docs/db-plugins.md](docs/db-plugins.md) for full documentation and details on the blocker.
 
 See [issues](https://github.com/thesoftwarebakery/opengateway/issues) for planned work.
