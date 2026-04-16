@@ -1,5 +1,6 @@
 import { Network, GenericContainer, Wait, type StartedNetwork } from "testcontainers";
 import { resolve, dirname, fromFileUrl } from "@std/path";
+import { startGateway } from "../src/containers/gateway.ts";
 
 const FIXTURES_DIR = resolve(dirname(fromFileUrl(import.meta.url)), "../fixtures");
 
@@ -16,6 +17,7 @@ async function assertGatewayFailsToStart(opts: {
   network: StartedNetwork;
   openapi?: string;
   overlays: string[];
+  extraFiles?: { source: string; target: string }[];
 }): Promise<void> {
   const openapiFile = opts.openapi ?? "openapi.yaml";
   const overlayFiles = opts.overlays;
@@ -34,6 +36,13 @@ async function assertGatewayFailsToStart(opts: {
     const content = await Deno.readTextFile(resolve(FIXTURES_DIR, file));
     builder = builder.withCopyContentToContainer([
       { content, target: `/config/${file}` },
+    ]);
+  }
+
+  for (const extra of opts.extraFiles ?? []) {
+    const content = await Deno.readTextFile(resolve(FIXTURES_DIR, extra.source));
+    builder = builder.withCopyContentToContainer([
+      { content, target: extra.target },
     ]);
   }
 
@@ -68,5 +77,49 @@ Deno.test(
       network,
       overlays: ["overlay-gateway.yaml", "overlay-bad-upstream-typo.yaml"],
     });
+  }
+);
+
+Deno.test(
+  {
+    name: "gateway fails to start when plugin options reference an unset env var",
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  async () => {
+    await using network = await new Network().start();
+
+    await assertGatewayFailsToStart({
+      network,
+      openapi: "openapi-plugin.yaml",
+      overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-unset-var.yaml"],
+      extraFiles: [
+        { source: "plugins/echo.js", target: "/config/plugins/echo.js" },
+      ],
+    });
+  }
+);
+
+Deno.test(
+  {
+    name: "gateway starts when plugin options use ${VAR:-default} for an unset env var",
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  async () => {
+    await using network = await new Network().start();
+
+    await using _gateway = await startGateway({
+      network,
+      fixtures: {
+        openapi: "openapi-plugin.yaml",
+        overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-default-var.yaml"],
+        extraFiles: [
+          { source: "plugins/echo.js", target: "/config/plugins/echo.js" },
+        ],
+      },
+    });
+
+    // Gateway started successfully -- the default value resolved without error.
   }
 );

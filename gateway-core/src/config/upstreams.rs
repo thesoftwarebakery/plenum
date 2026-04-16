@@ -82,31 +82,37 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
 }
 
 /// Replace `${VAR_NAME}` (and `${VAR:-default}`) patterns in a JSON value with environment
-/// variable values. Missing variables resolve to empty string with a warning log (but
-/// `${VAR:-default}` syntax still uses the default value when the variable is unset or empty).
-pub fn resolve_env_vars(value: serde_json::Value) -> serde_json::Value {
+/// variable values. Returns an error if a `${VAR}` pattern references an environment variable
+/// that is not set at all (use `${VAR:-default}` to provide a fallback). Variables set to `""`
+/// (empty string) resolve to `""` without error.
+pub fn resolve_env_vars(value: serde_json::Value) -> Result<serde_json::Value, String> {
     match value {
-        serde_json::Value::String(s) => serde_json::Value::String(substitute_env_vars(&s)),
+        serde_json::Value::String(s) => Ok(serde_json::Value::String(substitute_env_vars(&s)?)),
         serde_json::Value::Object(map) => {
             let new_map = map
                 .into_iter()
-                .map(|(k, v)| (k, resolve_env_vars(v)))
-                .collect();
-            serde_json::Value::Object(new_map)
+                .map(|(k, v)| resolve_env_vars(v).map(|v| (k, v)))
+                .collect::<Result<_, _>>()?;
+            Ok(serde_json::Value::Object(new_map))
         }
         serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.into_iter().map(resolve_env_vars).collect())
+            let new_arr = arr
+                .into_iter()
+                .map(resolve_env_vars)
+                .collect::<Result<_, _>>()?;
+            Ok(serde_json::Value::Array(new_arr))
         }
-        other => other,
+        other => Ok(other),
     }
 }
 
-fn substitute_env_vars(s: &str) -> String {
+fn substitute_env_vars(s: &str) -> Result<String, String> {
     use std::borrow::Cow;
     // Use Ok(None) for unset variables so that shellexpand's `${VAR:-default}` syntax works:
     // when the lookup returns None, shellexpand applies the `:-` default if present.
+    // Variables set to "" return Ok(Some("")) and are passed through without error.
     // Any `${VAR}` (no default) that is unset will be left as the literal `${VAR}` by
-    // shellexpand; we then strip those out to empty string in a second pass with a warning.
+    // shellexpand; we then error in a second pass.
     let expanded = shellexpand::env_with_context(
         s,
         |var| -> Result<Option<Cow<str>>, std::convert::Infallible> {
@@ -119,23 +125,19 @@ fn substitute_env_vars(s: &str) -> String {
     .map(|s| s.into_owned())
     .unwrap_or_else(|_| s.to_string());
 
-    // Second pass: replace any remaining ${VAR} patterns (unset, no default) with empty string.
-    let mut result = String::with_capacity(expanded.len());
-    let mut rest = expanded.as_str();
-    while let Some(start) = rest.find("${") {
-        result.push_str(&rest[..start]);
-        let after_open = &rest[start + 2..];
+    // Second pass: any remaining ${VAR} patterns were left literal by shellexpand because the
+    // variable was not set (NotPresent). Error rather than silently substituting empty string.
+    if let Some(start) = expanded.find("${") {
+        let after_open = &expanded[start + 2..];
         if let Some(end) = after_open.find('}') {
             let var_name = &after_open[..end];
-            log::warn!("env var '{}' not set; substituting empty string", var_name);
-            rest = &after_open[end + 1..];
-        } else {
-            result.push_str(&rest[start..]);
-            return result;
+            return Err(format!(
+                "environment variable '{}' is not set (use ${{{var_name}:-default}} to provide a fallback)",
+                var_name
+            ));
         }
     }
-    result.push_str(rest);
-    result
+    Ok(expanded)
 }
 
 #[cfg(test)]
@@ -284,24 +286,29 @@ mod tests {
         // SAFETY: single-threaded test, no other threads reading this var
         unsafe { std::env::set_var("OPENGATEWAY_TEST_VAR_PRESENT", "hello") };
         let value = serde_json::json!("prefix_${OPENGATEWAY_TEST_VAR_PRESENT}_suffix");
-        let result = resolve_env_vars(value);
+        let result = resolve_env_vars(value).unwrap();
         assert_eq!(result, serde_json::json!("prefix_hello_suffix"));
     }
 
     #[test]
-    fn resolve_env_vars_replaces_missing_var_with_empty_string() {
+    fn resolve_env_vars_errors_on_missing_var() {
         // Ensure the var is definitely unset
         // SAFETY: single-threaded test, no other threads reading this var
         unsafe { std::env::remove_var("OPENGATEWAY_TEST_VAR_DEFINITELY_MISSING") };
         let value = serde_json::json!("${OPENGATEWAY_TEST_VAR_DEFINITELY_MISSING}");
         let result = resolve_env_vars(value);
-        assert_eq!(result, serde_json::json!(""));
+        assert!(result.is_err(), "expected Err for unset variable");
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("OPENGATEWAY_TEST_VAR_DEFINITELY_MISSING"),
+            "error should mention variable name, got: {err}"
+        );
     }
 
     #[test]
     fn resolve_env_vars_leaves_value_without_patterns_unchanged() {
         let value = serde_json::json!("no substitution here");
-        let result = resolve_env_vars(value);
+        let result = resolve_env_vars(value).unwrap();
         assert_eq!(result, serde_json::json!("no substitution here"));
     }
 
@@ -310,7 +317,7 @@ mod tests {
         // SAFETY: single-threaded test
         unsafe { std::env::set_var("OPENGATEWAY_TEST_ARRAY_VAR", "item") };
         let value = serde_json::json!(["${OPENGATEWAY_TEST_ARRAY_VAR}", "literal"]);
-        let result = resolve_env_vars(value);
+        let result = resolve_env_vars(value).unwrap();
         assert_eq!(result, serde_json::json!(["item", "literal"]));
     }
 
@@ -318,7 +325,7 @@ mod tests {
     fn resolve_env_vars_supports_default_syntax() {
         unsafe { std::env::remove_var("OPENGATEWAY_TEST_DEFAULT_VAR") };
         let value = serde_json::json!("${OPENGATEWAY_TEST_DEFAULT_VAR:-fallback}");
-        let result = resolve_env_vars(value);
+        let result = resolve_env_vars(value).unwrap();
         assert_eq!(result, serde_json::json!("fallback"));
     }
 
@@ -340,8 +347,26 @@ mod tests {
                 "key": "${OPENGATEWAY_TEST_NESTED_VAR}"
             }
         });
-        let result = resolve_env_vars(value);
+        let result = resolve_env_vars(value).unwrap();
         assert_eq!(result["inner"]["key"], serde_json::json!("world"));
         assert_eq!(result["outer"], serde_json::json!("plain"));
+    }
+
+    #[test]
+    fn resolve_env_vars_allows_empty_string_env_var() {
+        // SAFETY: single-threaded test, no other threads reading this var
+        unsafe { std::env::set_var("OPENGATEWAY_TEST_EMPTY_STRING_VAR", "") };
+        let value = serde_json::json!("${OPENGATEWAY_TEST_EMPTY_STRING_VAR}");
+        let result = resolve_env_vars(value).unwrap();
+        assert_eq!(result, serde_json::json!(""));
+    }
+
+    #[test]
+    fn resolve_env_vars_allows_explicit_empty_default() {
+        // SAFETY: single-threaded test, no other threads reading this var
+        unsafe { std::env::remove_var("OPENGATEWAY_TEST_EXPLICIT_EMPTY_DEFAULT_VAR") };
+        let value = serde_json::json!("${OPENGATEWAY_TEST_EXPLICIT_EMPTY_DEFAULT_VAR:-}");
+        let result = resolve_env_vars(value).unwrap();
+        assert_eq!(result, serde_json::json!(""));
     }
 }

@@ -1,0 +1,12 @@
+overlay: 1.1.0
+info:
+  title: Plugin upstream config with defaulted env var
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-opengateway-upstream:
+        kind: "plugin"
+        plugin: "./plugins/echo.js"
+        options:
+          host: "${UNSET_VAR_FOR_TEST:-localhost}"

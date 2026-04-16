@@ -282,10 +282,11 @@ pub fn build_router(
                         });
 
                         // Call init() with resolved options (empty object when not specified)
-                        let init_options = options
-                            .as_ref()
-                            .map(|o| resolve_env_vars(o.clone()))
-                            .unwrap_or_else(|| serde_json::json!({}));
+                        let init_options = match options.as_ref() {
+                            Some(o) => resolve_env_vars(o.clone())
+                                .map_err(|e| -> Box<dyn Error> { e.into() })?,
+                            None => serde_json::json!({}),
+                        };
                         h.call_blocking("init", init_options, None, plugin_timeout)?;
 
                         e.insert(h).clone()
