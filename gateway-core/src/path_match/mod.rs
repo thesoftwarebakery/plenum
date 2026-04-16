@@ -146,15 +146,8 @@ fn build_operation_interceptors(
         serde_json::from_value(interceptor_value.clone())
             .map_err(|e| format!("path '{}': x-opengateway-interceptor: {}", path, e))?;
 
-    let interceptor_array = interceptor_value.as_array().ok_or_else(|| {
-        format!(
-            "path '{}': x-opengateway-interceptor must be an array",
-            path
-        )
-    })?;
-
     let mut interceptors = OperationInterceptors::default();
-    for (config, raw_entry) in interceptor_configs.iter().zip(interceptor_array.iter()) {
+    for config in &interceptor_configs {
         let resolved = module_resolver::resolve_module(&config.module, config_base)
             .map_err(|e| format!("path '{}': interceptor '{}': {}", path, config.module, e))?;
         let cache_key = resolved.cache_key();
@@ -217,7 +210,8 @@ fn build_operation_interceptors(
             .map(Duration::from_millis)
             .unwrap_or(default_timeout);
 
-        match runtime.call_blocking("validate", raw_entry.clone(), None, timeout) {
+        let validate_arg = serde_json::to_value(config).unwrap();
+        match runtime.call_blocking("validate", validate_arg, None, timeout) {
             Ok(_) => {}
             Err(opengateway_js_runtime::JsError::FunctionNotFound(_)) => {}
             Err(e) => {

@@ -1,6 +1,6 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionsConfig {
     #[serde(default)]
@@ -28,7 +28,7 @@ impl PermissionsConfig {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct InterceptorConfig {
     pub module: String,
