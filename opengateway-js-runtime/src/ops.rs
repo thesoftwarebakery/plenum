@@ -28,7 +28,7 @@ struct TcpStreamResource {
 }
 
 impl Resource for TcpStreamResource {
-    fn name(&self) -> Cow<str> {
+    fn name(&self) -> Cow<'_, str> {
         "tcpStream".into()
     }
 }
@@ -38,13 +38,13 @@ impl Resource for TcpStreamResource {
 struct TlsStreamResource {
     // Wrapped in a single Mutex. The JS runtime is single-threaded, so concurrent
     // reads and writes from JS are not possible; sequential access is fine.
+    // Addresses are returned to JS via ConnectResult and held in the TlsConn
+    // object; they do not need to be stored here.
     stream: Mutex<TlsStream<TcpStream>>,
-    local_addr: SocketAddr,
-    remote_addr: SocketAddr,
 }
 
 impl Resource for TlsStreamResource {
-    fn name(&self) -> Cow<str> {
+    fn name(&self) -> Cow<'_, str> {
         "tlsStream".into()
     }
 }
@@ -143,8 +143,8 @@ async fn op_net_connect_tcp(
     let raw_dup = raw
         .try_clone()
         .map_err(|e| JsErrorBox::generic(format!("try_clone: {e}")))?;
-    let tokio_stream = TcpStream::from_std(raw)
-        .map_err(|e| JsErrorBox::generic(format!("from_std: {e}")))?;
+    let tokio_stream =
+        TcpStream::from_std(raw).map_err(|e| JsErrorBox::generic(format!("from_std: {e}")))?;
     let (rd, wr) = tokio_stream.into_split();
 
     let resource = TcpStreamResource {
@@ -308,8 +308,8 @@ async fn op_net_start_tls(
         .map_err(|_| JsErrorBox::generic("failed to reunite TCP halves for TLS upgrade"))?;
 
     // Build TLS config and perform the handshake.
-    let tls_config = build_tls_config()
-        .map_err(|e| JsErrorBox::generic(format!("TLS config: {e}")))?;
+    let tls_config =
+        build_tls_config().map_err(|e| JsErrorBox::generic(format!("TLS config: {e}")))?;
     let connector = TlsConnector::from(Arc::new(tls_config));
     let server_name = rustls::pki_types::ServerName::try_from(hostname.clone())
         .map_err(|e| JsErrorBox::generic(format!("invalid TLS hostname '{hostname}': {e}")))?;
@@ -320,8 +320,6 @@ async fn op_net_start_tls(
 
     let resource = TlsStreamResource {
         stream: Mutex::new(tls_stream),
-        local_addr,
-        remote_addr,
     };
     let new_rid = state.borrow_mut().resource_table.add(resource);
 
