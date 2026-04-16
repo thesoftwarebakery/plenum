@@ -67,6 +67,7 @@ const BUILTINS: &[(&str, &str)] = &[
         "validate-response",
         include_str!("../../js/dist/validate-response.js"),
     ),
+    ("postgres", include_str!("../../js/dist/postgres.js")),
 ];
 
 fn lookup_builtin(name: &str) -> Option<&'static str> {
@@ -94,6 +95,12 @@ mod tests {
         assert!(
             matches!(result, ResolvedModule::Internal { name, .. } if name == "validate-response")
         );
+    }
+
+    #[test]
+    fn resolves_internal_postgres() {
+        let result = resolve_module("internal:postgres", Path::new("/any")).unwrap();
+        assert!(matches!(result, ResolvedModule::Internal { name, .. } if name == "postgres"));
     }
 
     #[test]
