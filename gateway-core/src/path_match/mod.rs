@@ -132,6 +132,7 @@ impl PluginRuntimeKey {
 /// Parse an operation's `x-opengateway-interceptor` extension and build interceptor handles.
 fn build_operation_interceptors(
     operation: &Operation,
+    path: &str,
     config_base: &Path,
     runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>>,
     default_timeout: Duration,
@@ -142,11 +143,13 @@ fn build_operation_interceptors(
     };
 
     let interceptor_configs: Vec<InterceptorConfig> =
-        serde_json::from_value(interceptor_value.clone())?;
+        serde_json::from_value(interceptor_value.clone())
+            .map_err(|e| format!("path '{}': x-opengateway-interceptor: {}", path, e))?;
 
     let mut interceptors = OperationInterceptors::default();
     for config in &interceptor_configs {
-        let resolved = module_resolver::resolve_module(&config.module, config_base)?;
+        let resolved = module_resolver::resolve_module(&config.module, config_base)
+            .map_err(|e| format!("path '{}': interceptor '{}': {}", path, config.module, e))?;
         let cache_key = resolved.cache_key();
 
         // Deduplicate: reuse handle if this module was already spawned.
@@ -174,15 +177,28 @@ fn build_operation_interceptors(
                     .unwrap_or_default();
 
                 let h = Arc::new(match &resolved {
-                    module_resolver::ResolvedModule::File(path) => {
-                        opengateway_js_runtime::spawn_runtime_sync(path, permissions)?
+                    module_resolver::ResolvedModule::File(file_path) => {
+                        opengateway_js_runtime::spawn_runtime_sync(file_path, permissions).map_err(
+                            |e| {
+                                format!(
+                                    "path '{}': interceptor '{}': failed to load module: {}",
+                                    path, config.module, e
+                                )
+                            },
+                        )?
                     }
                     module_resolver::ResolvedModule::Internal { name, source } => {
                         opengateway_js_runtime::spawn_runtime_from_source_sync(
                             name,
                             source,
                             permissions,
-                        )?
+                        )
+                        .map_err(|e| {
+                            format!(
+                                "path '{}': interceptor '{}': failed to load module: {}",
+                                path, config.module, e
+                            )
+                        })?
                     }
                 });
                 e.insert(h).clone()
@@ -235,8 +251,9 @@ pub fn build_router(
     let mut plugin_runtime_cache: HashMap<PluginRuntimeKey, Arc<JsRuntimeHandle>> = HashMap::new();
 
     for (path, path_item) in paths {
-        let upstream_config: UpstreamConfig =
-            config.extension(&path_item.extensions, "opengateway-upstream")?;
+        let upstream_config: UpstreamConfig = config
+            .extension(&path_item.extensions, "opengateway-upstream")
+            .map_err(|e| format!("path '{}': x-opengateway-upstream: {}", path, e))?;
 
         let upstream_buffer_response = matches!(
             &upstream_config,
@@ -255,7 +272,8 @@ pub fn build_router(
                 permissions,
                 timeout_ms: upstream_config_timeout_ms,
             } => {
-                let resolved = module_resolver::resolve_module(plugin, config_base)?;
+                let resolved = module_resolver::resolve_module(plugin, config_base)
+                    .map_err(|e| format!("path '{}': plugin '{}': {}", path, plugin, e))?;
                 let cache_key = PluginRuntimeKey::new(resolved.cache_key(), permissions);
 
                 let plugin_timeout = upstream_config_timeout_ms
@@ -271,13 +289,25 @@ pub fn build_router(
                             .unwrap_or_default();
 
                         let h = Arc::new(match &resolved {
-                            module_resolver::ResolvedModule::File(path) => {
-                                opengateway_js_runtime::spawn_runtime_sync(path, perms)?
+                            module_resolver::ResolvedModule::File(file_path) => {
+                                opengateway_js_runtime::spawn_runtime_sync(file_path, perms)
+                                    .map_err(|e| {
+                                        format!(
+                                            "path '{}': plugin '{}': failed to load module: {}",
+                                            path, plugin, e
+                                        )
+                                    })?
                             }
                             module_resolver::ResolvedModule::Internal { name, source } => {
                                 opengateway_js_runtime::spawn_runtime_from_source_sync(
                                     name, source, perms,
-                                )?
+                                )
+                                .map_err(|e| {
+                                    format!(
+                                        "path '{}': plugin '{}': failed to load module: {}",
+                                        path, plugin, e
+                                    )
+                                })?
                             }
                         });
 
@@ -287,7 +317,13 @@ pub fn build_router(
                                 .map_err(|e| -> Box<dyn Error> { e.into() })?,
                             None => serde_json::json!({}),
                         };
-                        h.call_blocking("init", init_options, None, plugin_timeout)?;
+                        h.call_blocking("init", init_options, None, plugin_timeout)
+                            .map_err(|e| {
+                                format!(
+                                    "path '{}': plugin '{}': init() failed: {}",
+                                    path, plugin, e
+                                )
+                            })?;
 
                         e.insert(h).clone()
                     }
@@ -317,6 +353,7 @@ pub fn build_router(
             // Operation-level interceptors
             let interceptors = build_operation_interceptors(
                 operation,
+                path,
                 config_base,
                 &mut interceptor_runtime_cache,
                 default_interceptor_timeout,
@@ -361,7 +398,9 @@ pub fn build_router(
             operations,
             validation_override: path_validation,
         });
-        router.insert(path, entry)?;
+        router
+            .insert(path, entry)
+            .map_err(|e| format!("path '{}': {}", path, e))?;
     }
     Ok(router)
 }

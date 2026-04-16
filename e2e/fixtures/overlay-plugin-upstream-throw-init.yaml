@@ -1,0 +1,10 @@
+overlay: 1.1.0
+info:
+  title: Plugin upstream config with throw_init plugin
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-opengateway-upstream:
+        kind: "plugin"
+        plugin: "./plugins/throw_init.js"

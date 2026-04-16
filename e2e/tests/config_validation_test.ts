@@ -102,6 +102,26 @@ Deno.test(
 
 Deno.test(
   {
+    name: "gateway fails to start when plugin init() throws",
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  async () => {
+    await using network = await new Network().start();
+
+    await assertGatewayFailsToStart({
+      network,
+      openapi: "openapi-plugin.yaml",
+      overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-throw-init.yaml"],
+      extraFiles: [
+        { source: "plugins/throw_init.js", target: "/config/plugins/throw_init.js" },
+      ],
+    });
+  }
+);
+
+Deno.test(
+  {
     name: "gateway starts when plugin options use ${VAR:-default} for an unset env var",
     sanitizeResources: false,
     sanitizeOps: false,
