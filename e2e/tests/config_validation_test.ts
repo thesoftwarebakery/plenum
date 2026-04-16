@@ -221,7 +221,7 @@ Deno.test(
       network,
       fixtures: {
         openapi: "openapi-interceptor.yaml",
-        overlays: ["overlay-interceptor-upstream.yaml", "overlay-interceptor-validate-pass.yaml"],
+        overlays: ["overlay-interceptor-localhost-upstream.yaml", "overlay-interceptor-validate-pass.yaml"],
         extraFiles: [
           { source: "interceptors/validate_options.js", target: "/config/interceptors/validate_options.js" },
         ],
@@ -242,7 +242,7 @@ Deno.test(
     await assertGatewayFailsToStart({
       network,
       openapi: "openapi-interceptor.yaml",
-      overlays: ["overlay-interceptor-upstream.yaml", "overlay-interceptor-validate-fail.yaml"],
+      overlays: ["overlay-interceptor-localhost-upstream.yaml", "overlay-interceptor-validate-fail.yaml"],
       extraFiles: [
         { source: "interceptors/validate_options.js", target: "/config/interceptors/validate_options.js" },
       ],
