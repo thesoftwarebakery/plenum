@@ -48,12 +48,23 @@ impl InterceptorPermissions {
         }
     }
 
-    pub fn check_net(&self, host: &str) -> Result<(), String> {
-        if self.allowed_hosts.contains(host) {
+    /// Check whether outbound network access to `host` (and optionally `port`) is permitted.
+    ///
+    /// The check succeeds if `allowed_hosts` contains either the bare hostname or the
+    /// "hostname:port" string, so operators can grant broad access ("db.internal") or
+    /// port-specific access ("db.internal:5432").
+    pub fn check_net(&self, host: &str, port: Option<u16>) -> Result<(), String> {
+        let host_port = port.map(|p| format!("{host}:{p}"));
+        if self.allowed_hosts.contains(host)
+            || host_port
+                .as_ref()
+                .is_some_and(|hp| self.allowed_hosts.contains(hp.as_str()))
+        {
             Ok(())
         } else {
+            let addr = host_port.as_deref().unwrap_or(host);
             Err(format!(
-                "Permission denied: outbound network access to '{host}' is not allowed"
+                "Permission denied: outbound network access to '{addr}' is not allowed"
             ))
         }
     }
@@ -109,13 +120,29 @@ mod tests {
     fn check_net_allows_listed_host() {
         let mut perms = InterceptorPermissions::default();
         perms.allowed_hosts.insert("example.com".to_string());
-        assert!(perms.check_net("example.com").is_ok());
+        assert!(perms.check_net("example.com", None).is_ok());
+    }
+
+    #[test]
+    fn check_net_allows_bare_host_for_any_port() {
+        let mut perms = InterceptorPermissions::default();
+        perms.allowed_hosts.insert("db.internal".to_string());
+        assert!(perms.check_net("db.internal", Some(5432)).is_ok());
+    }
+
+    #[test]
+    fn check_net_allows_host_port_match() {
+        let mut perms = InterceptorPermissions::default();
+        perms.allowed_hosts.insert("db.internal:5432".to_string());
+        assert!(perms.check_net("db.internal", Some(5432)).is_ok());
+        // Other ports on the same host are denied
+        assert!(perms.check_net("db.internal", Some(5433)).is_err());
     }
 
     #[test]
     fn check_net_denies_unlisted_host() {
         let perms = InterceptorPermissions::default();
-        let err = perms.check_net("evil.com").unwrap_err();
+        let err = perms.check_net("evil.com", None).unwrap_err();
         assert!(err.contains("Permission denied"));
         assert!(err.contains("evil.com"));
     }
@@ -124,7 +151,7 @@ mod tests {
     fn default_permissions_deny_everything() {
         let perms = InterceptorPermissions::default();
         assert!(perms.check_env("ANY_VAR").is_err());
-        assert!(perms.check_net("any.host").is_err());
+        assert!(perms.check_net("any.host", None).is_err());
         assert!(perms.check_read(Path::new("/tmp/file.txt")).is_err());
     }
 }

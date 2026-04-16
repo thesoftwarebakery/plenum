@@ -52,11 +52,12 @@ import "ext:deno_fetch/27_eventsource.js";
 // deno_crypto
 import { crypto } from "ext:deno_crypto/00_crypto.js";
 
-// Stub modules: imported here so all loaded ESM modules are evaluated.
-// deno_net/02_tls.js and deno_telemetry/* and deno_node/* are pulled in
-// transitively by the real imports above. deno_net/03_quic.js is referenced
-// only by webtransport.js (lazy_loaded_esm in deno_web), so import it here.
+// deno_net: 01_net.js is pulled in by 02_tls.js below. 03_quic.js is
+// referenced only by webtransport.js (lazy_loaded_esm in deno_web), so import
+// it here to satisfy check_all_modules_evaluated.
 import "ext:deno_net/03_quic.js";
+import { connect } from "ext:deno_net/01_net.js";
+import { startTls } from "ext:deno_net/02_tls.js";
 
 // Named imports for globalThis assignment
 import { URL, URLSearchParams } from "ext:deno_web/00_url.js";
@@ -74,3 +75,9 @@ globalThis.URL = URL;
 globalThis.URLSearchParams = URLSearchParams;
 globalThis.TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder;
+
+// Expose TCP/TLS socket APIs. Database drivers use Deno.connect() for TCP and
+// Deno.startTls() to upgrade the connection to TLS.
+globalThis.Deno = globalThis.Deno || {};
+globalThis.Deno.connect = connect;
+globalThis.Deno.startTls = startTls;

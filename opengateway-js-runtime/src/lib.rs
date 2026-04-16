@@ -763,4 +763,183 @@ mod tests {
 
         assert_eq!(result.value["ok"], true);
     }
+
+    // ---- TCP socket tests --------------------------------------------------------
+
+    /// Starts a TCP echo server: reads bytes from each connection and writes them back.
+    async fn start_tcp_echo_server() -> (u16, tokio::task::JoinHandle<()>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                let Ok((mut stream, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        let n = match stream.read(&mut buf).await {
+                            Ok(0) | Err(_) => break,
+                            Ok(n) => n,
+                        };
+                        if stream.write_all(&buf[..n]).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+
+        (port, handle)
+    }
+
+    #[tokio::test]
+    async fn test_tcp_echo_round_trip() {
+        let (port, _server) = start_tcp_echo_server().await;
+
+        let source = r#"
+            export async function tcpEcho(input) {
+                const conn = await Deno.connect({ hostname: "127.0.0.1", port: input.port });
+                const encoder = new TextEncoder();
+                const decoder = new TextDecoder();
+
+                await conn.write(encoder.encode("hello tcp"));
+
+                const buf = new Uint8Array(64);
+                const n = await conn.read(buf);
+                conn.close();
+
+                return { echo: decoder.decode(buf.subarray(0, n)) };
+            }
+        "#;
+
+        let mut perms = InterceptorPermissions::default();
+        perms.allowed_hosts.insert("127.0.0.1".to_string());
+
+        let handle = spawn_runtime_from_source("tcp-echo", source, perms)
+            .await
+            .unwrap();
+
+        let result = handle
+            .call(
+                "tcpEcho",
+                serde_json::json!({ "port": port }),
+                None,
+                Duration::from_secs(10),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.value["echo"], "hello tcp");
+    }
+
+    #[tokio::test]
+    async fn test_tcp_connect_permission_denied() {
+        let (port, _server) = start_tcp_echo_server().await;
+
+        let source = r#"
+            export async function doConnect(input) {
+                const conn = await Deno.connect({ hostname: "127.0.0.1", port: input.port });
+                conn.close();
+                return { ok: true };
+            }
+        "#;
+
+        // Default permissions: no hosts allowed.
+        let handle =
+            spawn_runtime_from_source("tcp-denied", source, InterceptorPermissions::default())
+                .await
+                .unwrap();
+
+        let result = handle
+            .call(
+                "doConnect",
+                serde_json::json!({ "port": port }),
+                None,
+                Duration::from_secs(5),
+            )
+            .await;
+
+        assert!(
+            matches!(result, Err(JsError::ExecutionError(_))),
+            "expected ExecutionError for denied TCP connect, got: {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tcp_close_read_returns_null() {
+        let (port, _server) = start_tcp_echo_server().await;
+
+        let source = r#"
+            export async function closeAndRead(input) {
+                const conn = await Deno.connect({ hostname: "127.0.0.1", port: input.port });
+                conn.close();
+                const buf = new Uint8Array(64);
+                const n = await conn.read(buf);
+                return { n: n };
+            }
+        "#;
+
+        let mut perms = InterceptorPermissions::default();
+        perms.allowed_hosts.insert("127.0.0.1".to_string());
+
+        let handle = spawn_runtime_from_source("tcp-close", source, perms)
+            .await
+            .unwrap();
+
+        let result = handle
+            .call(
+                "closeAndRead",
+                serde_json::json!({ "port": port }),
+                None,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+
+        // After close(), read() returns null immediately (JS-side #closed flag).
+        assert!(
+            result.value["n"].is_null(),
+            "expected null after close, got: {}",
+            result.value["n"]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_tcp_socket_options() {
+        let (port, _server) = start_tcp_echo_server().await;
+
+        let source = r#"
+            export async function setOptions(input) {
+                const conn = await Deno.connect({ hostname: "127.0.0.1", port: input.port });
+                conn.setNoDelay(true);
+                conn.setKeepAlive(true);
+                conn.close();
+                return { ok: true };
+            }
+        "#;
+
+        let mut perms = InterceptorPermissions::default();
+        perms.allowed_hosts.insert("127.0.0.1".to_string());
+
+        let handle = spawn_runtime_from_source("tcp-options", source, perms)
+            .await
+            .unwrap();
+
+        let result = handle
+            .call(
+                "setOptions",
+                serde_json::json!({ "port": port }),
+                None,
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.value["ok"], true);
+    }
 }
