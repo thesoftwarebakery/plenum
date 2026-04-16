@@ -1,0 +1,12 @@
+overlay: 1.1.0
+info:
+  title: Attach interceptor with validate() that fails (missing required_key)
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-opengateway-interceptor:
+        - module: "./interceptors/validate_options.js"
+          hook: on_request
+          function: onRequest
+          options: {}

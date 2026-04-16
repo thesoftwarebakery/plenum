@@ -143,3 +143,109 @@ Deno.test(
     // Gateway started successfully -- the default value resolved without error.
   }
 );
+
+Deno.test(
+  {
+    name: "plugin with validate() passes -> gateway starts",
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  async () => {
+    await using network = await new Network().start();
+
+    await using _gateway = await startGateway({
+      network,
+      fixtures: {
+        openapi: "openapi-plugin.yaml",
+        overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-validate-pass.yaml"],
+        extraFiles: [
+          { source: "plugins/validate_echo.js", target: "/config/plugins/validate_echo.js" },
+        ],
+      },
+    });
+  }
+);
+
+Deno.test(
+  {
+    name: "plugin with validate() fails -> gateway fails to start",
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  async () => {
+    await using network = await new Network().start();
+
+    await assertGatewayFailsToStart({
+      network,
+      openapi: "openapi-plugin.yaml",
+      overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-validate-fail.yaml"],
+      extraFiles: [
+        { source: "plugins/validate_echo.js", target: "/config/plugins/validate_echo.js" },
+      ],
+    });
+  }
+);
+
+Deno.test(
+  {
+    name: "plugin without validate() -> gateway starts",
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  async () => {
+    await using network = await new Network().start();
+
+    await using _gateway = await startGateway({
+      network,
+      fixtures: {
+        openapi: "openapi-plugin.yaml",
+        overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-no-validate.yaml"],
+        extraFiles: [
+          { source: "plugins/echo.js", target: "/config/plugins/echo.js" },
+        ],
+      },
+    });
+  }
+);
+
+Deno.test(
+  {
+    name: "interceptor with validate() passes -> gateway starts",
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  async () => {
+    await using network = await new Network().start();
+
+    await using _gateway = await startGateway({
+      network,
+      fixtures: {
+        openapi: "openapi-interceptor.yaml",
+        overlays: ["overlay-interceptor-upstream.yaml", "overlay-interceptor-validate-pass.yaml"],
+        extraFiles: [
+          { source: "interceptors/validate_options.js", target: "/config/interceptors/validate_options.js" },
+        ],
+      },
+    });
+  }
+);
+
+Deno.test(
+  {
+    name: "interceptor with validate() fails -> gateway fails to start",
+    sanitizeResources: false,
+    sanitizeOps: false,
+  },
+  async () => {
+    await using network = await new Network().start();
+
+    await assertGatewayFailsToStart({
+      network,
+      openapi: "openapi-interceptor.yaml",
+      overlays: ["overlay-interceptor-upstream.yaml", "overlay-interceptor-validate-fail.yaml"],
+      extraFiles: [
+        { source: "interceptors/validate_options.js", target: "/config/interceptors/validate_options.js" },
+      ],
+    });
+  }
+);
