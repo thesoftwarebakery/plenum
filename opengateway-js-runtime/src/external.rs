@@ -125,7 +125,7 @@ impl ExternalRuntime {
 
                     match self.respawn(&mut conn).await {
                         Ok(()) => {
-                            // Re-initialise the plugin.
+                            // Re-initialise the plugin (init is optional — interceptors don't have it).
                             match self
                                 .do_send_recv(
                                     &mut conn,
@@ -135,7 +135,7 @@ impl ExternalRuntime {
                                 )
                                 .await
                             {
-                                Ok(_) => {}
+                                Ok(_) | Err(JsError::FunctionNotFound(_)) => {}
                                 Err(e) => {
                                     last_err = e;
                                     continue;

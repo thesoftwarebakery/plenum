@@ -176,31 +176,41 @@ fn build_operation_interceptors(
                     .map(|p| p.into_runtime_permissions())
                     .unwrap_or_default();
 
-                let h: Arc<dyn PluginRuntime> = Arc::new(match &resolved {
+                let h: Arc<dyn PluginRuntime> = match &resolved {
                     module_resolver::ResolvedModule::File(file_path) => {
-                        opengateway_js_runtime::spawn_runtime_sync(file_path, permissions).map_err(
-                            |e| {
+                        // File-based interceptors run in a Node.js child process.
+                        // Permissions enforcement is handled in Phase 2 (bubblewrap).
+                        let _ = permissions; // will be used by opengateway-sandbox in Phase 2
+                        Arc::new(
+                            opengateway_js_runtime::external::spawn_sync(
+                                file_path.to_string_lossy().as_ref(),
+                                serde_json::json!({}),
+                            )
+                            .map_err(|e| {
+                                format!(
+                                    "path '{}': interceptor '{}': failed to spawn Node.js runtime: {}",
+                                    path, config.module, e
+                                )
+                            })?,
+                        )
+                    }
+                    module_resolver::ResolvedModule::Internal { name, source } => {
+                        // Built-in interceptors remain on deno_core until Phase 3.
+                        Arc::new(
+                            opengateway_js_runtime::spawn_runtime_from_source_sync(
+                                name,
+                                source,
+                                permissions,
+                            )
+                            .map_err(|e| {
                                 format!(
                                     "path '{}': interceptor '{}': failed to load module: {}",
                                     path, config.module, e
                                 )
-                            },
-                        )?
-                    }
-                    module_resolver::ResolvedModule::Internal { name, source } => {
-                        opengateway_js_runtime::spawn_runtime_from_source_sync(
-                            name,
-                            source,
-                            permissions,
+                            })?,
                         )
-                        .map_err(|e| {
-                            format!(
-                                "path '{}': interceptor '{}': failed to load module: {}",
-                                path, config.module, e
-                            )
-                        })?
                     }
-                });
+                };
                 e.insert(h).clone()
             }
         };
