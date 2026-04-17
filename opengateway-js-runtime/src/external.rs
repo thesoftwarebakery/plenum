@@ -456,6 +456,25 @@ pub fn locate_server_script() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
     Err("cannot locate node-runtime/server.js: set OPENGATEWAY_NODE_SERVER or place it alongside the gateway binary".into())
 }
 
+/// Locate a built-in interceptor JS file in the node-runtime/interceptors/ directory.
+pub fn locate_interceptor(name: &str) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    let server_script = locate_server_script()?;
+    let interceptor_dir = server_script
+        .parent()
+        .ok_or("server.js has no parent directory")?
+        .join("interceptors");
+    let path = interceptor_dir.join(format!("{name}.js"));
+    if !path.exists() {
+        return Err(format!(
+            "built-in interceptor '{name}' not found at '{}'; \
+             ensure the node-runtime is correctly installed",
+            path.display()
+        )
+        .into());
+    }
+    Ok(path)
+}
+
 /// Spawn a Node.js plugin process and return a connected [`ExternalRuntime`].
 ///
 /// This is the async variant — use inside an existing tokio runtime.

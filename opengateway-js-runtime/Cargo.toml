@@ -1,34 +1,16 @@
 [package]
 name = "opengateway-js-runtime"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-deno_core = "0.398"
-deno_error = "0.7"
-deno_permissions = "0.104"
-deno_webidl = "0.245"
-deno_web = "0.276"
-deno_fetch = "0.269"
-deno_crypto = "0.259"
-deno_tls = "0.232"
-sys_traits = { version = "0.1", features = ["real", "libc"] }
-tokio = { version = "1", features = ["sync", "rt", "time", "net", "process", "io-util"] }
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time", "net", "process", "io-util"] }
 rmp-serde = "1"
 log = "0.4"
-tokio-rustls = "0.26"
-rustls = { version = "0.23", default-features = false, features = ["std", "tls12"] }
-socket2 = "0.5"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 async-trait = "0.1"
-url = "2"
 opengateway-sandbox = { path = "../opengateway-sandbox" }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
-criterion = { version = "0.5", features = ["html_reports"] }
-
-[[bench]]
-name = "js_runtime"
-harness = false

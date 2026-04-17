@@ -193,17 +193,17 @@ fn build_operation_interceptors(
                             })?,
                         )
                     }
-                    module_resolver::ResolvedModule::Internal { name, source } => {
-                        // Built-in interceptors remain on deno_core until Phase 3.
+                    module_resolver::ResolvedModule::Internal { path: module_path, .. } => {
+                        // Built-in interceptors run in Node.js via the node-runtime.
                         Arc::new(
-                            opengateway_js_runtime::spawn_runtime_from_source_sync(
-                                name,
-                                source,
-                                permissions,
+                            opengateway_js_runtime::external::spawn_sync(
+                                module_path.to_string_lossy().as_ref(),
+                                serde_json::json!({}),
+                                permissions.clone(),
                             )
                             .map_err(|e| {
                                 format!(
-                                    "path '{}': interceptor '{}': failed to load module: {}",
+                                    "path '{}': interceptor '{}': failed to spawn Node.js runtime: {}",
                                     path, config.module, e
                                 )
                             })?,
