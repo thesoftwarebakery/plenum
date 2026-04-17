@@ -18,7 +18,7 @@ use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use crate::{CallOutput, JsBody, JsError, PluginRuntime};
+use crate::{CallOutput, InterceptorPermissions, JsBody, JsError, PluginRuntime};
 
 /// Maximum response payload size (10 MB). Responses exceeding this are rejected.
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -58,6 +58,8 @@ pub struct ExternalRuntime {
     server_script: PathBuf,
     plugin_path: String,
     socket_dir: PathBuf,
+    /// Permissions applied when spawning the process, stored for respawning.
+    permissions: InterceptorPermissions,
     /// Options passed to `init()`, stored for re-initialisation after respawn.
     init_options: serde_json::Value,
     /// Tokio runtime that owns the UnixStream when spawned outside an existing runtime.
@@ -255,6 +257,7 @@ impl ExternalRuntime {
             &self.server_script,
             &self.plugin_path,
             &self.socket_dir,
+            &self.permissions,
         )
         .await?;
 
@@ -324,6 +327,7 @@ async fn spawn_process(
     server_script: &Path,
     plugin_path: &str,
     socket_dir: &Path,
+    permissions: &InterceptorPermissions,
 ) -> Result<(Child, UnixStream, PathBuf), Box<dyn Error + Send + Sync>> {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let socket_path = socket_dir.join(format!(
@@ -335,12 +339,46 @@ async fn spawn_process(
     // Clean up any stale socket file.
     let _ = std::fs::remove_file(&socket_path);
 
-    let mut child = Command::new("node")
-        .arg(server_script)
-        .arg("--socket")
-        .arg(&socket_path)
-        .arg("--plugin")
-        .arg(plugin_path)
+    // Build sandbox config from permissions.
+    // Infrastructure paths (server script, plugin, socket) are only added when
+    // OS-level sandboxing will actually be applied, so that the platform guard
+    // doesn't fire on non-Linux when the user hasn't configured any restrictions.
+    let user_wants_os_sandbox = !permissions.allowed_read_paths.is_empty()
+        || !permissions.allowed_hosts.is_empty();
+
+    let sandbox_config = opengateway_sandbox::SandboxConfig {
+        env: permissions.allowed_env_vars.iter().cloned().collect(),
+        read: {
+            let mut r = permissions.allowed_read_paths.clone();
+            if user_wants_os_sandbox {
+                if let Some(d) = server_script.parent() {
+                    r.push(d.to_path_buf());
+                }
+                if let Some(d) = std::path::Path::new(plugin_path).parent() {
+                    r.push(d.to_path_buf());
+                }
+            }
+            r
+        },
+        write: if user_wants_os_sandbox {
+            vec![socket_dir.to_path_buf()]
+        } else {
+            vec![]
+        },
+        net: permissions.allowed_hosts.iter().cloned().collect(),
+    };
+
+    let node_args = [
+        server_script.as_os_str().to_owned(),
+        "--socket".into(),
+        socket_path.as_os_str().to_owned(),
+        "--plugin".into(),
+        plugin_path.into(),
+    ];
+    let std_cmd = opengateway_sandbox::wrap_command("node", node_args, &sandbox_config)
+        .map_err(|e| format!("failed to configure sandbox: {e}"))?;
+
+    let mut child = Command::from(std_cmd)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::inherit())
         .spawn()
@@ -425,12 +463,13 @@ pub fn locate_server_script() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
 pub async fn spawn(
     plugin_path: &str,
     init_options: serde_json::Value,
+    permissions: InterceptorPermissions,
 ) -> Result<ExternalRuntime, Box<dyn Error + Send + Sync>> {
     let server_script = locate_server_script()?;
     let socket_dir = std::env::temp_dir();
 
     let (child, stream, socket_path) =
-        spawn_process(&server_script, plugin_path, &socket_dir).await?;
+        spawn_process(&server_script, plugin_path, &socket_dir, &permissions).await?;
 
     Ok(ExternalRuntime {
         conn: Mutex::new(Connection {
@@ -442,6 +481,7 @@ pub async fn spawn(
         server_script,
         plugin_path: plugin_path.to_string(),
         socket_dir,
+        permissions,
         init_options,
         _runtime: None,
     })
@@ -454,9 +494,10 @@ pub async fn spawn(
 pub fn spawn_sync(
     plugin_path: &str,
     init_options: serde_json::Value,
+    permissions: InterceptorPermissions,
 ) -> Result<ExternalRuntime, Box<dyn Error + Send + Sync>> {
     let rt = tokio::runtime::Runtime::new()?;
-    let mut handle = rt.block_on(spawn(plugin_path, init_options))?;
+    let mut handle = rt.block_on(spawn(plugin_path, init_options, permissions))?;
     handle._runtime = Some(rt);
     Ok(handle)
 }

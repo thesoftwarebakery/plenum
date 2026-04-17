@@ -178,13 +178,12 @@ fn build_operation_interceptors(
 
                 let h: Arc<dyn PluginRuntime> = match &resolved {
                     module_resolver::ResolvedModule::File(file_path) => {
-                        // File-based interceptors run in a Node.js child process.
-                        // Permissions enforcement is handled in Phase 2 (bubblewrap).
-                        let _ = permissions; // will be used by opengateway-sandbox in Phase 2
+                        // File-based interceptors run in a sandboxed Node.js child process.
                         Arc::new(
                             opengateway_js_runtime::external::spawn_sync(
                                 file_path.to_string_lossy().as_ref(),
                                 serde_json::json!({}),
+                                permissions.clone(),
                             )
                             .map_err(|e| {
                                 format!(
@@ -331,6 +330,7 @@ pub fn build_router(
                             opengateway_js_runtime::external::spawn_sync(
                                 &plugin_module_path,
                                 init_options.clone(),
+                                Default::default(),
                             )
                             .map_err(|e| {
                                 format!(

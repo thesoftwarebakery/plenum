@@ -17,9 +17,13 @@ fn noop_plugin_path() -> String {
 }
 
 async fn spawn_noop() -> external::ExternalRuntime {
-    external::spawn(&noop_plugin_path(), serde_json::json!({}))
-        .await
-        .expect("failed to spawn external plugin")
+    external::spawn(
+        &noop_plugin_path(),
+        serde_json::json!({}),
+        Default::default(),
+    )
+    .await
+    .expect("failed to spawn external plugin")
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -132,7 +136,7 @@ async fn spawn_sync_works_without_runtime() {
     // spawn_sync creates its own tokio runtime — test from a thread without one.
     let noop_path = noop_plugin_path();
     let result = std::thread::spawn(move || {
-        external::spawn_sync(&noop_path, serde_json::json!({}))
+        external::spawn_sync(&noop_path, serde_json::json!({}), Default::default())
     })
     .join()
     .expect("thread panicked");

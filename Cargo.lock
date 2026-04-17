@@ -3366,6 +3366,7 @@ dependencies = [
  "deno_web",
  "deno_webidl",
  "log",
+ "opengateway-sandbox",
  "rmp-serde",
  "rustls",
  "serde",
@@ -3375,6 +3376,13 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "url",
+]
+
+[[package]]
+name = "opengateway-sandbox"
+version = "0.1.0"
+dependencies = [
+ "log",
 ]
 
 [[package]]
