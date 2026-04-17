@@ -3355,6 +3355,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 name = "opengateway-js-runtime"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "criterion",
  "deno_core",
  "deno_crypto",
@@ -3364,6 +3365,8 @@ dependencies = [
  "deno_tls",
  "deno_web",
  "deno_webidl",
+ "log",
+ "rmp-serde",
  "rustls",
  "serde",
  "serde_json",

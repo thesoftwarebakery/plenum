@@ -3,6 +3,7 @@ mod ops;
 mod permissions;
 mod types;
 mod worker;
+pub mod external;
 
 pub use permissions::InterceptorPermissions;
 pub use types::{CallOutput, JsBody, JsError};
@@ -11,6 +12,31 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use types::JsCall;
+
+/// Trait abstracting a plugin/interceptor runtime that can execute named JS functions.
+///
+/// Implemented by [`JsRuntimeHandle`] (in-process deno_core) and [`external::ExternalRuntime`]
+/// (out-of-process Node.js over Unix sockets).
+#[async_trait::async_trait]
+pub trait PluginRuntime: Send + Sync {
+    /// Call an exported function with a JSON argument and optional body.
+    async fn call(
+        &self,
+        function_name: &str,
+        arg: serde_json::Value,
+        body: Option<JsBody>,
+        timeout: Duration,
+    ) -> Result<CallOutput, JsError>;
+
+    /// Synchronous variant for use from non-async contexts (e.g. pingora body filters).
+    fn call_blocking(
+        &self,
+        function_name: &str,
+        arg: serde_json::Value,
+        body: Option<JsBody>,
+        timeout: Duration,
+    ) -> Result<CallOutput, JsError>;
+}
 
 /// Channel pair returned by `start_worker`: ready receiver and call sender.
 type WorkerChannel = (
@@ -24,10 +50,9 @@ pub struct JsRuntimeHandle {
     isolate_handle: deno_core::v8::IsolateHandle,
 }
 
-impl JsRuntimeHandle {
-    /// Call an exported JS function with a JSON argument and optional body.
-    /// Returns the function's return value and any modified body, or an error.
-    pub async fn call(
+#[async_trait::async_trait]
+impl PluginRuntime for JsRuntimeHandle {
+    async fn call(
         &self,
         function_name: &str,
         arg: serde_json::Value,
@@ -61,10 +86,7 @@ impl JsRuntimeHandle {
         }
     }
 
-    /// Synchronous variant of [`call`] for use from non-async contexts (e.g. pingora body filters).
-    ///
-    /// Internally blocks the calling thread until the JS function returns or the timeout expires.
-    pub fn call_blocking(
+    fn call_blocking(
         &self,
         function_name: &str,
         arg: serde_json::Value,

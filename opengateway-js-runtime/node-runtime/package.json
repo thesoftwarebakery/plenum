@@ -1,0 +1,9 @@
+{
+  "name": "opengateway-node-runtime",
+  "version": "0.1.0",
+  "description": "Out-of-process Node.js plugin server for OpenGateway",
+  "private": true,
+  "dependencies": {
+    "msgpackr": "^1.11.0"
+  }
+}
