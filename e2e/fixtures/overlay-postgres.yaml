@@ -19,6 +19,9 @@ actions:
             database: "${DB_NAME}"
             user: "${DB_USER}"
             password: "${DB_PASSWORD}"
+          permissions:
+            net:
+              - "postgres"
   - target: $.paths[*]
     update:
       x-opengateway-upstream:
@@ -32,24 +35,25 @@ actions:
   - target: $.paths['/users'].post
     update:
       x-opengateway-backend:
-        query: "INSERT INTO users (name, created_at) VALUES ($body.name, NOW()) RETURNING id, name, created_at"
+        query: "INSERT INTO users (name, created_at) VALUES (${{body.name}}, NOW()) RETURNING id, name, created_at"
         fields:
           created_at: "createdAt"
+        returns: "/0"
   - target: $.paths['/users/{id}'].get
     update:
       x-opengateway-backend:
-        query: "SELECT id, name, created_at FROM users WHERE id = $path.id"
+        query: "SELECT id, name, created_at FROM users WHERE id = ${{path.id}}"
         fields:
           created_at: "createdAt"
         returns: "/0"
   - target: $.paths['/users/{id}'].put
     update:
       x-opengateway-backend:
-        query: "UPDATE users SET name = $body.name WHERE id = $path.id RETURNING id, name, created_at"
+        query: "UPDATE users SET name = ${{body.name}} WHERE id = ${{path.id}} RETURNING id, name, created_at"
         fields:
           created_at: "createdAt"
         returns: "/0"
   - target: $.paths['/users/{id}'].delete
     update:
       x-opengateway-backend:
-        query: "DELETE FROM users WHERE id = $path.id"
+        query: "DELETE FROM users WHERE id = ${{path.id}}"

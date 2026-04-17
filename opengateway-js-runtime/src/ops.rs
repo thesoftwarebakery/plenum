@@ -398,6 +398,24 @@ fn op_net_close_tls(state: &mut OpState, #[smi] rid: ResourceId) -> Result<(), J
         .map_err(|e| JsErrorBox::generic(format!("close TLS: {e}")))
 }
 
+// ── Build info ops ───────────────────────────────────────────────────────────
+
+/// Return the target OS at compile time (e.g. "linux", "darwin", "windows").
+/// Used by Deno.build.os which database driver polyfills depend on.
+#[op2]
+#[string]
+fn op_build_os() -> &'static str {
+    std::env::consts::OS
+}
+
+/// Return the target architecture at compile time (e.g. "x86_64", "aarch64").
+/// Used by Deno.build.arch which database driver polyfills depend on.
+#[op2]
+#[string]
+fn op_build_arch() -> &'static str {
+    std::env::consts::ARCH
+}
+
 // ── Stub extensions for deno_fetch / deno_web ──────────────────────────────────
 
 // Stub extension named "deno_net" that provides ext:deno_net/01_net.js,
@@ -430,7 +448,10 @@ extension!(
 // be consistent within this runtime; no Node.js interop is required.
 extension!(
     deno_node,
-    esm = ["ext:deno_node/internal/crypto/constants.ts" = "src/stub_node_crypto_constants.js",],
+    esm = [
+        "ext:deno_node/internal/crypto/constants.ts" = "src/stub_node_crypto_constants.js",
+        "ext:deno_node/internal/timers.mjs" = "src/stub_node_timers.js",
+    ],
 );
 
 extension!(
@@ -439,6 +460,8 @@ extension!(
     ops = [
         op_read_env,
         op_read_file,
+        op_build_os,
+        op_build_arch,
         op_net_connect_tcp,
         op_net_read_tcp,
         op_net_write_tcp,

@@ -18,10 +18,14 @@ import "ext:deno_web/01_dom_exception.js";
 import "ext:deno_web/01_mimesniff.js";
 import "ext:deno_web/02_event.js";
 import "ext:deno_web/02_structured_clone.js";
-import "ext:deno_web/02_timers.js";
+import { setTimeout, setInterval, clearTimeout, clearInterval } from "ext:deno_web/02_timers.js";
+
+// Import stub node timers to satisfy check_all_modules_evaluated.
+// deno_web's 02_timers.js lazy-loads this module when needed.
+import "ext:deno_node/internal/timers.mjs";
 import "ext:deno_web/03_abort_signal.js";
 import "ext:deno_web/04_global_interfaces.js";
-import "ext:deno_web/05_base64.js";
+import { atob, btoa } from "ext:deno_web/05_base64.js";
 import "ext:deno_web/06_streams.js";
 import "ext:deno_web/08_text_encoding.js";
 import "ext:deno_web/09_file.js";
@@ -75,9 +79,56 @@ globalThis.URL = URL;
 globalThis.URLSearchParams = URLSearchParams;
 globalThis.TextEncoder = TextEncoder;
 globalThis.TextDecoder = TextDecoder;
+globalThis.atob = atob;
+globalThis.btoa = btoa;
+globalThis.setTimeout = setTimeout;
+globalThis.setInterval = setInterval;
+globalThis.clearTimeout = clearTimeout;
+globalThis.clearInterval = clearInterval;
 
-// Expose TCP/TLS socket APIs. Database drivers use Deno.connect() for TCP and
-// Deno.startTls() to upgrade the connection to TLS.
+// Expose Deno namespace APIs. Database drivers and their bundled polyfills
+// depend on Deno.connect() for TCP, Deno.startTls() for TLS, and Deno.build
+// for platform detection.
 globalThis.Deno = globalThis.Deno || {};
 globalThis.Deno.connect = connect;
 globalThis.Deno.startTls = startTls;
+globalThis.Deno.build = {
+  os: Deno.core.ops.op_build_os(),
+  arch: Deno.core.ops.op_build_arch(),
+};
+globalThis.Deno.env = globalThis.Deno.env || {
+  get(key) { return undefined; },
+  set(key, value) {},
+  toObject() { return {}; },
+};
+globalThis.Deno.pid = 0;
+globalThis.Deno.ppid = 0;
+globalThis.Deno.args = [];
+globalThis.Deno.mainModule = "file:///opengateway";
+globalThis.Deno.cwd = () => "/";
+globalThis.Deno.exit = (code) => { throw new Error(`Deno.exit(${code}) called`); };
+globalThis.Deno.unrefTimer = () => {};
+globalThis.Deno.permissions = { query: async () => ({ state: "granted" }) };
+
+// File system stubs. Database driver dependencies (e.g. std/log) reference
+// these during module init but don't require them for actual DB operations.
+const fsNotAvailable = () => { throw new Deno.errors.NotFound("filesystem not available"); };
+globalThis.Deno.stat = async () => fsNotAvailable();
+globalThis.Deno.lstat = async () => fsNotAvailable();
+globalThis.Deno.lstatSync = () => fsNotAvailable();
+globalThis.Deno.open = async () => fsNotAvailable();
+globalThis.Deno.openSync = () => fsNotAvailable();
+globalThis.Deno.remove = async () => {};
+globalThis.Deno.renameSync = () => {};
+globalThis.Deno.close = () => {};
+globalThis.Deno.errors = {
+  NotFound: class NotFound extends Error {},
+  PermissionDenied: class PermissionDenied extends Error {},
+  ConnectionRefused: class ConnectionRefused extends Error {},
+  ConnectionReset: class ConnectionReset extends Error {},
+  InvalidData: class InvalidData extends Error {},
+  BadResource: class BadResource extends Error {},
+  Interrupted: class Interrupted extends Error {},
+  AddrInUse: class AddrInUse extends Error {},
+  AddrNotAvailable: class AddrNotAvailable extends Error {},
+};

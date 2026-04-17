@@ -12,6 +12,8 @@ Deno.test({
   await using network = await new Network().start();
 
   await using pg = await new PostgreSqlContainer("postgres:16")
+    .withNetwork(network)
+    .withNetworkAliases("postgres")
     .withDatabase("test")
     .withUsername("user")
     .withPassword("password")
@@ -39,8 +41,8 @@ Deno.test({
       overlays: ["overlay-postgres.yaml"],
     },
     environment: {
-      DB_HOST: pg.getHost(),
-      DB_PORT: String(pg.getMappedPort(5432)),
+      DB_HOST: "postgres",
+      DB_PORT: "5432",
       DB_NAME: "test",
       DB_USER: "user",
       DB_PASSWORD: "password",
@@ -63,6 +65,8 @@ Deno.test({
   await using network = await new Network().start();
 
   await using pg = await new PostgreSqlContainer("postgres:16")
+    .withNetwork(network)
+    .withNetworkAliases("postgres")
     .withDatabase("test")
     .withUsername("user")
     .withPassword("password")
@@ -86,8 +90,8 @@ Deno.test({
       overlays: ["overlay-postgres.yaml"],
     },
     environment: {
-      DB_HOST: pg.getHost(),
-      DB_PORT: String(pg.getMappedPort(5432)),
+      DB_HOST: "postgres",
+      DB_PORT: "5432",
       DB_NAME: "test",
       DB_USER: "user",
       DB_PASSWORD: "password",
@@ -115,6 +119,8 @@ Deno.test({
   await using network = await new Network().start();
 
   await using pg = await new PostgreSqlContainer("postgres:16")
+    .withNetwork(network)
+    .withNetworkAliases("postgres")
     .withDatabase("test")
     .withUsername("user")
     .withPassword("password")
@@ -141,8 +147,8 @@ Deno.test({
       overlays: ["overlay-postgres.yaml"],
     },
     environment: {
-      DB_HOST: pg.getHost(),
-      DB_PORT: String(pg.getMappedPort(5432)),
+      DB_HOST: "postgres",
+      DB_PORT: "5432",
       DB_NAME: "test",
       DB_USER: "user",
       DB_PASSWORD: "password",
@@ -169,6 +175,8 @@ Deno.test({
   await using network = await new Network().start();
 
   await using pg = await new PostgreSqlContainer("postgres:16")
+    .withNetwork(network)
+    .withNetworkAliases("postgres")
     .withDatabase("test")
     .withUsername("user")
     .withPassword("password")
@@ -195,8 +203,8 @@ Deno.test({
       overlays: ["overlay-postgres.yaml"],
     },
     environment: {
-      DB_HOST: pg.getHost(),
-      DB_PORT: String(pg.getMappedPort(5432)),
+      DB_HOST: "postgres",
+      DB_PORT: "5432",
       DB_NAME: "test",
       DB_USER: "user",
       DB_PASSWORD: "password",
@@ -222,6 +230,8 @@ Deno.test({
   await using network = await new Network().start();
 
   await using pg = await new PostgreSqlContainer("postgres:16")
+    .withNetwork(network)
+    .withNetworkAliases("postgres")
     .withDatabase("test")
     .withUsername("user")
     .withPassword("password")
@@ -248,8 +258,8 @@ Deno.test({
       overlays: ["overlay-postgres.yaml"],
     },
     environment: {
-      DB_HOST: pg.getHost(),
-      DB_PORT: String(pg.getMappedPort(5432)),
+      DB_HOST: "postgres",
+      DB_PORT: "5432",
       DB_NAME: "test",
       DB_USER: "user",
       DB_PASSWORD: "password",
@@ -280,6 +290,8 @@ Deno.test({
   await using network = await new Network().start();
 
   await using pg = await new PostgreSqlContainer("postgres:16")
+    .withNetwork(network)
+    .withNetworkAliases("postgres")
     .withDatabase("test")
     .withUsername("user")
     .withPassword("password")
@@ -309,8 +321,8 @@ Deno.test({
       overlays: ["overlay-postgres.yaml"],
     },
     environment: {
-      DB_HOST: pg.getHost(),
-      DB_PORT: String(pg.getMappedPort(5432)),
+      DB_HOST: "postgres",
+      DB_PORT: "5432",
       DB_NAME: "test",
       DB_USER: "user",
       DB_PASSWORD: "password",
@@ -339,6 +351,8 @@ Deno.test({
   await using network = await new Network().start();
 
   await using pg = await new PostgreSqlContainer("postgres:16")
+    .withNetwork(network)
+    .withNetworkAliases("postgres")
     .withDatabase("test")
     .withUsername("user")
     .withPassword("password")
@@ -363,8 +377,8 @@ Deno.test({
       overlays: ["overlay-postgres.yaml"],
     },
     environment: {
-      DB_HOST: pg.getHost(),
-      DB_PORT: String(pg.getMappedPort(5432)),
+      DB_HOST: "postgres",
+      DB_PORT: "5432",
       DB_NAME: "test",
       DB_USER: "user",
       DB_PASSWORD: "password",

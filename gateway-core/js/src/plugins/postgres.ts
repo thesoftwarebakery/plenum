@@ -1,18 +1,17 @@
 /**
  * PostgreSQL database plugin for OpenGateway.
  *
- * Uses postgres.js driver to connect to PostgreSQL and execute queries
- * with interpolation and response shaping support.
+ * Uses deno-postgres (Deno-native) driver to connect to PostgreSQL and
+ * execute queries with interpolation and response shaping support.
  */
 
-import postgres from "https://deno.land/x/postgresjs@v3.4.8/mod.js";
+import { Pool } from "https://deno.land/x/postgres@v0.19.3/mod.ts";
 
 import { interpolate, parseQueryString, type InterpolateContext } from "./shared/interpolate.ts";
 import { shapeResponse, type ShapeConfig } from "./shared/shape.ts";
 
-// Module-level SQL connection pool (established in init, reused in handle)
-type Sql = ReturnType<typeof postgres>;
-let sql: Sql | null = null;
+// Module-level connection pool (established in init, reused in handle)
+let pool: Pool | null = null;
 
 /**
  * Configuration options for PostgreSQL connection.
@@ -67,32 +66,26 @@ export interface PluginOutput {
  * @param options - PostgreSQL connection options
  * @throws Error if connection fails
  */
-export async function init(options: PostgresOptions): Promise<void> {
-  const connectionOptions: Record<string, unknown> = {
-    host: options.host,
-    port: options.port,
-    database: options.database,
-    user: options.user,
-    password: options.password,
-  };
+export async function init(options: PostgresOptions): Promise<Record<string, unknown>> {
+  const connectionString =
+    `postgresql://${options.user}:${options.password}@${options.host}:${options.port}/${options.database}`;
 
-  if (options.max_connections !== undefined) {
-    connectionOptions.max_connections = options.max_connections;
-  }
+  pool = new Pool(connectionString, options.max_connections ?? 4, true);
 
-  if (options.ssl !== undefined) {
-    connectionOptions.ssl = options.ssl;
-  }
-
-  sql = postgres(connectionOptions);
-
-  // Verify connection with SELECT 1
+  // Verify connection
   try {
-    await sql`SELECT 1`;
+    const client = await pool.connect();
+    try {
+      await client.queryObject("SELECT 1");
+    } finally {
+      client.release();
+    }
   } catch (err) {
-    sql = null;
+    pool = null;
     throw new Error(`PostgreSQL connection failed: ${err}`);
   }
+
+  return { status: 200 };
 }
 
 /**
@@ -100,12 +93,9 @@ export async function init(options: PostgresOptions): Promise<void> {
  *
  * Executes the configured SQL query with interpolation and returns
  * the shaped response.
- *
- * @param input - The plugin input containing request, config, and optional body
- * @returns Plugin output with status, headers, and body
  */
 export async function handle(input: PluginInput): Promise<PluginOutput> {
-  if (sql === null) {
+  if (pool === null) {
     return {
       status: 500,
       headers: { "content-type": "application/json" },
@@ -118,25 +108,26 @@ export async function handle(input: PluginInput): Promise<PluginOutput> {
     path: input.request.params,
     query: parseQueryString(input.request.query),
     body: input.body ?? null,
-    auth: {}, // Auth context TBD
+    auth: {},
   };
 
   // Interpolate the SQL query
   const interpolatedQuery = interpolate(input.config.query, ctx);
 
+  const client = await pool.connect();
   let result: unknown;
 
   try {
-    // Execute the query using template literal syntax
-    // The interpolatedQuery may contain quoted strings, so we need to be careful
-    // Using the unsafe version since we've already interpolated the values
-    result = await sql.unsafe(interpolatedQuery);
+    const queryResult = await client.queryObject(interpolatedQuery);
+    result = queryResult.rows;
   } catch (err) {
     return {
       status: 500,
       headers: { "content-type": "application/json" },
       body: { error: `Query execution failed: ${err}` },
     };
+  } finally {
+    client.release();
   }
 
   // Apply response shaping
@@ -165,38 +156,29 @@ export async function handle(input: PluginInput): Promise<PluginOutput> {
 
 /**
  * Validate the backend configuration shape.
- *
- * Checks that the configuration object has the required structure
- * for a PostgreSQL backend.
- *
- * @param config - The configuration to validate
- * @returns true if valid, false otherwise
  */
-export function validate(config: unknown): boolean {
+export function validate(config: unknown): { valid: boolean; error?: string } {
   if (config === null || config === undefined) {
-    return false;
+    return { valid: false, error: "config is required" };
   }
 
   if (typeof config !== "object") {
-    return false;
+    return { valid: false, error: "config must be an object" };
   }
 
   const cfg = config as Record<string, unknown>;
 
-  // Must have a query string
   if (typeof cfg.query !== "string" || cfg.query.trim() === "") {
-    return false;
+    return { valid: false, error: "query must be a non-empty string" };
   }
 
-  // Optional fields must be an object if provided
   if (cfg.fields !== undefined && typeof cfg.fields !== "object") {
-    return false;
+    return { valid: false, error: "fields must be an object" };
   }
 
-  // Optional returns must be a string if provided
   if (cfg.returns !== undefined && typeof cfg.returns !== "string") {
-    return false;
+    return { valid: false, error: "returns must be a string" };
   }
 
-  return true;
+  return { valid: true };
 }

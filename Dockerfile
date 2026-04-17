@@ -1,10 +1,17 @@
-FROM node:22-bookworm-slim AS js-builder
+FROM node:22-bookworm-slim AS interceptor-builder
 
 WORKDIR /usr/src/opengateway/interceptors
 COPY interceptors/package.json interceptors/package-lock.json ./
 RUN npm ci
 COPY interceptors/ ./
 RUN npm run build
+
+FROM denoland/deno:2.7.7 AS plugin-builder
+
+WORKDIR /usr/src/opengateway/gateway-core/js
+COPY gateway-core/js/src/ src/
+COPY gateway-core/js/build.ts build.ts
+RUN deno run -A build.ts
 
 FROM rust:1.93-bookworm AS chef
 
@@ -19,7 +26,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY gateway-core/ gateway-core/
 COPY openapi-overlay/ openapi-overlay/
 COPY opengateway-js-runtime/ opengateway-js-runtime/
-COPY --from=js-builder /usr/src/opengateway/gateway-core/js/dist/ gateway-core/js/dist/
+COPY --from=interceptor-builder /usr/src/opengateway/gateway-core/js/dist/ gateway-core/js/dist/
+COPY --from=plugin-builder /usr/src/opengateway/gateway-core/js/dist/ gateway-core/js/dist/
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
@@ -39,7 +47,8 @@ COPY Cargo.toml Cargo.lock ./
 COPY gateway-core/ gateway-core/
 COPY openapi-overlay/ openapi-overlay/
 COPY opengateway-js-runtime/ opengateway-js-runtime/
-COPY --from=js-builder /usr/src/opengateway/gateway-core/js/dist/ gateway-core/js/dist/
+COPY --from=interceptor-builder /usr/src/opengateway/gateway-core/js/dist/ gateway-core/js/dist/
+COPY --from=plugin-builder /usr/src/opengateway/gateway-core/js/dist/ gateway-core/js/dist/
 
 RUN RUSTFLAGS="-C link-args=-Wl,--allow-multiple-definition" cargo build --release -p gateway-core
 
