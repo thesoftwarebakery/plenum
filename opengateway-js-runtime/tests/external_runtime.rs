@@ -3,7 +3,7 @@
 //! These tests require Node.js to be available on PATH and exercise the full
 //! IPC path used in production.
 
-use opengateway_js_runtime::{PluginRuntime, external};
+use opengateway_js_runtime::{external, PluginRuntime};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -154,7 +154,12 @@ async fn health_check() {
 
     // health is a built-in method on the server, not a plugin function.
     let result = runtime
-        .call("health", serde_json::json!({}), None, Duration::from_secs(5))
+        .call(
+            "health",
+            serde_json::json!({}),
+            None,
+            Duration::from_secs(5),
+        )
         .await
         .expect("health check failed");
     assert_eq!(result.value["status"], "ok");
@@ -167,7 +172,12 @@ async fn ipc_latency_benchmark() {
     // Warmup
     for _ in 0..50 {
         runtime
-            .call("handle", serde_json::json!({ "request": {} }), None, Duration::from_secs(5))
+            .call(
+                "handle",
+                serde_json::json!({ "request": {} }),
+                None,
+                Duration::from_secs(5),
+            )
             .await
             .unwrap();
     }
@@ -201,5 +211,8 @@ async fn ipc_latency_benchmark() {
     eprintln!("    min:  {:.3}ms", times[0]);
     eprintln!("    max:  {:.3}ms", times[times.len() - 1]);
 
-    assert!(mean < 1.0, "mean IPC latency {mean:.3}ms exceeds 1ms threshold");
+    assert!(
+        mean < 1.0,
+        "mean IPC latency {mean:.3}ms exceeds 1ms threshold"
+    );
 }

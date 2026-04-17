@@ -58,7 +58,12 @@ pub fn resolve_module(
     }
 }
 
-const BUILTIN_NAMES: &[&str] = &["add-header", "validate-request", "auth-apikey", "validate-response"];
+const BUILTIN_NAMES: &[&str] = &[
+    "add-header",
+    "validate-request",
+    "auth-apikey",
+    "validate-response",
+];
 
 fn is_known_builtin(name: &str) -> bool {
     BUILTIN_NAMES.contains(&name)

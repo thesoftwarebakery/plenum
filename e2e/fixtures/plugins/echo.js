@@ -1,8 +1,8 @@
-export function init(options) {
+exports.init = function init(options) {
   return {};
-}
+};
 
-export function handle(input) {
+exports.handle = function handle(input) {
   return {
     status: 200,
     headers: {
@@ -19,4 +19,4 @@ export function handle(input) {
       operation: input.operation,
     },
   };
-}
+};

@@ -1,7 +1,7 @@
-export function init(options) {
+exports.init = function init(options) {
   throw new Error("deliberate init failure for testing");
-}
+};
 
-export function handle(input) {
+exports.handle = function handle(input) {
   return { status: 200, headers: {}, body: null };
-}
+};

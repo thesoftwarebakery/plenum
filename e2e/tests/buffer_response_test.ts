@@ -1,12 +1,12 @@
-import { assertEquals, assert } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway, GatewayContainer } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect } from 'vitest';
+import { Network } from 'testcontainers';
+import { startWiremock } from '../src/containers/wiremock';
+import { startGateway, type GatewayContainer } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
 // Permutation 1: buffer-response false (default), no on_response_body interceptor
 // Streams through; Content-Length is preserved.
-Deno.test({ name: "buffer-response default (false): Content-Length preserved when streaming", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("buffer-response default (false): Content-Length preserved when streaming", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -35,13 +35,13 @@ Deno.test({ name: "buffer-response default (false): Content-Length preserved whe
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
 
     const contentLength = resp.headers.get("content-length");
-    assert(contentLength !== null, "Content-Length should be present when streaming (no buffering)");
+    expect(contentLength !== null, "Content-Length should be present when streaming (no buffering)").toBe(true);
 
     const body = await resp.json() as { items: string[] };
-    assertEquals(body.items, ["widget"]);
+    expect(body.items).toEqual(["widget"]);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -52,7 +52,7 @@ Deno.test({ name: "buffer-response default (false): Content-Length preserved whe
 // Permutation 2: buffer-response false (default), on_response_body interceptor configured
 // Gateway should refuse to start (boot-time validation failure).
 // (Permutation 3: buffer-response true + on_response_body is covered by interceptor_body_test.ts)
-Deno.test({ name: "buffer-response default (false) with on_response_body: gateway refuses to start", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("buffer-response default (false) with on_response_body: gateway refuses to start", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
 
@@ -77,7 +77,7 @@ Deno.test({ name: "buffer-response default (false) with on_response_body: gatewa
   }
 
   try {
-    assert(threw, "gateway should have failed to start when on_response_body is configured without buffer-response: true");
+    expect(threw, "gateway should have failed to start when on_response_body is configured without buffer-response: true").toBe(true);
   } finally {
     if (gateway) await gateway.container.stop();
     await wiremock.container.stop();
@@ -87,7 +87,7 @@ Deno.test({ name: "buffer-response default (false) with on_response_body: gatewa
 
 // Permutation 4: buffer-response true, no on_response_body interceptor
 // Gateway starts without error; response is proxied correctly with body unchanged.
-Deno.test({ name: "buffer-response true (no interceptor): gateway starts and proxies response correctly", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("buffer-response true (no interceptor): gateway starts and proxies response correctly", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -112,9 +112,9 @@ Deno.test({ name: "buffer-response true (no interceptor): gateway starts and pro
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     const body = await resp.json() as { items: string[] };
-    assertEquals(body.items, ["widget"], "response body should be unchanged");
+    expect(body.items, "response body should be unchanged").toEqual(["widget"]);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();

@@ -129,12 +129,7 @@ impl ExternalRuntime {
                         Ok(()) => {
                             // Re-initialise the plugin (init is optional — interceptors don't have it).
                             match self
-                                .do_send_recv(
-                                    &mut conn,
-                                    id,
-                                    "init",
-                                    self.init_options.clone(),
-                                )
+                                .do_send_recv(&mut conn, id, "init", self.init_options.clone())
                                 .await
                             {
                                 Ok(_) | Err(JsError::FunctionNotFound(_)) => {}
@@ -144,7 +139,10 @@ impl ExternalRuntime {
                                 }
                             }
                             // Retry the original call.
-                            match self.do_send_recv(&mut conn, id, method, params.clone()).await {
+                            match self
+                                .do_send_recv(&mut conn, id, method, params.clone())
+                                .await
+                            {
                                 Ok(v) => return Ok(v),
                                 Err(e) => {
                                     last_err = e;
@@ -273,10 +271,29 @@ impl PluginRuntime for ExternalRuntime {
     async fn call(
         &self,
         function_name: &str,
-        arg: serde_json::Value,
-        _body: Option<JsBody>,
+        mut arg: serde_json::Value,
+        body: Option<JsBody>,
         timeout: Duration,
     ) -> Result<CallOutput, JsError> {
+        // Merge the incoming body into the params object so JS can read it as
+        // `params.body`. For interceptors this is the request/response body; for
+        // plugins it is added to the input as `body` before `call()` is invoked.
+        if let Some(ref b) = body {
+            let body_val = match b {
+                JsBody::Json(v) => v.clone(),
+                JsBody::Text(s) => serde_json::Value::String(s.clone()),
+                JsBody::Bytes(b) => {
+                    // Best-effort UTF-8 decode so validate-request can inspect the
+                    // raw body text.  Truly binary payloads produce lossy strings,
+                    // but those would never arrive as application/json anyway.
+                    serde_json::Value::String(String::from_utf8_lossy(b).into_owned())
+                }
+            };
+            if let Some(obj) = arg.as_object_mut() {
+                obj.insert("body".to_string(), body_val);
+            }
+        }
+
         let mut result = tokio::time::timeout(timeout, self.send_recv(function_name, arg))
             .await
             .map_err(|_| JsError::Timeout)??;
@@ -343,8 +360,8 @@ async fn spawn_process(
     // Infrastructure paths (server script, plugin, socket) are only added when
     // OS-level sandboxing will actually be applied, so that the platform guard
     // doesn't fire on non-Linux when the user hasn't configured any restrictions.
-    let user_wants_os_sandbox = !permissions.allowed_read_paths.is_empty()
-        || !permissions.allowed_hosts.is_empty();
+    let user_wants_os_sandbox =
+        !permissions.allowed_read_paths.is_empty() || !permissions.allowed_hosts.is_empty();
 
     let sandbox_config = opengateway_sandbox::SandboxConfig {
         env: permissions.allowed_env_vars.iter().cloned().collect(),

@@ -1,12 +1,12 @@
-import { Network, GenericContainer, Wait, type StartedNetwork } from "testcontainers";
-import { resolve, dirname, fromFileUrl } from "@std/path";
-import { startGateway } from "../src/containers/gateway.ts";
+import { test, expect } from 'vitest';
+import { Network, GenericContainer, Wait, type StartedNetwork } from 'testcontainers';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { readFile } from 'node:fs/promises';
+import { startGateway } from '../src/containers/gateway';
 
-const FIXTURES_DIR = resolve(dirname(fromFileUrl(import.meta.url)), "../fixtures");
-
-function getImage(): string {
-  return "opengateway:latest";
-}
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURES_DIR = resolve(__dirname, '../fixtures');
 
 /**
  * Starts the gateway container with the given config and asserts it exits with
@@ -22,7 +22,7 @@ async function assertGatewayFailsToStart(opts: {
   const openapiFile = opts.openapi ?? "openapi.yaml";
   const overlayFiles = opts.overlays;
 
-  let builder = new GenericContainer(getImage())
+  let builder = new GenericContainer("opengateway:latest")
     .withNetwork(opts.network)
     .withCommand([
       "--config-path", "/config",
@@ -33,14 +33,14 @@ async function assertGatewayFailsToStart(opts: {
     .withStartupTimeout(15_000);
 
   for (const file of [openapiFile, ...overlayFiles]) {
-    const content = await Deno.readTextFile(resolve(FIXTURES_DIR, file));
+    const content = await readFile(resolve(FIXTURES_DIR, file), 'utf-8');
     builder = builder.withCopyContentToContainer([
       { content, target: `/config/${file}` },
     ]);
   }
 
   for (const extra of opts.extraFiles ?? []) {
-    const content = await Deno.readTextFile(resolve(FIXTURES_DIR, extra.source));
+    const content = await readFile(resolve(FIXTURES_DIR, extra.source), 'utf-8');
     builder = builder.withCopyContentToContainer([
       { content, target: extra.target },
     ]);
@@ -64,31 +64,23 @@ async function assertGatewayFailsToStart(opts: {
   }
 }
 
-Deno.test(
-  {
-    name: "gateway fails to start when x-opengateway-upstream contains an unknown field",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("gateway fails to start when x-opengateway-upstream contains an unknown field", async () => {
+  const network = await new Network().start();
 
+  try {
     await assertGatewayFailsToStart({
       network,
       overlays: ["overlay-gateway.yaml", "overlay-bad-upstream-typo.yaml"],
     });
+  } finally {
+    await network.stop();
   }
-);
+});
 
-Deno.test(
-  {
-    name: "gateway fails to start when plugin options reference an unset env var",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("gateway fails to start when plugin options reference an unset env var", async () => {
+  const network = await new Network().start();
 
+  try {
     await assertGatewayFailsToStart({
       network,
       openapi: "openapi-plugin.yaml",
@@ -97,18 +89,15 @@ Deno.test(
         { source: "plugins/echo.js", target: "/config/plugins/echo.js" },
       ],
     });
+  } finally {
+    await network.stop();
   }
-);
+});
 
-Deno.test(
-  {
-    name: "gateway fails to start when plugin init() throws",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("gateway fails to start when plugin init() throws", async () => {
+  const network = await new Network().start();
 
+  try {
     await assertGatewayFailsToStart({
       network,
       openapi: "openapi-plugin.yaml",
@@ -117,64 +106,57 @@ Deno.test(
         { source: "plugins/throw_init.js", target: "/config/plugins/throw_init.js" },
       ],
     });
+  } finally {
+    await network.stop();
   }
-);
+});
 
-Deno.test(
-  {
-    name: "gateway starts when plugin options use ${VAR:-default} for an unset env var",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("gateway starts when plugin options use ${VAR:-default} for an unset env var", async () => {
+  const network = await new Network().start();
+  const gateway = await startGateway({
+    network,
+    fixtures: {
+      openapi: "openapi-plugin.yaml",
+      overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-default-var.yaml"],
+      extraFiles: [
+        { source: "plugins/echo.js", target: "/config/plugins/echo.js" },
+      ],
+    },
+  });
 
-    await using _gateway = await startGateway({
-      network,
-      fixtures: {
-        openapi: "openapi-plugin.yaml",
-        overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-default-var.yaml"],
-        extraFiles: [
-          { source: "plugins/echo.js", target: "/config/plugins/echo.js" },
-        ],
-      },
-    });
-
+  try {
     // Gateway started successfully -- the default value resolved without error.
+  } finally {
+    await gateway.container.stop();
+    await network.stop();
   }
-);
+});
 
-Deno.test(
-  {
-    name: "plugin with validate() passes -> gateway starts",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("plugin with validate() passes -> gateway starts", async () => {
+  const network = await new Network().start();
+  const gateway = await startGateway({
+    network,
+    fixtures: {
+      openapi: "openapi-plugin.yaml",
+      overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-validate-pass.yaml"],
+      extraFiles: [
+        { source: "plugins/validate_echo.js", target: "/config/plugins/validate_echo.js" },
+      ],
+    },
+  });
 
-    await using _gateway = await startGateway({
-      network,
-      fixtures: {
-        openapi: "openapi-plugin.yaml",
-        overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-validate-pass.yaml"],
-        extraFiles: [
-          { source: "plugins/validate_echo.js", target: "/config/plugins/validate_echo.js" },
-        ],
-      },
-    });
+  try {
+    // Gateway started successfully.
+  } finally {
+    await gateway.container.stop();
+    await network.stop();
   }
-);
+});
 
-Deno.test(
-  {
-    name: "plugin with validate() fails -> gateway fails to start",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("plugin with validate() fails -> gateway fails to start", async () => {
+  const network = await new Network().start();
 
+  try {
     await assertGatewayFailsToStart({
       network,
       openapi: "openapi-plugin.yaml",
@@ -183,62 +165,57 @@ Deno.test(
         { source: "plugins/validate_echo.js", target: "/config/plugins/validate_echo.js" },
       ],
     });
+  } finally {
+    await network.stop();
   }
-);
+});
 
-Deno.test(
-  {
-    name: "plugin without validate() -> gateway starts",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("plugin without validate() -> gateway starts", async () => {
+  const network = await new Network().start();
+  const gateway = await startGateway({
+    network,
+    fixtures: {
+      openapi: "openapi-plugin.yaml",
+      overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-no-validate.yaml"],
+      extraFiles: [
+        { source: "plugins/echo.js", target: "/config/plugins/echo.js" },
+      ],
+    },
+  });
 
-    await using _gateway = await startGateway({
-      network,
-      fixtures: {
-        openapi: "openapi-plugin.yaml",
-        overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-no-validate.yaml"],
-        extraFiles: [
-          { source: "plugins/echo.js", target: "/config/plugins/echo.js" },
-        ],
-      },
-    });
+  try {
+    // Gateway started successfully.
+  } finally {
+    await gateway.container.stop();
+    await network.stop();
   }
-);
+});
 
-Deno.test(
-  {
-    name: "interceptor with validate() passes -> gateway starts",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("interceptor with validate() passes -> gateway starts", async () => {
+  const network = await new Network().start();
+  const gateway = await startGateway({
+    network,
+    fixtures: {
+      openapi: "openapi-interceptor.yaml",
+      overlays: ["overlay-interceptor-localhost-upstream.yaml", "overlay-interceptor-validate-pass.yaml"],
+      extraFiles: [
+        { source: "interceptors/validate_options.js", target: "/config/interceptors/validate_options.js" },
+      ],
+    },
+  });
 
-    await using _gateway = await startGateway({
-      network,
-      fixtures: {
-        openapi: "openapi-interceptor.yaml",
-        overlays: ["overlay-interceptor-localhost-upstream.yaml", "overlay-interceptor-validate-pass.yaml"],
-        extraFiles: [
-          { source: "interceptors/validate_options.js", target: "/config/interceptors/validate_options.js" },
-        ],
-      },
-    });
+  try {
+    // Gateway started successfully.
+  } finally {
+    await gateway.container.stop();
+    await network.stop();
   }
-);
+});
 
-Deno.test(
-  {
-    name: "interceptor with validate() fails -> gateway fails to start",
-    sanitizeResources: false,
-    sanitizeOps: false,
-  },
-  async () => {
-    await using network = await new Network().start();
+test("interceptor with validate() fails -> gateway fails to start", async () => {
+  const network = await new Network().start();
 
+  try {
     await assertGatewayFailsToStart({
       network,
       openapi: "openapi-interceptor.yaml",
@@ -247,5 +224,7 @@ Deno.test(
         { source: "interceptors/validate_options.js", target: "/config/interceptors/validate_options.js" },
       ],
     });
+  } finally {
+    await network.stop();
   }
-);
+});

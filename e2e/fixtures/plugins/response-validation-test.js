@@ -6,11 +6,11 @@
  *   x-opengateway-backend: { mode: "invalid" }  -> returns { wrong_field: "no id here" }
  */
 
-export function init(_options) {
+exports.init = function init(_options) {
   return {};
-}
+};
 
-export function handle(input) {
+exports.handle = function handle(input) {
   const mode = input.config && input.config.mode;
   if (mode === "valid") {
     return {
@@ -25,4 +25,4 @@ export function handle(input) {
     headers: { "content-type": "application/json" },
     body: { wrong_field: "no id here" },
   };
-}
+};

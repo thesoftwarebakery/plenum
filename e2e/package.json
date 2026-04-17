@@ -1,0 +1,13 @@
+{
+  "name": "opengateway-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --reporter=verbose"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "testcontainers": "^11",
+    "vitest": "^3"
+  }
+}

@@ -1,4 +1,4 @@
-export async function onRequest(req) {
+exports.onRequest = async function onRequest(req) {
   const resp = await fetch(`http://${req.options.externalHost}/token`);
   const body = await resp.json();
   return {
@@ -8,4 +8,4 @@ export async function onRequest(req) {
       "x-token": body.token,
     },
   };
-}
+};

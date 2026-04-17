@@ -1,8 +1,8 @@
-import { assertEquals } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect } from 'vitest';
+import { Network } from 'testcontainers';
+import { startWiremock } from '../src/containers/wiremock';
+import { startGateway } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
 function postProductsStub() {
   return {
@@ -15,7 +15,7 @@ function postProductsStub() {
   };
 }
 
-Deno.test({ name: "validate-request: valid body passes through", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("validate-request: valid body passes through", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -38,7 +38,7 @@ Deno.test({ name: "validate-request: valid body passes through", sanitizeResourc
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "Widget" }),
     });
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
   } finally {
     await gateway.container.stop();
@@ -47,7 +47,7 @@ Deno.test({ name: "validate-request: valid body passes through", sanitizeResourc
   }
 });
 
-Deno.test({ name: "validate-request: invalid body returns 400", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("validate-request: invalid body returns 400", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -70,9 +70,9 @@ Deno.test({ name: "validate-request: invalid body returns 400", sanitizeResource
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({}),
     });
-    assertEquals(resp.status, 400);
+    expect(resp.status).toEqual(400);
     const body = await resp.json() as { type: string; errors?: unknown[] };
-    assertEquals(body.type, "request-validation-error");
+    expect(body.type).toEqual("request-validation-error");
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -80,7 +80,7 @@ Deno.test({ name: "validate-request: invalid body returns 400", sanitizeResource
   }
 });
 
-Deno.test({ name: "validate-request: non-JSON body returns 400", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("validate-request: non-JSON body returns 400", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -100,7 +100,7 @@ Deno.test({ name: "validate-request: non-JSON body returns 400", sanitizeResourc
       headers: { "Content-Type": "application/json" },
       body: "not json",
     });
-    assertEquals(resp.status, 400);
+    expect(resp.status).toEqual(400);
     await resp.body?.cancel();
   } finally {
     await gateway.container.stop();

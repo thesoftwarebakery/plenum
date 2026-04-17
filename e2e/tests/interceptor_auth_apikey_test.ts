@@ -1,8 +1,8 @@
-import { assertEquals } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect } from 'vitest';
+import { Network } from 'testcontainers';
+import { startWiremock } from '../src/containers/wiremock';
+import { startGateway } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
 function getProductsStub() {
   return {
@@ -15,7 +15,7 @@ function getProductsStub() {
   };
 }
 
-Deno.test({ name: "auth-apikey: correct key passes through", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("auth-apikey: correct key passes through", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -37,7 +37,7 @@ Deno.test({ name: "auth-apikey: correct key passes through", sanitizeResources: 
     const resp = await fetch(`${gateway.baseUrl}/products`, {
       headers: { "x-api-key": "test-secret-key" },
     });
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
   } finally {
     await gateway.container.stop();
@@ -46,7 +46,7 @@ Deno.test({ name: "auth-apikey: correct key passes through", sanitizeResources: 
   }
 });
 
-Deno.test({ name: "auth-apikey: wrong key returns 401", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("auth-apikey: wrong key returns 401", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -65,7 +65,7 @@ Deno.test({ name: "auth-apikey: wrong key returns 401", sanitizeResources: false
     const resp = await fetch(`${gateway.baseUrl}/products`, {
       headers: { "x-api-key": "wrong" },
     });
-    assertEquals(resp.status, 401);
+    expect(resp.status).toEqual(401);
     await resp.body?.cancel();
   } finally {
     await gateway.container.stop();
@@ -74,7 +74,7 @@ Deno.test({ name: "auth-apikey: wrong key returns 401", sanitizeResources: false
   }
 });
 
-Deno.test({ name: "auth-apikey: missing key returns 401", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("auth-apikey: missing key returns 401", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -91,7 +91,7 @@ Deno.test({ name: "auth-apikey: missing key returns 401", sanitizeResources: fal
 
   try {
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 401);
+    expect(resp.status).toEqual(401);
     await resp.body?.cancel();
   } finally {
     await gateway.container.stop();

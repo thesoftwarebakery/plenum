@@ -1,5 +1,5 @@
-mod types;
 pub mod external;
+mod types;
 
 pub use types::{CallOutput, JsBody, JsError};
 

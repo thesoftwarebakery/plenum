@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use criterion::{Criterion, criterion_group, criterion_main};
-use opengateway_js_runtime::{InterceptorPermissions, spawn_runtime_sync};
+use criterion::{criterion_group, criterion_main, Criterion};
+use opengateway_js_runtime::{spawn_runtime_sync, InterceptorPermissions};
 use tokio::runtime::Runtime;
 
 fn fixture_path(name: &str) -> PathBuf {

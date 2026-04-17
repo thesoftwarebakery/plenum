@@ -1,10 +1,10 @@
-import { assertEquals, assert } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect } from 'vitest';
+import { Network } from 'testcontainers';
+import { startWiremock } from '../src/containers/wiremock';
+import { startGateway } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
-Deno.test({ name: "internal:add-header built-in injects configured header into upstream request", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("internal:add-header built-in injects configured header into upstream request", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -30,18 +30,18 @@ Deno.test({ name: "internal:add-header built-in injects configured header into u
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
 
     // Verify the upstream received the x-builtin header
     const requests = await wm.getRequests();
-    assert(requests.length > 0, "expected at least one request to upstream");
+    expect(requests.length > 0, "expected at least one request to upstream").toBe(true);
     const upstreamHeaders = requests[0].request.headers;
     // Wiremock may capitalize header names
     const headerKeys = Object.keys(upstreamHeaders);
     const builtinKey = headerKeys.find(k => k.toLowerCase() === "x-builtin");
-    assert(builtinKey !== undefined, `expected x-builtin header in upstream request, got: ${headerKeys.join(", ")}`);
-    assertEquals(upstreamHeaders[builtinKey!], "true");
+    expect(builtinKey !== undefined, `expected x-builtin header in upstream request, got: ${headerKeys.join(", ")}`).toBe(true);
+    expect(upstreamHeaders[builtinKey!]).toEqual("true");
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();

@@ -193,7 +193,9 @@ fn build_operation_interceptors(
                             })?,
                         )
                     }
-                    module_resolver::ResolvedModule::Internal { path: module_path, .. } => {
+                    module_resolver::ResolvedModule::Internal {
+                        path: module_path, ..
+                    } => {
                         // Built-in interceptors run in Node.js via the node-runtime.
                         Arc::new(
                             opengateway_js_runtime::external::spawn_sync(
@@ -270,7 +272,8 @@ pub fn build_router(
         module_resolver::ModuleCacheKey,
         Arc<dyn PluginRuntime>,
     > = HashMap::new();
-    let mut plugin_runtime_cache: HashMap<PluginRuntimeKey, Arc<dyn PluginRuntime>> = HashMap::new();
+    let mut plugin_runtime_cache: HashMap<PluginRuntimeKey, Arc<dyn PluginRuntime>> =
+        HashMap::new();
 
     for (path, path_item) in paths {
         let upstream_config: UpstreamConfig = config

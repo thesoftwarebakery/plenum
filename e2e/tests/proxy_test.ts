@@ -1,16 +1,30 @@
-import { assertEquals } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect, describe, beforeAll, afterAll } from 'vitest';
+import { Network } from 'testcontainers';
+import type { StartedNetwork } from 'testcontainers';
+import { startWiremock, type WiremockContainer } from '../src/containers/wiremock';
+import { startGateway, type GatewayContainer } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
-Deno.test({ name: "proxy", sanitizeResources: false, sanitizeOps: false }, async (t) => {
-  await using network = await new Network().start();
-  await using wiremock = await startWiremock({ network, alias: "wiremock" });
-  await using gateway = await startGateway({ network });
-  const wm = new WireMockClient(wiremock.adminUrl);
+describe("proxy", () => {
+  let network: StartedNetwork;
+  let wiremock: WiremockContainer;
+  let gateway: GatewayContainer;
+  let wm: WireMockClient;
 
-  await t.step("proxies GET /products to upstream", async () => {
+  beforeAll(async () => {
+    network = await new Network().start();
+    wiremock = await startWiremock({ network, alias: "wiremock" });
+    gateway = await startGateway({ network });
+    wm = new WireMockClient(wiremock.adminUrl);
+  });
+
+  afterAll(async () => {
+    await gateway?.container.stop();
+    await wiremock?.container.stop();
+    await network?.stop();
+  });
+
+  test("proxies GET /products to upstream", async () => {
     await wm.stubFor({
       request: { method: "GET", urlPath: "/products" },
       response: {
@@ -21,12 +35,12 @@ Deno.test({ name: "proxy", sanitizeResources: false, sanitizeOps: false }, async
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     const body = await resp.json() as { items: string[] };
-    assertEquals(body.items, ["widget"]);
+    expect(body.items).toEqual(["widget"]);
   });
 
-  await t.step("proxies parameterised path /products/{id}", async () => {
+  test("proxies parameterised path /products/{id}", async () => {
     await wm.stubFor({
       request: { method: "GET", urlPath: "/products/abc-123" },
       response: {
@@ -37,8 +51,8 @@ Deno.test({ name: "proxy", sanitizeResources: false, sanitizeOps: false }, async
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products/abc-123`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     const body = await resp.json() as { id: string };
-    assertEquals(body.id, "abc-123");
+    expect(body.id).toEqual("abc-123");
   });
 });

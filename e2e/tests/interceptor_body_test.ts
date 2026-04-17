@@ -1,8 +1,8 @@
-import { assertEquals, assert } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect } from 'vitest';
+import { Network } from 'testcontainers';
+import { startWiremock } from '../src/containers/wiremock';
+import { startGateway } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
 const BODY_FIXTURES: { source: string; target: string }[] = [
   { source: "interceptors/read-request-body.js", target: "/config/interceptors/read-request-body.js" },
@@ -24,7 +24,7 @@ function postStub() {
 
 // -- Request body tests --
 
-Deno.test({ name: "on_request reads body and modifies it based on content", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("on_request reads body and modifies it based on content", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -48,15 +48,15 @@ Deno.test({ name: "on_request reads body and modifies it based on content", sani
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "widget", flagged: true }),
     });
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
 
     const requests = await wm.getRequests();
-    assert(requests.length > 0, "expected at least one request to upstream");
+    expect(requests.length > 0, "expected at least one request to upstream").toBe(true);
     const upstreamBody = JSON.parse(requests[0].request.body ?? "{}");
-    assertEquals(upstreamBody.name, "widget");
-    assertEquals(upstreamBody.flagged, true);
-    assertEquals(upstreamBody.flagChecked, true, "interceptor should have added flagChecked:true when body.flagged is true");
+    expect(upstreamBody.name).toEqual("widget");
+    expect(upstreamBody.flagged).toEqual(true);
+    expect(upstreamBody.flagChecked, "interceptor should have added flagChecked:true when body.flagged is true").toEqual(true);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -64,7 +64,7 @@ Deno.test({ name: "on_request reads body and modifies it based on content", sani
   }
 });
 
-Deno.test({ name: "on_request modifies request body before forwarding to upstream", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("on_request modifies request body before forwarding to upstream", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -88,14 +88,14 @@ Deno.test({ name: "on_request modifies request body before forwarding to upstrea
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "widget" }),
     });
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
 
     const requests = await wm.getRequests();
-    assert(requests.length > 0, "expected at least one request to upstream");
+    expect(requests.length > 0, "expected at least one request to upstream").toBe(true);
     const upstreamBody = JSON.parse(requests[0].request.body ?? "{}");
-    assertEquals(upstreamBody.name, "widget");
-    assertEquals(upstreamBody.intercepted, true, "upstream body should have intercepted:true added by interceptor");
+    expect(upstreamBody.name).toEqual("widget");
+    expect(upstreamBody.intercepted, "upstream body should have intercepted:true added by interceptor").toEqual(true);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -103,7 +103,7 @@ Deno.test({ name: "on_request modifies request body before forwarding to upstrea
   }
 });
 
-Deno.test({ name: "on_request short-circuits with 403 based on body content", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("on_request short-circuits with 403 based on body content", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -125,12 +125,12 @@ Deno.test({ name: "on_request short-circuits with 403 based on body content", sa
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name: "widget", block: true }),
     });
-    assertEquals(resp.status, 403);
+    expect(resp.status).toEqual(403);
     const body = await resp.json() as { error: string };
-    assertEquals(body.error, "blocked by body");
+    expect(body.error).toEqual("blocked by body");
 
     const requests = await wm.getRequests();
-    assertEquals(requests.length, 0, "expected no requests to upstream");
+    expect(requests.length, "expected no requests to upstream").toEqual(0);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -140,7 +140,7 @@ Deno.test({ name: "on_request short-circuits with 403 based on body content", sa
 
 // -- Response body tests --
 
-Deno.test({ name: "on_response_body modifies response body before forwarding to client", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("on_response_body modifies response body before forwarding to client", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -167,10 +167,10 @@ Deno.test({ name: "on_response_body modifies response body before forwarding to 
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     const body = await resp.json() as { items: string[]; intercepted?: boolean };
-    assertEquals(body.items, ["widget"]);
-    assertEquals(body.intercepted, true, "response body should have intercepted:true added by interceptor");
+    expect(body.items).toEqual(["widget"]);
+    expect(body.intercepted, "response body should have intercepted:true added by interceptor").toEqual(true);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();

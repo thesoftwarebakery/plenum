@@ -98,14 +98,19 @@ pub fn wrap_command(
     Ok(cmd)
 }
 
+/// Environment variables that must always be forwarded so that child processes
+/// can find their binaries and shared libraries, regardless of the allow-list.
+const ALWAYS_PASS: &[&str] = &["PATH", "LD_LIBRARY_PATH", "HOME", "TMPDIR"];
+
 /// Filter the command's environment to only the allowed variable names.
 /// If `allowed` is empty, the existing environment is left unchanged.
+/// Essential variables (PATH etc.) are always forwarded even when filtering.
 pub(crate) fn apply_env_filter(cmd: &mut Command, allowed: &[String]) {
     if allowed.is_empty() {
         return;
     }
     let filtered: Vec<(String, String)> = std::env::vars()
-        .filter(|(k, _)| allowed.contains(k))
+        .filter(|(k, _)| allowed.contains(k) || ALWAYS_PASS.contains(&k.as_str()))
         .collect();
     cmd.env_clear().envs(filtered);
 }
@@ -121,6 +126,30 @@ mod platform {
     use std::ffi::OsString;
     use std::process::Command;
 
+    /// Bind or symlink a system path inside bwrap.
+    ///
+    /// On modern Debian/Ubuntu systems `/lib` and `/lib64` are symlinks into
+    /// `/usr`. Attempting `--ro-bind /lib /lib` on a symlink causes bwrap to
+    /// bind-mount the target but still report "No such file or directory" when
+    /// the dynamic linker searches for `/lib/ld-linux-*.so.*` because the
+    /// sandbox root has no `/lib` directory entry.  Using `--symlink` instead
+    /// recreates the correct filesystem layout inside the sandbox.
+    fn bind_or_symlink(cmd: &mut Command, path: &std::path::Path) {
+        // Use lstat so we check the path itself, not its target.
+        match std::fs::symlink_metadata(path) {
+            Ok(m) if m.file_type().is_symlink() => {
+                if let Ok(target) = std::fs::read_link(path) {
+                    // bwrap --symlink TARGET LINKNAME
+                    cmd.arg("--symlink").arg(target).arg(path);
+                }
+            }
+            Ok(_) => {
+                cmd.arg("--ro-bind").arg(path).arg(path);
+            }
+            Err(_) => {}
+        }
+    }
+
     /// Wrap `program args` with bwrap.
     pub fn wrap_bwrap(
         program: &OsStr,
@@ -130,18 +159,12 @@ mod platform {
         let mut cmd = Command::new("bwrap");
 
         // Mount essential system paths read-only.
-        for sys_path in &["/usr", "/lib", "/etc"] {
-            let p = std::path::Path::new(sys_path);
-            if p.exists() {
-                cmd.arg("--ro-bind").arg(p).arg(p);
-            }
+        // /usr is always a real directory; /lib and /lib64 are often symlinks into /usr.
+        for sys_path in &["/usr", "/lib", "/lib64", "/etc"] {
+            bind_or_symlink(&mut cmd, std::path::Path::new(sys_path));
         }
-        // Architecture-specific lib directories.
-        for arch_lib in &[
-            "/lib64",
-            "/lib/x86_64-linux-gnu",
-            "/lib/aarch64-linux-gnu",
-        ] {
+        // Architecture-specific lib directories (also may be symlinks).
+        for arch_lib in &["/lib/x86_64-linux-gnu", "/lib/aarch64-linux-gnu"] {
             let p = std::path::Path::new(arch_lib);
             if p.exists() {
                 cmd.arg("--ro-bind-try").arg(p).arg(p);

@@ -12,5 +12,4 @@ actions:
           options:
             externalHost: "external-api:8080"
           permissions:
-            net:
-              - "external-api"
+            net: ["external-api"]

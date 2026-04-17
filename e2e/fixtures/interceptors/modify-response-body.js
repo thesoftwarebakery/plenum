@@ -1,4 +1,4 @@
-export function onResponseBody(resp) {
+exports.onResponseBody = function onResponseBody(resp) {
   var newBody = Object.assign({}, resp.body, { intercepted: true });
   return { action: "continue", body: newBody };
-}
+};

@@ -1,11 +1,11 @@
-export function onRequest(_request) {
+exports.onRequest = function onRequest(_request) {
   return { wrong: "shape" };
-}
+};
 
-export function beforeUpstream(_request) {
+exports.beforeUpstream = function beforeUpstream(_request) {
   return { wrong: "shape" };
-}
+};
 
-export function onResponse(_response) {
+exports.onResponse = function onResponse(_response) {
   return { wrong: "shape" };
-}
+};
