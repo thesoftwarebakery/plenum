@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "time", "net", "process", "io-util"] }
 rmp-serde = "1"
+base64 = "0.22"
 log = "0.4"
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }

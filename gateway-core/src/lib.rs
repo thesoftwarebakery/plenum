@@ -96,10 +96,12 @@ fn js_body_from_content_type(content_type: Option<&str>, buf: &[u8]) -> Option<J
         return None;
     }
     match content_type {
-        Some(ct) if ct.starts_with("application/json") => serde_json::from_slice(buf)
-            .ok()
-            .map(JsBody::Json)
-            .or_else(|| Some(JsBody::Bytes(buf.to_vec()))),
+        Some(ct) if ct.starts_with("application/json") => match serde_json::from_slice(buf) {
+            Ok(v) => Some(JsBody::Json(v)),
+            // Malformed JSON is still text — pass as-is so interceptors (e.g.
+            // validate-request) can inspect it and return a meaningful 400.
+            Err(_) => Some(JsBody::Text(String::from_utf8_lossy(buf).into_owned())),
+        },
         Some(ct)
             if ct.starts_with("text/")
                 || ct.starts_with("application/xml")

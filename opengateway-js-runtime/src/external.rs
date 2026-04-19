@@ -279,18 +279,33 @@ impl PluginRuntime for ExternalRuntime {
         // `params.body`. For interceptors this is the request/response body; for
         // plugins it is added to the input as `body` before `call()` is invoked.
         if let Some(ref b) = body {
-            let body_val = match b {
-                JsBody::Json(v) => v.clone(),
-                JsBody::Text(s) => serde_json::Value::String(s.clone()),
-                JsBody::Bytes(b) => {
-                    // Best-effort UTF-8 decode so validate-request can inspect the
-                    // raw body text.  Truly binary payloads produce lossy strings,
-                    // but those would never arrive as application/json anyway.
-                    serde_json::Value::String(String::from_utf8_lossy(b).into_owned())
+            match b {
+                JsBody::Json(v) => {
+                    if let Some(obj) = arg.as_object_mut() {
+                        obj.insert("body".to_string(), v.clone());
+                    }
                 }
-            };
-            if let Some(obj) = arg.as_object_mut() {
-                obj.insert("body".to_string(), body_val);
+                JsBody::Text(s) => {
+                    if let Some(obj) = arg.as_object_mut() {
+                        obj.insert("body".to_string(), serde_json::Value::String(s.clone()));
+                    }
+                }
+                JsBody::Bytes(bytes) => {
+                    // Binary bodies (e.g. application/octet-stream, image/*) cannot
+                    // be represented directly in JSON. Following the AWS API Gateway
+                    // convention, we base64-encode the body and set a `bodyEncoding`
+                    // flag so JS interceptors can opt into decoding with
+                    // `Buffer.from(params.body, 'base64')`.
+                    use base64::Engine as _;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    if let Some(obj) = arg.as_object_mut() {
+                        obj.insert("body".to_string(), serde_json::Value::String(encoded));
+                        obj.insert(
+                            "bodyEncoding".to_string(),
+                            serde_json::Value::String("base64".to_string()),
+                        );
+                    }
+                }
             }
         }
 
