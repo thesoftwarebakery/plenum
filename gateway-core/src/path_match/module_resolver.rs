@@ -3,12 +3,10 @@ use std::path::{Path, PathBuf};
 #[derive(Debug)]
 pub enum ResolvedModule {
     File(PathBuf),
-    /// Built-in module with source embedded at compile time via `include_str!`.
-    /// The `source` lifetime is `'static` because all built-ins are inlined into
-    /// the binary at compile time.
+    /// Built-in interceptor located in the node-runtime/interceptors/ directory.
     Internal {
         name: String,
-        source: &'static str,
+        path: PathBuf,
     },
 }
 
@@ -22,6 +20,8 @@ impl ResolvedModule {
     pub fn cache_key(&self) -> ModuleCacheKey {
         match self {
             ResolvedModule::File(p) => ModuleCacheKey::File(p.clone()),
+            // Use the name for the cache key so all references to `internal:add-header`
+            // share a single runtime regardless of path resolution.
             ResolvedModule::Internal { name, .. } => ModuleCacheKey::Internal(name.clone()),
         }
     }
@@ -32,17 +32,19 @@ pub fn resolve_module(
     config_base: &Path,
 ) -> Result<ResolvedModule, Box<dyn std::error::Error>> {
     if let Some(name) = module_spec.strip_prefix("internal:") {
-        match lookup_builtin(name) {
-            Some(source) => Ok(ResolvedModule::Internal {
-                name: name.to_string(),
-                source,
-            }),
-            None => Err(format!(
+        if !is_known_builtin(name) {
+            return Err(format!(
                 "unknown built-in interceptor module 'internal:{name}'. Available built-ins: {}",
-                available_builtins().collect::<Vec<_>>().join(", ")
+                BUILTIN_NAMES.join(", ")
             )
-            .into()),
+            .into());
         }
+        let path = opengateway_js_runtime::external::locate_interceptor(name)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        Ok(ResolvedModule::Internal {
+            name: name.to_string(),
+            path,
+        })
     } else {
         let module_path = config_base.join(module_spec);
         let canonical = module_path.canonicalize().map_err(|e| {
@@ -56,25 +58,15 @@ pub fn resolve_module(
     }
 }
 
-const BUILTINS: &[(&str, &str)] = &[
-    ("add-header", include_str!("../../js/dist/add-header.js")),
-    (
-        "validate-request",
-        include_str!("../../js/dist/validate-request.js"),
-    ),
-    ("auth-apikey", include_str!("../../js/dist/auth-apikey.js")),
-    (
-        "validate-response",
-        include_str!("../../js/dist/validate-response.js"),
-    ),
+const BUILTIN_NAMES: &[&str] = &[
+    "add-header",
+    "validate-request",
+    "auth-apikey",
+    "validate-response",
 ];
 
-fn lookup_builtin(name: &str) -> Option<&'static str> {
-    BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
-}
-
-fn available_builtins() -> impl Iterator<Item = &'static str> {
-    BUILTINS.iter().map(|(n, _)| *n)
+fn is_known_builtin(name: &str) -> bool {
+    BUILTIN_NAMES.contains(&name)
 }
 
 #[cfg(test)]

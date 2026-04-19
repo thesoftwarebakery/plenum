@@ -11,7 +11,7 @@ use http::Method;
 use interceptor::{
     InterceptorOutput, header_map_to_hash_map, request_input_from_parts, response_input_from_parts,
 };
-use opengateway_js_runtime::{JsBody, JsRuntimeHandle};
+use opengateway_js_runtime::{JsBody, PluginRuntime};
 use path_match::{OperationSchemas, RouteEntry, Upstream, build_router};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_http::{RequestHeader, ResponseHeader};
@@ -58,7 +58,7 @@ fn matched_op<'a>(
 /// Call a JS interceptor and deserialize the output.
 /// Returns the deserialized InterceptorOutput and any modified body.
 async fn call_interceptor(
-    handle: &JsRuntimeHandle,
+    handle: &dyn PluginRuntime,
     function_name: &str,
     input: serde_json::Value,
     body: Option<JsBody>,
@@ -71,7 +71,7 @@ async fn call_interceptor(
 
 /// Synchronous variant of call_interceptor for use from sync body filters.
 fn call_interceptor_blocking(
-    handle: &JsRuntimeHandle,
+    handle: &dyn PluginRuntime,
     function_name: &str,
     input: serde_json::Value,
     body: Option<JsBody>,
@@ -96,10 +96,12 @@ fn js_body_from_content_type(content_type: Option<&str>, buf: &[u8]) -> Option<J
         return None;
     }
     match content_type {
-        Some(ct) if ct.starts_with("application/json") => serde_json::from_slice(buf)
-            .ok()
-            .map(JsBody::Json)
-            .or_else(|| Some(JsBody::Bytes(buf.to_vec()))),
+        Some(ct) if ct.starts_with("application/json") => match serde_json::from_slice(buf) {
+            Ok(v) => Some(JsBody::Json(v)),
+            // Malformed JSON is still text — pass as-is so interceptors (e.g.
+            // validate-request) can inspect it and return a meaningful 400.
+            Err(_) => Some(JsBody::Text(String::from_utf8_lossy(buf).into_owned())),
+        },
         Some(ct)
             if ct.starts_with("text/")
                 || ct.starts_with("application/xml")
@@ -263,7 +265,7 @@ impl ProxyHttp for OpenGateway {
                 function = hook.function.as_str()
             );
             match call_interceptor(
-                &hook.runtime,
+                hook.runtime.as_ref(),
                 &hook.function,
                 input_json,
                 None,
@@ -361,7 +363,7 @@ impl ProxyHttp for OpenGateway {
                         function = hook.function.as_str()
                     );
                     match call_interceptor(
-                        &hook.runtime,
+                        hook.runtime.as_ref(),
                         &hook.function,
                         input_json,
                         js_body,
@@ -429,7 +431,7 @@ impl ProxyHttp for OpenGateway {
                     function = hook.function.as_str()
                 );
                 match call_interceptor(
-                    &hook.runtime,
+                    hook.runtime.as_ref(),
                     &hook.function,
                     input_json,
                     None,
@@ -534,7 +536,7 @@ impl ProxyHttp for OpenGateway {
                     function = hook.function.as_str()
                 );
                 match call_interceptor(
-                    &hook.runtime,
+                    hook.runtime.as_ref(),
                     &hook.function,
                     input_json,
                     None,
@@ -592,7 +594,7 @@ impl ProxyHttp for OpenGateway {
                 let mut input_json = serde_json::to_value(&input).unwrap();
                 merge_options(&mut input_json, hook.options.as_ref());
                 match call_interceptor(
-                    &hook.runtime,
+                    hook.runtime.as_ref(),
                     &hook.function,
                     input_json,
                     js_body,
@@ -733,7 +735,7 @@ impl ProxyHttp for OpenGateway {
                         function = hook.function.as_str()
                     );
                     match call_interceptor(
-                        &hook.runtime,
+                        hook.runtime.as_ref(),
                         &hook.function,
                         input_json,
                         js_body,
@@ -838,7 +840,7 @@ impl ProxyHttp for OpenGateway {
                 function = hook.function.as_str()
             );
             match call_interceptor(
-                &hook.runtime,
+                hook.runtime.as_ref(),
                 &hook.function,
                 input_json,
                 None,
@@ -894,7 +896,7 @@ impl ProxyHttp for OpenGateway {
                 function = hook.function.as_str()
             );
             match call_interceptor(
-                &hook.runtime,
+                hook.runtime.as_ref(),
                 &hook.function,
                 input_json,
                 None,
@@ -989,7 +991,7 @@ impl ProxyHttp for OpenGateway {
                     )
                     .entered();
                     match call_interceptor_blocking(
-                        &hook.runtime,
+                        hook.runtime.as_ref(),
                         &hook.function,
                         input_json,
                         js_body,

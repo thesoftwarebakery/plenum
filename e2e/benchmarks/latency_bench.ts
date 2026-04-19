@@ -9,16 +9,21 @@
  * github-action-benchmark "customSmallerIsBetter" JSON.
  *
  * Run with:
- *   cd e2e && deno task bench
+ *   cd e2e && npm run bench
  *
  * Output: bench-results.json (in the e2e/ directory)
  */
 
 import { Bench } from "tinybench";
 import { Network } from "testcontainers";
-import { startGateway } from "../src/containers/gateway.ts";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { writeFile } from "node:fs/promises";
+import { resolve, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import { startGateway } from "../src/containers/gateway";
+import { startWiremock } from "../src/containers/wiremock";
+import { WireMockClient } from "../src/helpers/wiremock-client";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * Start the gateway, retrying if Docker reports a port-binding conflict.
@@ -86,8 +91,11 @@ const SCENARIOS: Scenario[] = [
   },
   {
     name: "response-body-interceptor",
-    openapi: "openapi-interceptor.yaml",
-    overlays: ["overlay-interceptor-upstream.yaml", "overlay-interceptor-modify-response-body.yaml"],
+    openapi: "openapi-interceptor-body.yaml",
+    overlays: [
+      "overlay-interceptor-body-upstream-buffered.yaml",
+      "overlay-interceptor-modify-response-body.yaml",
+    ],
     extraFiles: [
       { source: "interceptors/modify-response-body.js", target: "/config/interceptors/modify-response-body.js" },
     ],
@@ -143,11 +151,6 @@ async function runScenario(
     warmupTime: 2_000, // 2s warmup
   });
 
-  // Use resp.text() rather than resp.body?.cancel() so Deno's HTTP client
-  // can keep the connection alive across iterations. cancel() half-closes
-  // the TCP connection, generating one connection per request (~10k+ total)
-  // which exhausts Docker Desktop's port-mapping cleanup capacity before
-  // the next scenario's container can start.
   bench.add(scenario.name, async () => {
     const resp = await fetch(url);
     await resp.text();
@@ -158,16 +161,15 @@ async function runScenario(
   await gateway.container.stop();
 
   const task = bench.tasks[0];
-  if (task.result?.error) {
-    const err = task.result.error as Error;
-    throw new Error(`Bench task "${scenario.name}" threw: ${err?.message ?? err}`);
+  if (task.result?.state === "error") {
+    throw new Error(`Bench task "${scenario.name}" failed`);
   }
-  const r = task.result!;
+  const r = task.result!.latency;
 
   const p99 = r.p99;
   const mean = r.mean;
   const min = r.min;
-  const samples = r.samples.length;
+  const samples = r.samplesCount;
 
   console.log(`  samples: ${samples}`);
   console.log(`  mean:    ${mean.toFixed(2)} ms`);
@@ -192,12 +194,6 @@ async function runScenario(
 
 // ---------------------------------------------------------------------------
 // System warmup: a throwaway passthrough run before any measured scenario.
-//
-// The first scenario always runs on a cold system: Docker network paths,
-// OS TCP buffers, and CPU frequency scaling all take a few seconds to reach
-// steady state. Scenarios that run later benefit from that settling. This
-// warmup fires one passthrough gateway for 5s (unmeasured) so every
-// measured scenario sees a pre-warmed system.
 // ---------------------------------------------------------------------------
 
 async function warmupSystem(
@@ -231,48 +227,54 @@ async function warmupSystem(
 }
 
 // ---------------------------------------------------------------------------
-// Main: shared network and wiremock across all scenarios
+// Main
 // ---------------------------------------------------------------------------
 
-const network = await new Network().start();
-const wiremock = await startWiremock({ network, alias: "wiremock" });
-const wm = new WireMockClient(wiremock.adminUrl);
+async function main() {
+  const network = await new Network().start();
+  const wiremock = await startWiremock({ network, alias: "wiremock" });
+  const wm = new WireMockClient(wiremock.adminUrl);
 
-const results: BenchEntry[] = [];
+  const results: BenchEntry[] = [];
 
-try {
-  await warmupSystem(network, wm);
-  for (const scenario of SCENARIOS) {
-    const entries = await runScenario(scenario, network, wm);
-    results.push(...entries);
+  try {
+    await warmupSystem(network, wm);
+    for (const scenario of SCENARIOS) {
+      const entries = await runScenario(scenario, network, wm);
+      results.push(...entries);
+    }
+  } finally {
+    await wiremock.container.stop();
+    await network.stop();
   }
-} finally {
-  await wiremock.container.stop();
-  await network.stop();
-}
 
-// Print summary table
-console.log("\n=== Latency Summary ===");
-console.log(
-  `${"Scenario".padEnd(45)} ${"Mean (ms)".padStart(10)} ${"p99 (ms)".padStart(10)}`
-);
-console.log("-".repeat(67));
-for (let i = 0; i < results.length; i += 2) {
-  const meanEntry = results[i];
-  const p99Entry = results[i + 1];
-  const scenarioName = meanEntry.name.replace(" mean latency", "");
+  // Print summary table
+  console.log("\n=== Latency Summary ===");
   console.log(
-    `${scenarioName.padEnd(45)} ${meanEntry.value.toFixed(2).padStart(10)} ${p99Entry.value.toFixed(2).padStart(10)}`
+    `${"Scenario".padEnd(45)} ${"Mean (ms)".padStart(10)} ${"p99 (ms)".padStart(10)}`
   );
+  console.log("-".repeat(67));
+  for (let i = 0; i < results.length; i += 2) {
+    const meanEntry = results[i];
+    const p99Entry = results[i + 1];
+    const scenarioName = meanEntry.name.replace(" mean latency", "");
+    console.log(
+      `${scenarioName.padEnd(45)} ${meanEntry.value.toFixed(2).padStart(10)} ${p99Entry.value.toFixed(2).padStart(10)}`
+    );
+  }
+
+  // Write github-action-benchmark JSON
+  const outputPath = resolve(__dirname, "../bench-results.json");
+  await writeFile(outputPath, JSON.stringify(results, null, 2));
+  console.log(`\nResults written to bench-results.json`);
+
+  // testcontainers keeps a background Ryuk reaper socket open for resource
+  // cleanup. All containers and networks are already stopped in the finally
+  // block above, so a clean exit is safe here.
+  process.exit(0);
 }
 
-// Write github-action-benchmark JSON
-const outputPath = new URL("../bench-results.json", import.meta.url);
-await Deno.writeTextFile(outputPath, JSON.stringify(results, null, 2));
-console.log(`\nResults written to bench-results.json`);
-
-// testcontainers keeps a background Ryuk reaper socket open for resource
-// cleanup. Under `deno run` the process waits for all sockets, so it hangs
-// after the benchmark completes. All containers and networks are already
-// stopped in the finally block above, so a clean exit is safe here.
-Deno.exit(0);
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

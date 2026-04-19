@@ -1,3 +1,3 @@
-export function addSecond(_request) {
+exports.addSecond = function addSecond(_request) {
   return { action: "continue", headers: { "x-chain-second": "true" } };
-}
+};

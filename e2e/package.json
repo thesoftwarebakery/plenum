@@ -1,0 +1,16 @@
+{
+  "name": "opengateway-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --reporter=verbose",
+    "bench": "tsx benchmarks/latency_bench.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "testcontainers": "^11",
+    "tinybench": "^6.0.0",
+    "tsx": "^4",
+    "vitest": "^3"
+  }
+}

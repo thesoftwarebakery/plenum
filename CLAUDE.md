@@ -30,7 +30,7 @@ Environment variables: `OPENGATEWAY_CONFIG_PATH`, `OPENGATEWAY_OPENAPI_SCHEMA`, 
 
 ## E2E tests
 
-E2E tests are written in TypeScript and run with Deno. They live in `e2e/` and use testcontainers to manage Docker containers for the gateway and its upstreams.
+E2E tests are written in TypeScript and run with Node.js + Vitest. They live in `e2e/` and use testcontainers to manage Docker containers for the gateway and its upstreams.
 
 - **Gateway**: built from the root `Dockerfile` and run as a container
 - **HTTP upstreams**: wiremock containers, configured via the wiremock admin API
@@ -39,7 +39,7 @@ E2E tests are written in TypeScript and run with Deno. They live in `e2e/` and u
 - **Container helpers**: reusable setup in `e2e/src/containers/`
 
 ```bash
-cd e2e && deno task test
+cd e2e && npm test
 ```
 
 **All new features and changes must include e2e test coverage.** Rust unit/integration tests in `gateway-core/tests/` complement the e2e suite by testing library internals directly.

@@ -1,17 +1,8 @@
-export function readEnv(request) {
+exports.readEnv = function readEnv(request) {
   var envVar = request.options && request.options.envVar;
-  try {
-    var value = OpenGateway.env.get(envVar);
-    return {
-      action: "continue",
-      headers: { "x-env-value": value || "not-set" }
-    };
-  } catch (e) {
-    // Permission denied -- return a header indicating the error
-    return {
-      action: "respond",
-      status: 403,
-      body: { error: e.message }
-    };
-  }
-}
+  var value = process.env[envVar];
+  return {
+    action: "continue",
+    headers: { "x-env-value": value || "not-set" }
+  };
+};

@@ -1,11 +1,6 @@
-import {
-  GenericContainer,
-  type StartedTestContainer,
-  type StartedNetwork,
-  Wait,
-} from "testcontainers";
+import { GenericContainer, type StartedTestContainer, type StartedNetwork, Wait } from 'testcontainers';
 
-export interface WiremockContainer extends AsyncDisposable {
+export interface WiremockContainer {
   container: StartedTestContainer;
   baseUrl: string;
   adminUrl: string;
@@ -15,9 +10,9 @@ export async function startWiremock(opts: {
   network: StartedNetwork;
   alias?: string;
 }): Promise<WiremockContainer> {
-  const alias = opts.alias ?? "wiremock";
+  const alias = opts.alias ?? 'wiremock';
 
-  const container = await new GenericContainer("wiremock/wiremock:3x")
+  const container = await new GenericContainer('wiremock/wiremock:3x')
     .withExposedPorts(8080)
     .withNetwork(opts.network)
     .withNetworkAliases(alias)
@@ -32,6 +27,5 @@ export async function startWiremock(opts: {
     container,
     baseUrl,
     adminUrl: `${baseUrl}/__admin`,
-    [Symbol.asyncDispose]: async () => { await container.stop(); },
   };
 }

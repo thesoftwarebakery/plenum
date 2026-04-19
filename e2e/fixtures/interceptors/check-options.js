@@ -1,7 +1,7 @@
-export const checkOptions = (input) => {
+exports.checkOptions = function checkOptions(input) {
   const opts = input.options ?? {};
   const { expectedHeader, expectedValue, denyStatus } = opts;
-  const headerVal = input.headers[expectedHeader] || input.headers[expectedHeader.toLowerCase()] || input.headers[expectedHeader.toUpperCase()];
+  var headerVal = input.headers[expectedHeader] || input.headers[expectedHeader.toLowerCase()] || input.headers[expectedHeader.toUpperCase()];
   // Try to find header case-insensitively
   if (!headerVal) {
     const keys = Object.keys(input.headers);
@@ -15,5 +15,5 @@ export const checkOptions = (input) => {
   if (headerVal === expectedValue) {
     return { action: "continue", headers: { "x-options-verified": "true" } };
   }
-  return { action: "respond", status: denyStatus || 403, body: JSON.stringify({ error: "options check failed" }) };
+  return { action: "respond", status: denyStatus || 403, body: { error: "options check failed" } };
 };

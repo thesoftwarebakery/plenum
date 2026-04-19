@@ -1,10 +1,10 @@
-import { assertEquals, assert } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect } from 'vitest';
+import { Network } from 'testcontainers';
+import { startWiremock } from '../src/containers/wiremock';
+import { startGateway } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
-Deno.test({ name: "on_request interceptor adds header", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("on_request interceptor adds header", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -33,18 +33,18 @@ Deno.test({ name: "on_request interceptor adds header", sanitizeResources: false
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
 
     // Verify the upstream received the x-intercepted header
     const requests = await wm.getRequests();
-    assert(requests.length > 0, "expected at least one request to upstream");
+    expect(requests.length > 0, "expected at least one request to upstream").toBe(true);
     const upstreamHeaders = requests[0].request.headers;
     // Wiremock may capitalize header names
     const headerKeys = Object.keys(upstreamHeaders);
     const interceptedKey = headerKeys.find(k => k.toLowerCase() === "x-intercepted");
-    assert(interceptedKey !== undefined, `expected x-intercepted header in upstream request, got: ${headerKeys.join(", ")}`);
-    assertEquals(upstreamHeaders[interceptedKey!], "true");
+    expect(interceptedKey !== undefined, `expected x-intercepted header in upstream request, got: ${headerKeys.join(", ")}`).toBe(true);
+    expect(upstreamHeaders[interceptedKey!]).toEqual("true");
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -52,7 +52,7 @@ Deno.test({ name: "on_request interceptor adds header", sanitizeResources: false
   }
 });
 
-Deno.test({ name: "on_request interceptor short-circuits with 403", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("on_request interceptor short-circuits with 403", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -74,13 +74,13 @@ Deno.test({ name: "on_request interceptor short-circuits with 403", sanitizeReso
     // No wiremock stub needed — the request should never reach upstream
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 403);
+    expect(resp.status).toEqual(403);
     const body = await resp.json() as { error: string };
-    assertEquals(body.error, "blocked by interceptor");
+    expect(body.error).toEqual("blocked by interceptor");
 
     // Verify upstream was NOT called
     const requests = await wm.getRequests();
-    assertEquals(requests.length, 0, "expected no requests to upstream");
+    expect(requests.length, "expected no requests to upstream").toEqual(0);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();

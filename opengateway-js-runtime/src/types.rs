@@ -1,16 +1,4 @@
 use std::fmt;
-use tokio::sync::oneshot;
-
-/// Source of a JS module to load into the runtime.
-pub(crate) enum ModuleSource {
-    /// Load from a file on disk.
-    FilePath(std::path::PathBuf),
-    /// Inline source code with a logical name.
-    ///
-    /// The source is loaded as an ES module. Functions must be exported using
-    /// `export function <name>(...)` syntax.
-    Inline { name: String, source: String },
-}
 
 /// Body content passed to or returned from a JS interceptor, typed by content-type.
 #[derive(Debug)]
@@ -32,14 +20,6 @@ pub struct CallOutput {
     pub value: serde_json::Value,
     /// The interceptor's returned body, if any.
     pub body: Option<JsBody>,
-}
-
-/// A call to be dispatched to the JS runtime worker thread.
-pub(crate) struct JsCall {
-    pub function_name: String,
-    pub arg: serde_json::Value,
-    pub body: Option<JsBody>,
-    pub reply: oneshot::Sender<Result<CallOutput, JsError>>,
 }
 
 /// Errors that can occur when calling into the JS runtime.
@@ -69,8 +49,3 @@ impl fmt::Display for JsError {
 }
 
 impl std::error::Error for JsError {}
-
-/// Result sent from the worker thread after spawning, containing the isolate handle.
-pub(crate) struct WorkerReady {
-    pub isolate_handle: deno_core::v8::IsolateHandle,
-}

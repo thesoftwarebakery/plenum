@@ -1,10 +1,10 @@
-import { assertEquals, assert } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect } from 'vitest';
+import { Network } from 'testcontainers';
+import { startWiremock } from '../src/containers/wiremock';
+import { startGateway } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
-Deno.test({ name: "two on_request interceptors both fire", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("two on_request interceptors both fire", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -34,21 +34,21 @@ Deno.test({ name: "two on_request interceptors both fire", sanitizeResources: fa
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
 
     const requests = await wm.getRequests();
-    assert(requests.length > 0, "expected at least one request to upstream");
+    expect(requests.length > 0, "expected at least one request to upstream").toBe(true);
     const headers = requests[0].request.headers;
     const headerKeys = Object.keys(headers);
 
     const firstKey = headerKeys.find(k => k.toLowerCase() === "x-chain-first");
-    assert(firstKey !== undefined, `expected x-chain-first header in upstream request, got: ${headerKeys.join(", ")}`);
-    assertEquals(headers[firstKey!], "true");
+    expect(firstKey !== undefined, `expected x-chain-first header in upstream request, got: ${headerKeys.join(", ")}`).toBe(true);
+    expect(headers[firstKey!]).toEqual("true");
 
     const secondKey = headerKeys.find(k => k.toLowerCase() === "x-chain-second");
-    assert(secondKey !== undefined, `expected x-chain-second header in upstream request, got: ${headerKeys.join(", ")}`);
-    assertEquals(headers[secondKey!], "true");
+    expect(secondKey !== undefined, `expected x-chain-second header in upstream request, got: ${headerKeys.join(", ")}`).toBe(true);
+    expect(headers[secondKey!]).toEqual("true");
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();

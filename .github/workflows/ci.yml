@@ -11,11 +11,6 @@ jobs:
   check-and-test:
     name: Check & Test
     runs-on: ubuntu-latest
-    env:
-      # brotli 3.x (pingora, ffi-api default) and brotli 6.x (deno_web, ffi-api
-      # explicit) both export identical C FFI symbols. GNU ld rejects duplicates;
-      # the symbols are functionally identical so picking either is safe.
-      RUSTFLAGS: "-C link-args=-Wl,--allow-multiple-definition"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,16 +19,24 @@ jobs:
         uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: rustfmt, clippy
-          
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install node-runtime dependencies
+        run: npm ci --prefix opengateway-js-runtime/node-runtime
 
       - name: Check formatting
         run: cargo fmt --all -- --check
 
       - name: Clippy
         run: cargo clippy --workspace -- -D warnings
-      
+
       - name: Run unit tests
         run: cargo test --workspace
 
@@ -57,20 +60,16 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Setup Deno
-        uses: denoland/setup-deno@v2
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          deno-version: v2.x
+          node-version: '22'
 
-      - name: Expose Docker over TCP (Deno Unix Socket workaround)
-        run: |
-          sudo apt-get update -y && sudo apt-get install -y socat
-          sudo socat TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock &
+      - name: Install e2e dependencies
+        run: npm ci --prefix e2e
 
       - name: Run E2E tests
-        env:
-          DOCKER_HOST: tcp://127.0.0.1:2375
-        run: cd e2e && deno task test
+        run: cd e2e && npm test
 
       - name: Collect container logs on failure
         if: failure()

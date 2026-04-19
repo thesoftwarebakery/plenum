@@ -9,7 +9,7 @@ use std::time::Duration;
 use http::Method;
 use matchit::Router;
 use oas3::spec::{Operation, PathItem};
-use opengateway_js_runtime::JsRuntimeHandle;
+use opengateway_js_runtime::PluginRuntime;
 use pingora_core::upstreams::peer::HttpPeer;
 
 use crate::config::{
@@ -18,9 +18,9 @@ use crate::config::{
 use crate::openapi::operation::build_operation_meta;
 use crate::upstream_http::make_peer;
 
-/// Handle to a spawned Deno backend plugin runtime.
+/// Handle to a spawned backend plugin runtime (Node.js out-of-process).
 pub struct PluginHandle {
-    pub runtime: Arc<JsRuntimeHandle>,
+    pub runtime: Arc<dyn PluginRuntime>,
     pub timeout: Duration,
 }
 
@@ -32,7 +32,7 @@ impl std::fmt::Debug for PluginHandle {
     }
 }
 
-/// The upstream target for a route -- either an HTTP peer or a Deno backend plugin.
+/// The upstream target for a route -- either an HTTP peer or a Node.js backend plugin.
 #[derive(Debug)]
 pub enum Upstream {
     Http(Box<HttpPeer>),
@@ -41,7 +41,7 @@ pub enum Upstream {
 
 /// A resolved interceptor hook: runtime handle, JS function name, call timeout, and options.
 pub struct HookHandle {
-    pub runtime: Arc<JsRuntimeHandle>,
+    pub runtime: Arc<dyn PluginRuntime>,
     pub function: String,
     pub timeout: Duration,
     pub options: Option<serde_json::Value>,
@@ -134,7 +134,7 @@ fn build_operation_interceptors(
     operation: &Operation,
     path: &str,
     config_base: &Path,
-    runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<JsRuntimeHandle>>,
+    runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<dyn PluginRuntime>>,
     default_timeout: Duration,
 ) -> Result<OperationInterceptors, Box<dyn Error>> {
     let interceptor_value = match operation.extensions.get("opengateway-interceptor") {
@@ -176,31 +176,42 @@ fn build_operation_interceptors(
                     .map(|p| p.into_runtime_permissions())
                     .unwrap_or_default();
 
-                let h = Arc::new(match &resolved {
+                let h: Arc<dyn PluginRuntime> = match &resolved {
                     module_resolver::ResolvedModule::File(file_path) => {
-                        opengateway_js_runtime::spawn_runtime_sync(file_path, permissions).map_err(
-                            |e| {
+                        // File-based interceptors run in a sandboxed Node.js child process.
+                        Arc::new(
+                            opengateway_js_runtime::external::spawn_sync(
+                                file_path.to_string_lossy().as_ref(),
+                                serde_json::json!({}),
+                                permissions.clone(),
+                            )
+                            .map_err(|e| {
                                 format!(
-                                    "path '{}': interceptor '{}': failed to load module: {}",
+                                    "path '{}': interceptor '{}': failed to spawn Node.js runtime: {}",
                                     path, config.module, e
                                 )
-                            },
-                        )?
-                    }
-                    module_resolver::ResolvedModule::Internal { name, source } => {
-                        opengateway_js_runtime::spawn_runtime_from_source_sync(
-                            name,
-                            source,
-                            permissions,
+                            })?,
                         )
-                        .map_err(|e| {
-                            format!(
-                                "path '{}': interceptor '{}': failed to load module: {}",
-                                path, config.module, e
-                            )
-                        })?
                     }
-                });
+                    module_resolver::ResolvedModule::Internal {
+                        path: module_path, ..
+                    } => {
+                        // Built-in interceptors run in Node.js via the node-runtime.
+                        Arc::new(
+                            opengateway_js_runtime::external::spawn_sync(
+                                module_path.to_string_lossy().as_ref(),
+                                serde_json::json!({}),
+                                permissions.clone(),
+                            )
+                            .map_err(|e| {
+                                format!(
+                                    "path '{}': interceptor '{}': failed to spawn Node.js runtime: {}",
+                                    path, config.module, e
+                                )
+                            })?,
+                        )
+                    }
+                };
                 e.insert(h).clone()
             }
         };
@@ -259,9 +270,10 @@ pub fn build_router(
     let mut router = Router::new();
     let mut interceptor_runtime_cache: HashMap<
         module_resolver::ModuleCacheKey,
-        Arc<JsRuntimeHandle>,
+        Arc<dyn PluginRuntime>,
     > = HashMap::new();
-    let mut plugin_runtime_cache: HashMap<PluginRuntimeKey, Arc<JsRuntimeHandle>> = HashMap::new();
+    let mut plugin_runtime_cache: HashMap<PluginRuntimeKey, Arc<dyn PluginRuntime>> =
+        HashMap::new();
 
     for (path, path_item) in paths {
         let upstream_config: UpstreamConfig = config
@@ -296,40 +308,42 @@ pub fn build_router(
                 let h = match plugin_runtime_cache.entry(cache_key) {
                     std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
                     std::collections::hash_map::Entry::Vacant(e) => {
-                        let perms = permissions
-                            .clone()
-                            .map(|p| p.into_runtime_permissions())
-                            .unwrap_or_default();
-
-                        let h = Arc::new(match &resolved {
-                            module_resolver::ResolvedModule::File(file_path) => {
-                                opengateway_js_runtime::spawn_runtime_sync(file_path, perms)
-                                    .map_err(|e| {
-                                        format!(
-                                            "path '{}': plugin '{}': failed to load module: {}",
-                                            path, plugin, e
-                                        )
-                                    })?
-                            }
-                            module_resolver::ResolvedModule::Internal { name, source } => {
-                                opengateway_js_runtime::spawn_runtime_from_source_sync(
-                                    name, source, perms,
-                                )
-                                .map_err(|e| {
-                                    format!(
-                                        "path '{}': plugin '{}': failed to load module: {}",
-                                        path, plugin, e
-                                    )
-                                })?
-                            }
-                        });
-
-                        // Call init() with resolved options (empty object when not specified)
+                        // Resolve init options before spawning so env vars are substituted.
                         let init_options = match options.as_ref() {
                             Some(o) => resolve_env_vars(o.clone())
                                 .map_err(|e| -> Box<dyn Error> { e.into() })?,
                             None => serde_json::json!({}),
                         };
+
+                        let plugin_module_path = match &resolved {
+                            module_resolver::ResolvedModule::File(p) => {
+                                p.to_string_lossy().into_owned()
+                            }
+                            module_resolver::ResolvedModule::Internal { name, .. } => {
+                                return Err(format!(
+                                    "path '{}': plugin '{}': internal plugin 'internal:{name}' \
+                                     is not yet available as a Node.js plugin",
+                                    path, plugin
+                                )
+                                .into());
+                            }
+                        };
+
+                        let h: Arc<dyn PluginRuntime> = Arc::new(
+                            opengateway_js_runtime::external::spawn_sync(
+                                &plugin_module_path,
+                                init_options.clone(),
+                                Default::default(),
+                            )
+                            .map_err(|e| {
+                                format!(
+                                    "path '{}': plugin '{}': failed to spawn Node.js runtime: {}",
+                                    path, plugin, e
+                                )
+                            })?,
+                        );
+
+                        // Call init() now that the process is up.
                         h.call_blocking("init", init_options, None, plugin_timeout)
                             .map_err(|e| {
                                 format!(

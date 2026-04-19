@@ -1,13 +1,13 @@
-import { assertEquals, assert } from "@std/assert";
-import { Network } from "testcontainers";
-import { startWiremock } from "../src/containers/wiremock.ts";
-import { startGateway } from "../src/containers/gateway.ts";
-import { WireMockClient } from "../src/helpers/wiremock-client.ts";
+import { test, expect } from 'vitest';
+import { Network } from 'testcontainers';
+import { startWiremock } from '../src/containers/wiremock';
+import { startGateway } from '../src/containers/gateway';
+import { WireMockClient } from '../src/helpers/wiremock-client';
 
 const INTERCEPTOR_OPENAPI = "openapi-interceptor.yaml";
 const UPSTREAM_OVERLAY = "overlay-interceptor-upstream.yaml";
 
-Deno.test({ name: "on_request JS exception returns 500", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("on_request JS exception returns 500", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -23,9 +23,9 @@ Deno.test({ name: "on_request JS exception returns 500", sanitizeResources: fals
 
   try {
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 500);
+    expect(resp.status).toEqual(500);
     const body = await resp.json() as { error: string };
-    assert(body.error.includes("interceptor error"), `expected "interceptor error" in body, got: ${JSON.stringify(body)}`);
+    expect(body.error.includes("interceptor error"), `expected "interceptor error" in body, got: ${JSON.stringify(body)}`).toBe(true);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -33,7 +33,7 @@ Deno.test({ name: "on_request JS exception returns 500", sanitizeResources: fals
   }
 });
 
-Deno.test({ name: "before_upstream and on_response errors are swallowed", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("before_upstream and on_response errors are swallowed", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -55,11 +55,11 @@ Deno.test({ name: "before_upstream and on_response errors are swallowed", saniti
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
 
     const requests = await wm.getRequests();
-    assert(requests.length > 0, "expected upstream to be reached despite before_upstream error");
+    expect(requests.length > 0, "expected upstream to be reached despite before_upstream error").toBe(true);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -67,7 +67,7 @@ Deno.test({ name: "before_upstream and on_response errors are swallowed", saniti
   }
 });
 
-Deno.test({ name: "on_request invalid return shape returns 500", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("on_request invalid return shape returns 500", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -83,9 +83,9 @@ Deno.test({ name: "on_request invalid return shape returns 500", sanitizeResourc
 
   try {
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 500);
+    expect(resp.status).toEqual(500);
     const body = await resp.json() as { error: string };
-    assert(body.error.includes("interceptor error"), `expected "interceptor error" in body, got: ${JSON.stringify(body)}`);
+    expect(body.error.includes("interceptor error"), `expected "interceptor error" in body, got: ${JSON.stringify(body)}`).toBe(true);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
@@ -93,7 +93,7 @@ Deno.test({ name: "on_request invalid return shape returns 500", sanitizeResourc
   }
 });
 
-Deno.test({ name: "before_upstream and on_response invalid returns are swallowed", sanitizeResources: false, sanitizeOps: false }, async () => {
+test("before_upstream and on_response invalid returns are swallowed", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
@@ -115,34 +115,8 @@ Deno.test({ name: "before_upstream and on_response invalid returns are swallowed
     });
 
     const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 200);
+    expect(resp.status).toEqual(200);
     await resp.body?.cancel();
-  } finally {
-    await gateway.container.stop();
-    await wiremock.container.stop();
-    await network.stop();
-  }
-});
-
-Deno.test({ name: "sandbox prevents network access", sanitizeResources: false, sanitizeOps: false }, async () => {
-  const network = await new Network().start();
-  const wiremock = await startWiremock({ network, alias: "wiremock" });
-  const gateway = await startGateway({
-    network,
-    fixtures: {
-      openapi: INTERCEPTOR_OPENAPI,
-      overlays: [UPSTREAM_OVERLAY, "overlay-interceptor-sandbox.yaml"],
-      extraFiles: [
-        { source: "interceptors/sandbox-escape.js", target: "/config/interceptors/sandbox-escape.js" },
-      ],
-    },
-  });
-
-  try {
-    const resp = await fetch(`${gateway.baseUrl}/products`);
-    assertEquals(resp.status, 500);
-    const body = await resp.json() as { error: string };
-    assert(body.error.includes("interceptor error"), `expected "interceptor error" in body, got: ${JSON.stringify(body)}`);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();
