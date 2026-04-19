@@ -3,7 +3,7 @@
 //! These tests require Node.js to be available on PATH and exercise the full
 //! IPC path used in production.
 
-use opengateway_js_runtime::{external, PluginRuntime};
+use opengateway_js_runtime::{PluginRuntime, external};
 use std::path::PathBuf;
 use std::time::Duration;
 

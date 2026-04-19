@@ -32,7 +32,7 @@ impl std::fmt::Debug for PluginHandle {
     }
 }
 
-/// The upstream target for a route -- either an HTTP peer or a Deno backend plugin.
+/// The upstream target for a route -- either an HTTP peer or a Node.js backend plugin.
 #[derive(Debug)]
 pub enum Upstream {
     Http(Box<HttpPeer>),

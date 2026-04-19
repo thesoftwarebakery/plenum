@@ -121,7 +121,7 @@ pub(crate) fn apply_env_filter(cmd: &mut Command, allowed: &[String]) {
 
 #[cfg(target_os = "linux")]
 mod platform {
-    use super::{apply_env_filter, SandboxConfig, SandboxError};
+    use super::{SandboxConfig, SandboxError, apply_env_filter};
     use std::ffi::OsStr;
     use std::ffi::OsString;
     use std::process::Command;
@@ -194,15 +194,12 @@ mod platform {
         }
 
         // Network isolation: unshare network namespace unless hosts are allowed.
-        let allow_net = config.net.iter().any(|h| h == "*");
-        let has_net = !config.net.is_empty();
-        if !has_net || (!allow_net && config.net.is_empty()) {
-            // No net configured at all → deny network.
+        // Note: selective per-host filtering (non-"*" entries like ["api.example.com"])
+        // is not supported by bubblewrap alone; a firewall rule or seccomp filter
+        // would be needed. For now, any non-empty net list grants full network access.
+        if config.net.is_empty() {
             cmd.arg("--unshare-net");
         }
-        // Note: selective per-host filtering (non-"*" entries) is not supported
-        // by bubblewrap alone; a firewall rule or seccomp filter would be needed.
-        // For now, any non-empty net list grants full network access.
 
         // Isolation flags.
         cmd.arg("--unshare-pid");

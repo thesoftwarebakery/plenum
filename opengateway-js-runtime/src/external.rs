@@ -470,10 +470,10 @@ pub fn locate_server_script() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
         let candidate = exe
             .parent()
             .map(|d| d.join("node-runtime").join("server.js"));
-        if let Some(p) = candidate {
-            if p.exists() {
-                return Ok(p);
-            }
+        if let Some(p) = candidate
+            && p.exists()
+        {
+            return Ok(p);
         }
     }
 

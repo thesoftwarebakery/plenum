@@ -1769,6 +1769,7 @@ name = "opengateway-js-runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64",
  "log",
  "opengateway-sandbox",
  "rmp-serde",

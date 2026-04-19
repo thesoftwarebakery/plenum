@@ -7,15 +7,17 @@
  * On Linux, environment variable access is gated by the sandbox permissions.
  */
 
+const crypto = require("crypto");
+
 function timingSafeEqual(a, b) {
-  const lenA = a.length;
-  const lenB = b.length;
-  let mismatch = lenA !== lenB ? 1 : 0;
-  const maxLen = Math.max(lenA, lenB);
-  for (let i = 0; i < maxLen; i++) {
-    mismatch |= a.charCodeAt(i % lenA) ^ b.charCodeAt(i % lenB);
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  if (bufA.length !== bufB.length) {
+    // Compare against bufA to avoid leaking length via timing, but always return false.
+    crypto.timingSafeEqual(bufA, bufA);
+    return false;
   }
-  return mismatch === 0;
+  return crypto.timingSafeEqual(bufA, bufB);
 }
 
 exports.checkApiKey = function checkApiKey(request) {
