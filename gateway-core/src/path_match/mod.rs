@@ -319,13 +319,8 @@ pub fn build_router(
                             module_resolver::ResolvedModule::File(p) => {
                                 p.to_string_lossy().into_owned()
                             }
-                            module_resolver::ResolvedModule::Internal { name, .. } => {
-                                return Err(format!(
-                                    "path '{}': plugin '{}': internal plugin 'internal:{name}' \
-                                     is not yet available as a Node.js plugin",
-                                    path, plugin
-                                )
-                                .into());
+                            module_resolver::ResolvedModule::Internal { path: p, .. } => {
+                                p.to_string_lossy().into_owned()
                             }
                         };
 

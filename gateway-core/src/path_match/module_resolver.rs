@@ -33,14 +33,23 @@ pub fn resolve_module(
 ) -> Result<ResolvedModule, Box<dyn std::error::Error>> {
     if let Some(name) = module_spec.strip_prefix("internal:") {
         if !is_known_builtin(name) {
+            let all_builtins: Vec<&str> = BUILTIN_INTERCEPTOR_NAMES
+                .iter()
+                .chain(BUILTIN_PLUGIN_NAMES.iter())
+                .copied()
+                .collect();
             return Err(format!(
-                "unknown built-in interceptor module 'internal:{name}'. Available built-ins: {}",
-                BUILTIN_NAMES.join(", ")
+                "unknown built-in module 'internal:{name}'. Available built-ins: {}",
+                all_builtins.join(", ")
             )
             .into());
         }
-        let path = opengateway_js_runtime::external::locate_interceptor(name)
-            .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
+        let path = if BUILTIN_PLUGIN_NAMES.contains(&name) {
+            opengateway_js_runtime::external::locate_plugin(name)
+        } else {
+            opengateway_js_runtime::external::locate_interceptor(name)
+        }
+        .map_err(|e| -> Box<dyn std::error::Error> { e.to_string().into() })?;
         Ok(ResolvedModule::Internal {
             name: name.to_string(),
             path,
@@ -58,15 +67,17 @@ pub fn resolve_module(
     }
 }
 
-const BUILTIN_NAMES: &[&str] = &[
+const BUILTIN_INTERCEPTOR_NAMES: &[&str] = &[
     "add-header",
     "validate-request",
     "auth-apikey",
     "validate-response",
 ];
 
+const BUILTIN_PLUGIN_NAMES: &[&str] = &["postgres", "mysql", "mongodb"];
+
 fn is_known_builtin(name: &str) -> bool {
-    BUILTIN_NAMES.contains(&name)
+    BUILTIN_INTERCEPTOR_NAMES.contains(&name) || BUILTIN_PLUGIN_NAMES.contains(&name)
 }
 
 #[cfg(test)]
@@ -92,8 +103,26 @@ mod tests {
     fn rejects_unknown_internal() {
         let err = resolve_module("internal:nonexistent", Path::new("/any/path")).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("unknown built-in interceptor module 'internal:nonexistent'"));
+        assert!(msg.contains("unknown built-in module 'internal:nonexistent'"));
         assert!(msg.contains("add-header"));
+    }
+
+    #[test]
+    fn resolves_internal_postgres() {
+        let result = resolve_module("internal:postgres", Path::new("/any/path")).unwrap();
+        assert!(matches!(result, ResolvedModule::Internal { ref name, .. } if name == "postgres"));
+    }
+
+    #[test]
+    fn resolves_internal_mysql() {
+        let result = resolve_module("internal:mysql", Path::new("/any/path")).unwrap();
+        assert!(matches!(result, ResolvedModule::Internal { ref name, .. } if name == "mysql"));
+    }
+
+    #[test]
+    fn resolves_internal_mongodb() {
+        let result = resolve_module("internal:mongodb", Path::new("/any/path")).unwrap();
+        assert!(matches!(result, ResolvedModule::Internal { ref name, .. } if name == "mongodb"));
     }
 
     #[test]
