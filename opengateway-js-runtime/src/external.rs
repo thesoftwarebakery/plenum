@@ -507,6 +507,25 @@ pub fn locate_interceptor(name: &str) -> Result<PathBuf, Box<dyn Error + Send + 
     Ok(path)
 }
 
+/// Locate a built-in plugin JS file in the node-runtime/plugins/ directory.
+pub fn locate_plugin(name: &str) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
+    let server_script = locate_server_script()?;
+    let plugin_dir = server_script
+        .parent()
+        .ok_or("server.js has no parent directory")?
+        .join("plugins");
+    let path = plugin_dir.join(format!("{name}.js"));
+    if !path.exists() {
+        return Err(format!(
+            "built-in plugin '{name}' not found at '{}'; \
+             ensure the node-runtime is correctly installed",
+            path.display()
+        )
+        .into());
+    }
+    Ok(path)
+}
+
 /// Spawn a Node.js plugin process and return a connected [`ExternalRuntime`].
 ///
 /// This is the async variant — use inside an existing tokio runtime.

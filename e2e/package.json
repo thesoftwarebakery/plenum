@@ -8,6 +8,9 @@
   },
   "devDependencies": {
     "@types/node": "^22",
+    "mongodb": "^6.12.0",
+    "mysql2": "^3.12.0",
+    "pg": "^8.16.0",
     "testcontainers": "^11",
     "tinybench": "^6.0.0",
     "tsx": "^4",
