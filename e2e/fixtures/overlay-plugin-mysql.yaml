@@ -1,0 +1,53 @@
+overlay: 1.1.0
+info:
+  title: MySQL plugin upstream config
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        daemon: false
+        listen: "0.0.0.0:6188"
+      x-plenum-upstreams:
+        db:
+          kind: "plugin"
+          plugin: "internal:mysql"
+          options:
+            host: "${DB_HOST}"
+            port: "${DB_PORT:-3306}"
+            database: "${DB_NAME}"
+            user: "${DB_USER}"
+            password: "${DB_PASSWORD}"
+          permissions:
+            net:
+              - "${DB_HOST}"
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/x-plenum-upstreams/db"
+  - target: $.paths['/users'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, name, created_at FROM users ORDER BY id"
+        fields:
+          created_at: "createdAt"
+  - target: $.paths['/users/{id}'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, name, created_at FROM users WHERE id = ${{path.id}}"
+        fields:
+          created_at: "createdAt"
+        returns: "/0"
+  - target: $.paths['/users'].post
+    update:
+      x-plenum-backend:
+        query: "INSERT INTO users (name, created_at) VALUES (${{body.name}}, NOW())"
+  - target: $.paths['/users/{id}'].put
+    update:
+      x-plenum-backend:
+        query: "UPDATE users SET name = ${{body.name}} WHERE id = ${{path.id}}"
+  - target: $.paths['/users/{id}'].delete
+    update:
+      x-plenum-backend:
+        query: "DELETE FROM users WHERE id = ${{path.id}}"

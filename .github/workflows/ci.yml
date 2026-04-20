@@ -20,13 +20,12 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Rust Cache
-        uses: Swatinem/rust-cache@v2
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: opengateway-js-runtime/node-runtime/package-lock.json
 
       - name: Install node-runtime dependencies
         run: npm ci --prefix plenum-js-runtime/node-runtime
@@ -64,6 +63,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: e2e/package-lock.json
 
       - name: Install e2e dependencies
         run: npm ci --prefix e2e

@@ -1,0 +1,55 @@
+overlay: 1.1.0
+info:
+  title: MongoDB plugin upstream config
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        daemon: false
+        listen: "0.0.0.0:6188"
+      x-plenum-upstreams:
+        db:
+          kind: "plugin"
+          plugin: "internal:mongodb"
+          options:
+            host: "${DB_HOST}"
+            port: "${DB_PORT:-27017}"
+            database: "${DB_NAME}"
+          permissions:
+            net:
+              - "${DB_HOST}"
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/x-plenum-upstreams/db"
+  - target: $.paths['/users'].get
+    update:
+      x-plenum-backend:
+        collection: "users"
+        operation: "find"
+        filter: {}
+  - target: $.paths['/users'].post
+    update:
+      x-plenum-backend:
+        collection: "users"
+        operation: "insertOne"
+        document:
+          name: "${{body.name}}"
+        returns: "/0"
+  - target: $.paths['/users/{name}'].get
+    update:
+      x-plenum-backend:
+        collection: "users"
+        operation: "findOne"
+        filter:
+          name: "${{path.name}}"
+        returns: "/0"
+  - target: $.paths['/users/{name}'].delete
+    update:
+      x-plenum-backend:
+        collection: "users"
+        operation: "deleteOne"
+        filter:
+          name: "${{path.name}}"
