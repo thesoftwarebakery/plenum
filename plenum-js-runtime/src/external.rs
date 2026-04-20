@@ -459,10 +459,9 @@ pub fn locate_server_script() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
         if p.exists() {
             return Ok(p);
         }
-        return Err(format!(
-            "PLENUM_NODE_SERVER is set to '{path}' but the file does not exist"
-        )
-        .into());
+        return Err(
+            format!("PLENUM_NODE_SERVER is set to '{path}' but the file does not exist").into(),
+        );
     }
 
     // 2. Alongside the running binary.

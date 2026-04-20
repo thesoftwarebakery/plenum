@@ -171,8 +171,7 @@ mod tests {
         });
         let config = make_config(doc);
 
-        let result =
-            config.extension::<TestUpstream>(&config.spec.extensions, "plenum-upstream");
+        let result = config.extension::<TestUpstream>(&config.spec.extensions, "plenum-upstream");
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));

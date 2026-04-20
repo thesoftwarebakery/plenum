@@ -9,8 +9,8 @@ use std::time::Duration;
 use http::Method;
 use matchit::Router;
 use oas3::spec::{Operation, PathItem};
-use plenum_js_runtime::PluginRuntime;
 use pingora_core::upstreams::peer::HttpPeer;
+use plenum_js_runtime::PluginRuntime;
 
 use crate::config::{
     Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
