@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::path_match::RouteEntry;
 use bytes::BytesMut;
 use http::Method;
-use crate::path_match::RouteEntry;
 
 pub struct GatewayCtx {
     pub(crate) matched_route: Option<Arc<RouteEntry>>,

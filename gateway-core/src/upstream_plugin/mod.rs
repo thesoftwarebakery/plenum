@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 
-use bytes::{BufMut, BytesMut};
 use crate::ctx::GatewayCtx;
 use crate::gateway_error::GatewayError;
 use crate::headers::{apply_header_modifications, headers_hashmap_to_http_headermap};
-use crate::interceptor::{InterceptorOutput, header_map_to_hash_map, request_input_from_parts, response_input_from_parts};
+use crate::interceptor::{
+    InterceptorOutput, header_map_to_hash_map, request_input_from_parts, response_input_from_parts,
+};
 use crate::path_match::{OperationSchemas, PluginHandle};
-use crate::proxy_utils::{call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_options};
+use crate::proxy_utils::{
+    call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_options,
+};
+use bytes::{BufMut, BytesMut};
 use pingora_proxy::Session;
 use tracing::Instrument;
 
@@ -32,8 +36,7 @@ pub(crate) async fn dispatch(
                 session
                     .respond_error_with_body(
                         500,
-                        GatewayError::internal(format!("error reading request body: {}", e))
-                            .body(),
+                        GatewayError::internal(format!("error reading request body: {}", e)).body(),
                     )
                     .await
                     .ok();
@@ -187,33 +190,36 @@ pub(crate) async fn dispatch(
         &final_buf,
     );
 
-    let (mut plugin_status, mut plugin_headers, plugin_body) =
-        match plugin.runtime.call("handle", plugin_input, js_body, plugin.timeout).await {
-            Ok(output) => {
-                let status = output
-                    .value
-                    .get("status")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(200) as u16;
-                let headers: HashMap<String, String> = output
-                    .value
-                    .get("headers")
-                    .and_then(|v| serde_json::from_value(v.clone()).ok())
-                    .unwrap_or_default();
-                (status, headers, output.body)
-            }
-            Err(e) => {
-                log::error!("plugin handle() error: {}", e);
-                session
-                    .respond_error_with_body(
-                        500,
-                        GatewayError::internal(format!("plugin error: {}", e)).body(),
-                    )
-                    .await
-                    .ok();
-                return Ok(true);
-            }
-        };
+    let (mut plugin_status, mut plugin_headers, plugin_body) = match plugin
+        .runtime
+        .call("handle", plugin_input, js_body, plugin.timeout)
+        .await
+    {
+        Ok(output) => {
+            let status = output
+                .value
+                .get("status")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(200) as u16;
+            let headers: HashMap<String, String> = output
+                .value
+                .get("headers")
+                .and_then(|v| serde_json::from_value(v.clone()).ok())
+                .unwrap_or_default();
+            (status, headers, output.body)
+        }
+        Err(e) => {
+            log::error!("plugin handle() error: {}", e);
+            session
+                .respond_error_with_body(
+                    500,
+                    GatewayError::internal(format!("plugin error: {}", e)).body(),
+                )
+                .await
+                .ok();
+            return Ok(true);
+        }
+    };
 
     // Step C: on_response interceptors
     for hook in &op.interceptors.on_response {
@@ -276,10 +282,8 @@ pub(crate) async fn dispatch(
     let mut response_body_bytes = plugin_body.map(js_body_to_bytes).unwrap_or_default();
     let response_content_type = plugin_headers.get("content-type").cloned();
     for hook in &op.interceptors.on_response_body {
-        let js_body = js_body_from_content_type(
-            response_content_type.as_deref(),
-            &response_body_bytes,
-        );
+        let js_body =
+            js_body_from_content_type(response_content_type.as_deref(), &response_body_bytes);
         let input = response_input_from_parts(
             http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
             &headers_hashmap_to_http_headermap(&plugin_headers),
@@ -333,8 +337,8 @@ pub(crate) async fn dispatch(
     }
 
     // Step E: write response
-    let mut resp_header = pingora_http::ResponseHeader::build(plugin_status, None)
-        .map_err(|e| {
+    let mut resp_header =
+        pingora_http::ResponseHeader::build(plugin_status, None).map_err(|e| {
             pingora_core::Error::because(
                 pingora_core::ErrorType::InternalError,
                 "build response header",

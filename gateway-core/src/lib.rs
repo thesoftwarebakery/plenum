@@ -49,8 +49,6 @@ fn matched_op<'a>(
     route.operations.get(method)
 }
 
-
-
 #[async_trait]
 impl ProxyHttp for OpenGateway {
     type CTX = GatewayCtx;

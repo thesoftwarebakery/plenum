@@ -1,8 +1,8 @@
 use std::error::Error;
 use std::time::Duration;
 
-use bytes::Bytes;
 use crate::interceptor::InterceptorOutput;
+use bytes::Bytes;
 use opengateway_js_runtime::{JsBody, PluginRuntime};
 
 /// Call a JS interceptor and deserialize the output.
@@ -33,7 +33,10 @@ pub(crate) fn call_interceptor_blocking(
 }
 
 /// Helper to merge interceptor options into the input JSON value.
-pub(crate) fn merge_options(input_json: &mut serde_json::Value, options: Option<&serde_json::Value>) {
+pub(crate) fn merge_options(
+    input_json: &mut serde_json::Value,
+    options: Option<&serde_json::Value>,
+) {
     if let (Some(opts), serde_json::Value::Object(map)) = (options, input_json) {
         map.insert("options".to_string(), opts.clone());
     }
