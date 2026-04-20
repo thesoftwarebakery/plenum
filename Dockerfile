@@ -5,10 +5,9 @@ COPY opengateway-js-runtime/node-runtime/package.json opengateway-js-runtime/nod
 RUN npm ci --omit=dev
 COPY opengateway-js-runtime/node-runtime/ ./
 
-FROM rust:1.93-bookworm AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.93-bookworm AS chef
 
-RUN apt-get update && apt-get install -y cmake
-RUN cargo install cargo-chef
+RUN apt-get update && apt-get install -y cmake && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /usr/src/opengateway
 
