@@ -29,7 +29,7 @@ jobs:
           node-version: '22'
 
       - name: Install node-runtime dependencies
-        run: npm ci --prefix opengateway-js-runtime/node-runtime
+        run: npm ci --prefix plenum-js-runtime/node-runtime
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -56,7 +56,7 @@ jobs:
           context: .
           file: ./Dockerfile
           load: true
-          tags: opengateway:latest
+          tags: plenum:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -75,7 +75,7 @@ jobs:
         if: failure()
         run: |
           docker ps -a
-          docker ps -a --filter "ancestor=opengateway:latest" -q | while read cid; do
+          docker ps -a --filter "ancestor=plenum:latest" -q | while read cid; do
             echo "=== Logs for $cid ==="
             docker logs "$cid" 2>&1
           done

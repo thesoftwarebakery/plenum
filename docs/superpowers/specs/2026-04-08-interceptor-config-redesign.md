@@ -20,7 +20,7 @@ The array model removes all of these limitations and is consistent with how upst
 
 ## Config Schema
 
-### `x-opengateway-config` (global default timeout)
+### `x-plenum-config` (global default timeout)
 
 `ServerConfig` gains one new optional field:
 
@@ -35,13 +35,13 @@ pub struct ServerConfig {
 
 Example:
 ```yaml
-x-opengateway-config:
+x-plenum-config:
   threads: 1
   listen: "0.0.0.0:6188"
   interceptor_default_timeout_ms: 10000
 ```
 
-### `x-opengateway-interceptor` (per-operation)
+### `x-plenum-interceptor` (per-operation)
 
 Changes from a single object to an array. Each entry is fully explicit -- no defaulting of function names.
 
@@ -57,7 +57,7 @@ pub struct InterceptorConfig {
 
 Example:
 ```yaml
-x-opengateway-interceptor:
+x-plenum-interceptor:
   - module: "./interceptors/auth.js"
     hook: on_request
     function: checkAuth
@@ -130,7 +130,7 @@ cd e2e && deno task test
 
 ## Testing
 
-**Rust unit/integration tests (`gateway-core/tests/`):**
+**Rust unit/integration tests (`plenum-core/tests/`):**
 - Timeout resolution: global default, per-interceptor override, fallback to 30s
 - Startup validation: unknown `hook` value produces a clear error
 

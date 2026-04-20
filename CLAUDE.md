@@ -1,11 +1,11 @@
-# OpenGateway
+# Plenum
 
 API gateway that routes HTTP requests to upstreams based on an OpenAPI spec with extensions.
 
 ## Project structure
 
 Rust workspace with two crates:
-- `gateway-core` — the gateway binary (config parsing, routing, proxying via pingora)
+- `plenum-core` — the gateway binary (config parsing, routing, proxying via pingora)
 - `openapi-overlay` — library for applying OpenAPI Overlay spec to OpenAPI documents
 
 ## Build & test
@@ -13,20 +13,20 @@ Rust workspace with two crates:
 ```bash
 cargo build          # build all crates
 cargo test           # run all tests
-cargo test -p gateway-core        # test gateway only
+cargo test -p plenum-core        # test gateway only
 cargo test -p oapi-overlay        # test overlay library only
 ```
 
 ## Running
 
 ```bash
-cargo run -p gateway-core -- \
+cargo run -p plenum-core -- \
   --config-path <dir> \
   --openapi-schema <file> \
   --openapi-overlay <overlay1>,<overlay2>
 ```
 
-Environment variables: `OPENGATEWAY_CONFIG_PATH`, `OPENGATEWAY_OPENAPI_SCHEMA`, `OPENGATEWAY_OPENAPI_OVERLAYS`
+Environment variables: `PLENUM_CONFIG_PATH`, `PLENUM_OPENAPI_SCHEMA`, `PLENUM_OPENAPI_OVERLAYS`
 
 ## E2E tests
 
@@ -42,11 +42,11 @@ E2E tests are written in TypeScript and run with Node.js + Vitest. They live in 
 cd e2e && npm test
 ```
 
-**All new features and changes must include e2e test coverage.** Rust unit/integration tests in `gateway-core/tests/` complement the e2e suite by testing library internals directly.
+**All new features and changes must include e2e test coverage.** Rust unit/integration tests in `plenum-core/tests/` complement the e2e suite by testing library internals directly.
 
 ## Key conventions
 
-- OpenAPI extensions use `x-opengateway-` prefix (oas3 strips `x-` when parsing, so code uses keys like `"opengateway-config"`)
+- OpenAPI extensions use `x-plenum-` prefix (oas3 strips `x-` when parsing, so code uses keys like `"plenum-config"`)
 - Config resolution uses `Config::extension()` which handles `$ref` resolution automatically
 - Path matching uses `matchit` crate — OpenAPI `{param}` syntax works directly, no conversion needed
 - Gateway proxying uses pingora's `ProxyHttp` trait

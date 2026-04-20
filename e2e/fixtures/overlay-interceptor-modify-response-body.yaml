@@ -5,7 +5,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/modify-response-body.js"
           hook: on_response_body
           function: onResponseBody

@@ -1,5 +1,5 @@
 /**
- * E2E latency benchmark suite for OpenGateway.
+ * E2E latency benchmark suite for Plenum.
  *
  * A single network and wiremock container are shared across all scenarios.
  * Only the gateway container is replaced per scenario (it's the thing that

@@ -5,9 +5,9 @@ info:
 actions:
   - target: $
     update:
-      x-opengateway-config:
+      x-plenum-config:
         listen: "0.0.0.0:6188"
-      x-opengateway-upstreams:
+      x-plenum-upstreams:
         default:
           kind: "HTTP"
           address: "wiremock"
@@ -15,5 +15,5 @@ actions:
           buffer-response: true
   - target: $.paths[*]
     update:
-      x-opengateway-upstream:
-        $ref: "#/x-opengateway-upstreams/default"
+      x-plenum-upstream:
+        $ref: "#/x-plenum-upstreams/default"

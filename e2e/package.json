@@ -1,5 +1,5 @@
 {
-  "name": "opengateway-e2e",
+  "name": "plenum-e2e",
   "private": true,
   "type": "module",
   "scripts": {

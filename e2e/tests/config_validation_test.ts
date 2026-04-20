@@ -22,7 +22,7 @@ async function assertGatewayFailsToStart(opts: {
   const openapiFile = opts.openapi ?? "openapi.yaml";
   const overlayFiles = opts.overlays;
 
-  let builder = new GenericContainer("opengateway:latest")
+  let builder = new GenericContainer("plenum:latest")
     .withNetwork(opts.network)
     .withCommand([
       "--config-path", "/config",
@@ -64,7 +64,7 @@ async function assertGatewayFailsToStart(opts: {
   }
 }
 
-test("gateway fails to start when x-opengateway-upstream contains an unknown field", async () => {
+test("gateway fails to start when x-plenum-upstream contains an unknown field", async () => {
   const network = await new Network().start();
 
   try {

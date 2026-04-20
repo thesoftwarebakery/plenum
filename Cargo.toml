@@ -1,8 +1,8 @@
 [workspace]
 resolver="3"
 members = [
-	"gateway-core",
+	"plenum-core",
 	"openapi-overlay",
-	"opengateway-js-runtime",
-	"opengateway-sandbox"
+	"plenum-js-runtime",
+	"plenum-sandbox"
 ]

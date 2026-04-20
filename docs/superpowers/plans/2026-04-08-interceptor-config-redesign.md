@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Replace the grouped `x-opengateway-interceptor` config with a flat array model where each entry specifies one module, one JS function, one hook phase, and an optional timeout -- removing all hardcoded function names and the global timeout constant.
+**Goal:** Replace the grouped `x-plenum-interceptor` config with a flat array model where each entry specifies one module, one JS function, one hook phase, and an optional timeout -- removing all hardcoded function names and the global timeout constant.
 
-**Architecture:** Each interceptor entry in the array is deserialized into an `InterceptorConfig` struct and resolved into a `HookHandle` (runtime + function + timeout) at startup. `OperationInterceptors` holds `Vec<HookHandle>` per hook phase; call sites iterate the vec and stop on error. Timeout resolution: per-interceptor `timeout_ms` -> `x-opengateway-config.interceptor_default_timeout_ms` -> 30000ms fallback.
+**Architecture:** Each interceptor entry in the array is deserialized into an `InterceptorConfig` struct and resolved into a `HookHandle` (runtime + function + timeout) at startup. `OperationInterceptors` holds `Vec<HookHandle>` per hook phase; call sites iterate the vec and stop on error. Timeout resolution: per-interceptor `timeout_ms` -> `x-plenum-config.interceptor_default_timeout_ms` -> 30000ms fallback.
 
 **Tech Stack:** Rust (serde_json, serde), Deno/TypeScript (e2e), testcontainers, wiremock
 
@@ -14,10 +14,10 @@
 
 | File | Change |
 |---|---|
-| `gateway-core/src/config/interceptor.rs` | Replace `hooks: Vec<String>` with `hook`, `function`, `timeout_ms` fields |
-| `gateway-core/src/config/server.rs` | Add `interceptor_default_timeout_ms: Option<u64>` |
-| `gateway-core/src/path_match/mod.rs` | Add `HookHandle`; `OperationInterceptors` fields -> `Vec<HookHandle>`; rewrite `build_operation_interceptors`; parse `ServerConfig` for default timeout |
-| `gateway-core/src/lib.rs` | Remove `INTERCEPTOR_TIMEOUT`; add `timeout: Duration` param to helpers; iterate vecs at all four hook phases |
+| `plenum-core/src/config/interceptor.rs` | Replace `hooks: Vec<String>` with `hook`, `function`, `timeout_ms` fields |
+| `plenum-core/src/config/server.rs` | Add `interceptor_default_timeout_ms: Option<u64>` |
+| `plenum-core/src/path_match/mod.rs` | Add `HookHandle`; `OperationInterceptors` fields -> `Vec<HookHandle>`; rewrite `build_operation_interceptors`; parse `ServerConfig` for default timeout |
+| `plenum-core/src/lib.rs` | Remove `INTERCEPTOR_TIMEOUT`; add `timeout: Duration` param to helpers; iterate vecs at all four hook phases |
 | `e2e/fixtures/overlay-interceptor-add-header.yaml` | Convert to array format (updated in Task 2 for unit test) |
 | `e2e/fixtures/overlay-interceptor-{all-hooks,block,block-by-body,...}.yaml` | Convert remaining 13 overlays to array format |
 | `e2e/fixtures/interceptors/chain-first.js` | New: exports `addFirst` |
@@ -52,11 +52,11 @@ Record all passing/failing tests.
 ## Task 1: Add `interceptor_default_timeout_ms` to `ServerConfig`
 
 **Files:**
-- Modify: `gateway-core/src/config/server.rs`
+- Modify: `plenum-core/src/config/server.rs`
 
 - [ ] **Step 1: Write failing tests**
 
-Add to the `#[cfg(test)]` block in `gateway-core/src/config/server.rs`:
+Add to the `#[cfg(test)]` block in `plenum-core/src/config/server.rs`:
 
 ```rust
 #[test]
@@ -79,14 +79,14 @@ fn interceptor_default_timeout_ms_defaults_to_none() {
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-cargo test -p gateway-core config::server
+cargo test -p plenum-core config::server
 ```
 
 Expected: FAIL with "no field `interceptor_default_timeout_ms`" or similar.
 
 - [ ] **Step 3: Add field to `ServerConfig`**
 
-Replace the full contents of `gateway-core/src/config/server.rs`:
+Replace the full contents of `plenum-core/src/config/server.rs`:
 
 ```rust
 use serde::Deserialize;
@@ -172,7 +172,7 @@ mod tests {
 - [ ] **Step 4: Run tests**
 
 ```bash
-cargo test -p gateway-core config::server
+cargo test -p plenum-core config::server
 ```
 
 Expected: all pass.
@@ -180,7 +180,7 @@ Expected: all pass.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add gateway-core/src/config/server.rs
+git add plenum-core/src/config/server.rs
 git commit -m "feat(config): add interceptor_default_timeout_ms to ServerConfig"
 ```
 
@@ -191,16 +191,16 @@ git commit -m "feat(config): add interceptor_default_timeout_ms to ServerConfig"
 This task changes four files and one fixture. All must be updated together because `InterceptorConfig` changes break `path_match/mod.rs`, which in turn breaks `lib.rs`. The code will not compile until all sub-steps are done.
 
 **Files:**
-- Modify: `gateway-core/src/config/interceptor.rs`
-- Modify: `gateway-core/src/path_match/mod.rs`
-- Modify: `gateway-core/src/lib.rs`
+- Modify: `plenum-core/src/config/interceptor.rs`
+- Modify: `plenum-core/src/path_match/mod.rs`
+- Modify: `plenum-core/src/lib.rs`
 - Modify: `e2e/fixtures/overlay-interceptor-add-header.yaml` (required for unit test in step 2b)
 
 ### Step 2a: Update `InterceptorConfig`
 
 - [ ] **Step 2a-1: Write failing unit test for new struct shape**
 
-Add to `gateway-core/src/config/interceptor.rs` below the existing struct:
+Add to `plenum-core/src/config/interceptor.rs` below the existing struct:
 
 ```rust
 #[cfg(test)]
@@ -237,7 +237,7 @@ mod tests {
 
 - [ ] **Step 2a-2: Replace `InterceptorConfig` struct**
 
-Replace the full contents of `gateway-core/src/config/interceptor.rs`:
+Replace the full contents of `plenum-core/src/config/interceptor.rs`:
 
 ```rust
 use serde::Deserialize;
@@ -298,13 +298,13 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/add-header.js"
           hook: on_request
           function: onRequest
 ```
 
-- [ ] **Step 2b-2: Replace `gateway-core/src/path_match/mod.rs`**
+- [ ] **Step 2b-2: Replace `plenum-core/src/path_match/mod.rs`**
 
 Replace the full file:
 
@@ -318,7 +318,7 @@ use std::time::Duration;
 use http::Method;
 use oas3::spec::{Operation, PathItem, Spec};
 use matchit::Router;
-use opengateway_js_runtime::JsRuntimeHandle;
+use plenum_js_runtime::JsRuntimeHandle;
 use pingora_core::upstreams::peer::HttpPeer;
 
 use crate::config::{Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride};
@@ -359,7 +359,7 @@ pub struct RouteEntry {
     pub validation_override: Option<ValidationOverride>,
 }
 
-pub type OpenGatewayRouter = Router<Arc<RouteEntry>>;
+pub type PlenumRouter = Router<Arc<RouteEntry>>;
 
 /// Try to compile the JSON schema from an operation's request body (application/json only).
 fn compile_request_body_schema(operation: &Operation, spec: &Spec) -> Option<CompiledSchema> {
@@ -402,14 +402,14 @@ fn compile_response_schemas(
     (responses, default_response)
 }
 
-/// Parse an operation's `x-opengateway-interceptor` extension and build interceptor handles.
+/// Parse an operation's `x-plenum-interceptor` extension and build interceptor handles.
 fn build_operation_interceptors(
     operation: &Operation,
     config_base: &Path,
     runtime_cache: &mut HashMap<PathBuf, Arc<JsRuntimeHandle>>,
     default_timeout: Duration,
 ) -> Result<OperationInterceptors, Box<dyn Error>> {
-    let interceptor_value = match operation.extensions.get("opengateway-interceptor") {
+    let interceptor_value = match operation.extensions.get("plenum-interceptor") {
         Some(v) => v,
         None => return Ok(OperationInterceptors::default()),
     };
@@ -431,7 +431,7 @@ fn build_operation_interceptors(
         let runtime = match runtime_cache.entry(canonical) {
             std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
             std::collections::hash_map::Entry::Vacant(e) => {
-                let h = Arc::new(opengateway_js_runtime::spawn_runtime_sync(e.key())?);
+                let h = Arc::new(plenum_js_runtime::spawn_runtime_sync(e.key())?);
                 e.insert(h).clone()
             }
         };
@@ -460,9 +460,9 @@ pub fn build_router(
     config: &Config,
     paths: &BTreeMap<String, PathItem>,
     config_base: &Path,
-) -> Result<OpenGatewayRouter, Box<dyn Error>> {
+) -> Result<PlenumRouter, Box<dyn Error>> {
     let server_config: ServerConfig = config
-        .extension(&config.spec.extensions, "opengateway-config")
+        .extension(&config.spec.extensions, "plenum-config")
         .unwrap_or_else(|_| ServerConfig::default());
     let default_interceptor_timeout = Duration::from_millis(
         server_config.interceptor_default_timeout_ms.unwrap_or(30_000)
@@ -472,12 +472,12 @@ pub fn build_router(
     let mut runtime_cache: HashMap<PathBuf, Arc<JsRuntimeHandle>> = HashMap::new();
 
     for (path, path_item) in paths {
-        let upstream: UpstreamConfig = config.extension(&path_item.extensions, "opengateway-upstream")?;
+        let upstream: UpstreamConfig = config.extension(&path_item.extensions, "plenum-upstream")?;
         let peer = make_peer(&upstream);
 
         // Path-level validation override
         let path_validation: Option<ValidationOverride> = config
-            .extension(&path_item.extensions, "opengateway-validation")
+            .extension(&path_item.extensions, "plenum-validation")
             .ok();
 
         // Build operation schemas for each method on this path
@@ -489,7 +489,7 @@ pub fn build_router(
             // Operation-level validation override
             let op_validation: Option<ValidationOverride> = operation
                 .extensions
-                .get("opengateway-validation")
+                .get("plenum-validation")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
 
             // Operation-level interceptors
@@ -589,7 +589,7 @@ mod tests {
                             "200": { "description": "ok" }
                         }
                     },
-                    "x-opengateway-upstream": {
+                    "x-plenum-upstream": {
                         "kind": "HTTP",
                         "address": "127.0.0.1",
                         "port": 8080
@@ -672,7 +672,7 @@ mod tests {
             "paths": {
                 "/test": {
                     "get": {
-                        "x-opengateway-interceptor": [{
+                        "x-plenum-interceptor": [{
                             "module": &noop_path,
                             "hook": "on_request",
                             "function": "onRequest"
@@ -681,7 +681,7 @@ mod tests {
                             "200": { "description": "ok" }
                         }
                     },
-                    "x-opengateway-upstream": {
+                    "x-plenum-upstream": {
                         "kind": "HTTP",
                         "address": "127.0.0.1",
                         "port": 8080
@@ -710,7 +710,7 @@ mod tests {
             "paths": {
                 "/test": {
                     "get": {
-                        "x-opengateway-interceptor": [
+                        "x-plenum-interceptor": [
                             {
                                 "module": &noop_path,
                                 "hook": "on_request",
@@ -724,7 +724,7 @@ mod tests {
                         ],
                         "responses": { "200": { "description": "ok" } }
                     },
-                    "x-opengateway-upstream": {
+                    "x-plenum-upstream": {
                         "kind": "HTTP",
                         "address": "127.0.0.1",
                         "port": 8080
@@ -749,14 +749,14 @@ mod tests {
             "paths": {
                 "/test": {
                     "get": {
-                        "x-opengateway-interceptor": [{
+                        "x-plenum-interceptor": [{
                             "module": &noop_path,
                             "hook": "invalid_hook",
                             "function": "someFunction"
                         }],
                         "responses": { "200": { "description": "ok" } }
                     },
-                    "x-opengateway-upstream": {
+                    "x-plenum-upstream": {
                         "kind": "HTTP",
                         "address": "127.0.0.1",
                         "port": 8080
@@ -781,7 +781,7 @@ mod tests {
             "paths": {
                 "/test": {
                     "get": {
-                        "x-opengateway-interceptor": [{
+                        "x-plenum-interceptor": [{
                             "module": &noop_path,
                             "hook": "on_request",
                             "function": "onRequest",
@@ -789,7 +789,7 @@ mod tests {
                         }],
                         "responses": { "200": { "description": "ok" } }
                     },
-                    "x-opengateway-upstream": {
+                    "x-plenum-upstream": {
                         "kind": "HTTP",
                         "address": "127.0.0.1",
                         "port": 8080
@@ -811,18 +811,18 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-opengateway-config": { "interceptor_default_timeout_ms": 15000 },
+            "x-plenum-config": { "interceptor_default_timeout_ms": 15000 },
             "paths": {
                 "/test": {
                     "get": {
-                        "x-opengateway-interceptor": [{
+                        "x-plenum-interceptor": [{
                             "module": &noop_path,
                             "hook": "on_request",
                             "function": "onRequest"
                         }],
                         "responses": { "200": { "description": "ok" } }
                     },
-                    "x-opengateway-upstream": {
+                    "x-plenum-upstream": {
                         "kind": "HTTP",
                         "address": "127.0.0.1",
                         "port": 8080
@@ -847,14 +847,14 @@ mod tests {
             "paths": {
                 "/test": {
                     "get": {
-                        "x-opengateway-interceptor": [{
+                        "x-plenum-interceptor": [{
                             "module": &noop_path,
                             "hook": "on_request",
                             "function": "onRequest"
                         }],
                         "responses": { "200": { "description": "ok" } }
                     },
-                    "x-opengateway-upstream": {
+                    "x-plenum-upstream": {
                         "kind": "HTTP",
                         "address": "127.0.0.1",
                         "port": 8080
@@ -891,7 +891,7 @@ mod tests {
 
         // Check the interceptor extension landed on the operation as an array
         let get_op = &doc["paths"]["/products"]["get"];
-        let interceptor = &get_op["x-opengateway-interceptor"];
+        let interceptor = &get_op["x-plenum-interceptor"];
         assert!(!interceptor.is_null(), "interceptor extension should be present after overlay");
         assert!(interceptor.is_array(), "interceptor extension should be an array");
         assert_eq!(interceptor[0]["hook"], "on_request");
@@ -902,7 +902,7 @@ mod tests {
         let paths = config.spec.paths.as_ref().unwrap();
         let products = paths.get("/products").unwrap();
         let get_op = products.methods().into_iter().find(|(m, _)| *m == Method::GET).unwrap().1;
-        assert!(get_op.extensions.contains_key("opengateway-interceptor"),
+        assert!(get_op.extensions.contains_key("plenum-interceptor"),
             "oas3 should preserve the extension (x- stripped)");
     }
 }
@@ -912,7 +912,7 @@ mod tests {
 
 - [ ] **Step 2c-1: Update `lib.rs`**
 
-Make the following changes to `gateway-core/src/lib.rs`:
+Make the following changes to `plenum-core/src/lib.rs`:
 
 **Remove the constant at line 27:**
 ```rust
@@ -1318,7 +1318,7 @@ if end_of_stream {
 - [ ] **Step 2c-2: Verify the code compiles**
 
 ```bash
-cargo build -p gateway-core
+cargo build -p plenum-core
 ```
 
 Expected: compiles with no errors. Fix any compilation errors before proceeding.
@@ -1326,7 +1326,7 @@ Expected: compiles with no errors. Fix any compilation errors before proceeding.
 - [ ] **Step 2c-3: Run all Rust tests**
 
 ```bash
-cargo test -p gateway-core
+cargo test -p plenum-core
 ```
 
 Expected: all tests pass.
@@ -1335,9 +1335,9 @@ Expected: all tests pass.
 
 ```bash
 git add \
-  gateway-core/src/config/interceptor.rs \
-  gateway-core/src/path_match/mod.rs \
-  gateway-core/src/lib.rs \
+  plenum-core/src/config/interceptor.rs \
+  plenum-core/src/path_match/mod.rs \
+  plenum-core/src/lib.rs \
   e2e/fixtures/overlay-interceptor-add-header.yaml
 git commit -m "feat(gateway): flat array interceptor config with HookHandle and chaining support"
 ```
@@ -1346,7 +1346,7 @@ git commit -m "feat(gateway): flat array interceptor config with HookHandle and 
 
 ## Task 3: Update remaining e2e overlay fixtures
 
-All 13 remaining overlays that use `x-opengateway-interceptor` need to be converted to the array format. The function name for each is the camelCase equivalent of the hook name: `on_request` -> `onRequest`, `before_upstream` -> `beforeUpstream`, `on_response` -> `onResponse`, `on_response_body` -> `onResponseBody`.
+All 13 remaining overlays that use `x-plenum-interceptor` need to be converted to the array format. The function name for each is the camelCase equivalent of the hook name: `on_request` -> `onRequest`, `before_upstream` -> `beforeUpstream`, `on_response` -> `onResponse`, `on_response_body` -> `onResponseBody`.
 
 **Files:** 13 YAML files in `e2e/fixtures/`
 
@@ -1360,7 +1360,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/all-hooks.js"
           hook: on_request
           function: onRequest
@@ -1382,7 +1382,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/block-request.js"
           hook: on_request
           function: onRequest
@@ -1398,7 +1398,7 @@ info:
 actions:
   - target: $.paths[*].post
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/block-by-body.js"
           hook: on_request
           function: onRequest
@@ -1414,7 +1414,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/invalid-return.js"
           hook: before_upstream
           function: beforeUpstream
@@ -1433,7 +1433,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/invalid-return.js"
           hook: on_request
           function: onRequest
@@ -1449,7 +1449,7 @@ info:
 actions:
   - target: $.paths[*].post
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/modify-request-body.js"
           hook: on_request
           function: onRequest
@@ -1465,7 +1465,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/modify-response-body.js"
           hook: on_response_body
           function: onResponseBody
@@ -1481,7 +1481,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/on-response-modify.js"
           hook: on_response
           function: onResponse
@@ -1497,7 +1497,7 @@ info:
 actions:
   - target: $.paths[*].post
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/read-request-body.js"
           hook: on_request
           function: onRequest
@@ -1513,7 +1513,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/respond-ignored.js"
           hook: before_upstream
           function: beforeUpstream
@@ -1532,7 +1532,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/sandbox-escape.js"
           hook: on_request
           function: onRequest
@@ -1548,7 +1548,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/throw-error.js"
           hook: before_upstream
           function: beforeUpstream
@@ -1567,7 +1567,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/throw-error.js"
           hook: on_request
           function: onRequest
@@ -1576,7 +1576,7 @@ actions:
 - [ ] **Step 14: Run Rust tests to confirm nothing broke**
 
 ```bash
-cargo test -p gateway-core
+cargo test -p plenum-core
 ```
 
 Expected: all pass.
@@ -1624,7 +1624,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/chain-first.js"
           hook: on_request
           function: addFirst

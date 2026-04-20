@@ -5,7 +5,7 @@ info:
 actions:
   - target: $.paths['/products'].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "internal:auth-apikey"
           hook: on_request
           function: checkApiKey

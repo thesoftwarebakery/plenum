@@ -5,7 +5,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/sandbox-escape.js"
           hook: on_request
           function: onRequest

@@ -5,12 +5,12 @@ info:
 actions:
   - target: $
     update:
-      x-opengateway-upstreams:
+      x-plenum-upstreams:
         default:
           kind: "HTTP"
           address: "wiremock"
           port: 8080
   - target: $.paths[*]
     update:
-      x-opengateway-upstream:
-        $ref: "#/x-opengateway-upstreams/default"
+      x-plenum-upstream:
+        $ref: "#/x-plenum-upstreams/default"
