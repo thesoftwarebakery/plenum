@@ -1,9 +1,9 @@
 /**
  * Test plugin for response validation e2e tests.
- * Returns a valid or invalid response based on the x-opengateway-backend config.
+ * Returns a valid or invalid response based on the x-plenum-backend config.
  *
- *   x-opengateway-backend: { mode: "valid" }   -> returns { id: "1", name: "Widget" }
- *   x-opengateway-backend: { mode: "invalid" }  -> returns { wrong_field: "no id here" }
+ *   x-plenum-backend: { mode: "valid" }   -> returns { id: "1", name: "Widget" }
+ *   x-plenum-backend: { mode: "invalid" }  -> returns { wrong_field: "no id here" }
  */
 
 exports.init = function init(_options) {
