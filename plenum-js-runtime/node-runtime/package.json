@@ -1,0 +1,13 @@
+{
+  "name": "plenum-node-runtime",
+  "version": "0.1.0",
+  "description": "Out-of-process Node.js plugin server for Plenum",
+  "private": true,
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "mongodb": "^6.12.0",
+    "msgpackr": "^1.11.0",
+    "mysql2": "^3.12.0",
+    "pg": "^8.16.0"
+  }
+}

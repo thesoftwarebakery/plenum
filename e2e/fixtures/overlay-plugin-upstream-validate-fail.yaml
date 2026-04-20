@@ -5,9 +5,9 @@ info:
 actions:
   - target: $.paths[*]
     update:
-      x-opengateway-upstream:
+      x-plenum-upstream:
         kind: "plugin"
         plugin: "./plugins/validate_echo.js"
   - target: $.paths['/echo'].get
     update:
-      x-opengateway-backend: {}
+      x-plenum-backend: {}

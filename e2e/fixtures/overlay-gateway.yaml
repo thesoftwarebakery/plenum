@@ -5,7 +5,7 @@ info:
 actions:
   - target: $
     update:
-      x-opengateway-config:
+      x-plenum-config:
         threads: 1
         daemon: false
         listen: "0.0.0.0:6188"

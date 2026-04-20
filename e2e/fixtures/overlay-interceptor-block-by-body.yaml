@@ -5,7 +5,7 @@ info:
 actions:
   - target: $.paths[*].post
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/block-by-body.js"
           hook: on_request
           function: onRequest

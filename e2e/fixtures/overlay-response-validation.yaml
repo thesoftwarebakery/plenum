@@ -5,7 +5,7 @@ info:
 actions:
   - target: $
     update:
-      x-opengateway-config:
+      x-plenum-config:
         threads: 1
         daemon: false
         listen: "0.0.0.0:6188"
@@ -13,42 +13,42 @@ actions:
   # Plugin upstream for /plugin/* routes
   - target: $.paths["/plugin/valid"]
     update:
-      x-opengateway-upstream:
+      x-plenum-upstream:
         kind: "plugin"
         plugin: "./plugins/response-validation-test.js"
 
   - target: $.paths["/plugin/invalid"]
     update:
-      x-opengateway-upstream:
+      x-plenum-upstream:
         kind: "plugin"
         plugin: "./plugins/response-validation-test.js"
 
   - target: $.paths["/plugin/no-validation"]
     update:
-      x-opengateway-upstream:
+      x-plenum-upstream:
         kind: "plugin"
         plugin: "./plugins/response-validation-test.js"
 
-  # x-opengateway-backend is operation-level
+  # x-plenum-backend is operation-level
   - target: $.paths["/plugin/valid"].get
     update:
-      x-opengateway-backend:
+      x-plenum-backend:
         mode: "valid"
 
   - target: $.paths["/plugin/invalid"].get
     update:
-      x-opengateway-backend:
+      x-plenum-backend:
         mode: "invalid"
 
   - target: $.paths["/plugin/no-validation"].get
     update:
-      x-opengateway-backend:
+      x-plenum-backend:
         mode: "invalid"
 
   # HTTP upstream for /http/* routes (buffer-response required for on_response_body)
   - target: $.paths["/http/valid"]
     update:
-      x-opengateway-upstream:
+      x-plenum-upstream:
         kind: "HTTP"
         address: "wiremock"
         port: 8080
@@ -56,7 +56,7 @@ actions:
 
   - target: $.paths["/http/invalid"]
     update:
-      x-opengateway-upstream:
+      x-plenum-upstream:
         kind: "HTTP"
         address: "wiremock"
         port: 8080
@@ -66,7 +66,7 @@ actions:
   # The schema is passed explicitly as interceptor options.
   - target: $.paths["/plugin/valid"].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "internal:validate-response"
           hook: "on_response_body"
           function: "validateResponse"
@@ -85,7 +85,7 @@ actions:
 
   - target: $.paths["/plugin/invalid"].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "internal:validate-response"
           hook: "on_response_body"
           function: "validateResponse"
@@ -104,7 +104,7 @@ actions:
 
   - target: $.paths["/http/valid"].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "internal:validate-response"
           hook: "on_response_body"
           function: "validateResponse"
@@ -123,7 +123,7 @@ actions:
 
   - target: $.paths["/http/invalid"].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "internal:validate-response"
           hook: "on_response_body"
           function: "validateResponse"

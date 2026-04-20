@@ -35,7 +35,7 @@ export async function startGateway(opts: {
     filesToCopy.push({ source: resolve(FIXTURES_DIR, extra.source), target: extra.target });
   }
 
-  let builder = new GenericContainer('opengateway:latest')
+  let builder = new GenericContainer('plenum:latest')
     .withExposedPorts(GATEWAY_PORT)
     .withNetwork(opts.network)
     .withCommand(['--config-path', '/config', '--openapi-schema', openapiFile, '--openapi-overlay', overlayFiles.join(',')])

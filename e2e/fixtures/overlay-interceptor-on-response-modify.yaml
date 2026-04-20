@@ -5,7 +5,7 @@ info:
 actions:
   - target: $.paths[*].get
     update:
-      x-opengateway-interceptor:
+      x-plenum-interceptor:
         - module: "./interceptors/on-response-modify.js"
           hook: on_response
           function: onResponse

@@ -5,11 +5,11 @@ info:
 actions:
   - target: $
     update:
-      x-opengateway-config:
+      x-plenum-config:
         threads: 1
         daemon: false
         listen: "0.0.0.0:6188"
-      x-opengateway-upstreams:
+      x-plenum-upstreams:
         db:
           kind: "plugin"
           plugin: "internal:mongodb"
@@ -22,17 +22,17 @@ actions:
               - "${DB_HOST}"
   - target: $.paths[*]
     update:
-      x-opengateway-upstream:
-        $ref: "#/x-opengateway-upstreams/db"
+      x-plenum-upstream:
+        $ref: "#/x-plenum-upstreams/db"
   - target: $.paths['/users'].get
     update:
-      x-opengateway-backend:
+      x-plenum-backend:
         collection: "users"
         operation: "find"
         filter: {}
   - target: $.paths['/users'].post
     update:
-      x-opengateway-backend:
+      x-plenum-backend:
         collection: "users"
         operation: "insertOne"
         document:
@@ -40,7 +40,7 @@ actions:
         returns: "/0"
   - target: $.paths['/users/{name}'].get
     update:
-      x-opengateway-backend:
+      x-plenum-backend:
         collection: "users"
         operation: "findOne"
         filter:
@@ -48,7 +48,7 @@ actions:
         returns: "/0"
   - target: $.paths['/users/{name}'].delete
     update:
-      x-opengateway-backend:
+      x-plenum-backend:
         collection: "users"
         operation: "deleteOne"
         filter:
