@@ -5,6 +5,7 @@ use std::time::Instant;
 use crate::path_match::RouteEntry;
 use bytes::BytesMut;
 use http::Method;
+use tokio_util::sync::CancellationToken;
 
 pub struct GatewayCtx {
     pub(crate) matched_route: Option<Arc<RouteEntry>>,
@@ -21,4 +22,8 @@ pub struct GatewayCtx {
     /// Timestamp when the request started processing (set after route matching).
     /// Used to compute remaining time budget for overall request timeout.
     pub(crate) request_start: Option<Instant>,
+    /// Generic cancellation signal for this request. Triggered by the overall request
+    /// timeout, but can also be used for other cancellation scenarios (client disconnect,
+    /// rate limiting, circuit breakers, etc.).
+    pub(crate) cancellation: CancellationToken,
 }

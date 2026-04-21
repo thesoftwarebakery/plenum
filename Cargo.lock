@@ -2062,6 +2062,7 @@ dependencies = [
  "pingora-core",
  "pingora-http",
  "pingora-proxy",
+ "pingora-timeout",
  "plenum-js-runtime",
  "reqwest",
  "serde",
@@ -2069,6 +2070,7 @@ dependencies = [
  "serde_yaml_ng",
  "shellexpand",
  "tokio",
+ "tokio-util",
  "tracing",
  "wiremock",
 ]

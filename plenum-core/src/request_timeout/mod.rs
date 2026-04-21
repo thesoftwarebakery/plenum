@@ -32,6 +32,17 @@ pub fn apply_to_peer(
     Ok(())
 }
 
+/// Effective timeout for a single interceptor call: the minimum of the remaining
+/// request budget and the per-interceptor timeout. Returns `None` if the budget
+/// is exhausted (caller should cancel the request).
+pub fn effective_interceptor_timeout(
+    start: Instant,
+    request_timeout: Duration,
+    interceptor_timeout: Duration,
+) -> Option<Duration> {
+    remaining_budget(start, request_timeout).map(|budget| budget.min(interceptor_timeout))
+}
+
 /// Returns `true` when the error is a connect or read timeout from the upstream.
 pub fn is_timeout_error(e: &pingora_core::Error) -> bool {
     matches!(
@@ -89,6 +100,38 @@ mod tests {
         let mut peer = HttpPeer::new("127.0.0.1:8080", false, String::new());
         let result = apply_to_peer(&mut peer, start, timeout);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn effective_interceptor_timeout_returns_none_when_budget_exhausted() {
+        let start = Instant::now() - Duration::from_secs(5);
+        let request_timeout = Duration::from_secs(1);
+        let interceptor_timeout = Duration::from_secs(30);
+        assert!(
+            effective_interceptor_timeout(start, request_timeout, interceptor_timeout).is_none()
+        );
+    }
+
+    #[test]
+    fn effective_interceptor_timeout_returns_min_of_budget_and_interceptor() {
+        let start = Instant::now();
+        let request_timeout = Duration::from_secs(2);
+        let interceptor_timeout = Duration::from_secs(30);
+        let effective =
+            effective_interceptor_timeout(start, request_timeout, interceptor_timeout).unwrap();
+        // Budget (~2s) is less than interceptor timeout (30s), so effective ≈ budget
+        assert!(effective <= Duration::from_secs(2));
+        assert!(effective > Duration::from_secs(1));
+    }
+
+    #[test]
+    fn effective_interceptor_timeout_uses_interceptor_when_budget_larger() {
+        let start = Instant::now();
+        let request_timeout = Duration::from_secs(60);
+        let interceptor_timeout = Duration::from_millis(500);
+        let effective =
+            effective_interceptor_timeout(start, request_timeout, interceptor_timeout).unwrap();
+        assert_eq!(effective, Duration::from_millis(500));
     }
 
     #[test]

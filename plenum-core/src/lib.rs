@@ -13,6 +13,7 @@ use path_match::{OperationSchemas, RouteEntry, Upstream, build_router};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_http::{RequestHeader, ResponseHeader};
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
+use tokio_util::sync::CancellationToken;
 use tracing::Instrument;
 
 pub mod config;
@@ -34,8 +35,26 @@ use proxy_utils::{
     merge_options,
 };
 
+use path_match::HookHandle;
+
 pub struct Plenum {
     router: path_match::PlenumRouter,
+}
+
+/// Compute effective interceptor timeout from remaining request budget.
+/// Cancels the request if budget is exhausted. Falls back to the per-interceptor
+/// timeout when no overall request timeout is active.
+fn effective_timeout(ctx: &GatewayCtx, op: &OperationSchemas, hook: &HookHandle) -> Duration {
+    let Some(start) = ctx.request_start else {
+        return hook.timeout;
+    };
+    match request_timeout::effective_interceptor_timeout(start, op.request_timeout, hook.timeout) {
+        Some(t) => t,
+        None => {
+            ctx.cancellation.cancel();
+            Duration::ZERO
+        }
+    }
 }
 
 /// Look up the matched operation from context, borrowing only the route and method fields.
@@ -65,6 +84,7 @@ impl ProxyHttp for Plenum {
             upstream_response_content_type: None,
             path_params: HashMap::new(),
             request_start: None,
+            cancellation: CancellationToken::new(),
         }
     }
 
@@ -111,11 +131,102 @@ impl ProxyHttp for Plenum {
 
         ctx.request_start = Some(Instant::now());
 
-        // Phase 1 of on_request: call with null body so header modifications are applied
-        // before the upstream request is built. Fires for all requests including GET.
-        // For plugin routes, phase 2 also runs here (inline, after reading the body).
-        // For HTTP upstream routes, phase 2 runs in request_body_filter.
+        // For plugin routes: wrap on_request phase 1 + dispatch in a single timeout.
+        // When the timeout fires the future is dropped, cancelling all in-flight work.
+        if let Upstream::Plugin(plugin) = &route_arc.upstream {
+            let backend_config = op.backend_config.clone();
+            return match pingora_timeout::timeout(op.request_timeout, async {
+                // Phase 1 of on_request (headers only, null body)
+                for hook in &op.interceptors.on_request {
+                    let input = request_input_from_parts(
+                        &session.req_header().method,
+                        &session.req_header().uri,
+                        &session.req_header().headers,
+                        ctx.path_params.clone(),
+                        op.operation_meta.clone(),
+                    );
+                    let mut input_json = serde_json::to_value(&input).unwrap();
+                    merge_options(&mut input_json, hook.options.as_ref());
+
+                    let span = tracing::debug_span!(
+                        "interceptor_call",
+                        hook = "on_request",
+                        function = hook.function.as_str()
+                    );
+                    match call_interceptor(
+                        hook.runtime.as_ref(),
+                        &hook.function,
+                        input_json,
+                        None,
+                        hook.timeout,
+                    )
+                    .instrument(span)
+                    .await
+                    {
+                        Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
+                            if let Some(mods) = headers {
+                                apply_header_modifications(session.req_header_mut(), &mods);
+                            }
+                        }
+                        Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
+                            session
+                                .respond_error_with_body(
+                                    status,
+                                    body_out.map(js_body_to_bytes).unwrap_or_default(),
+                                )
+                                .await
+                                .ok();
+                            return Ok(true);
+                        }
+                        Err(e) => {
+                            log::error!("on_request interceptor error: {}", e);
+                            session
+                                .respond_error_with_body(
+                                    500,
+                                    GatewayError::internal(format!("interceptor error: {}", e))
+                                        .body(),
+                                )
+                                .await
+                                .ok();
+                            return Ok(true);
+                        }
+                    }
+                }
+                // Plugin dispatch (phase 2 + before_upstream + handle + on_response + on_response_body)
+                upstream_plugin::dispatch(session, ctx, op, plugin, backend_config).await
+            })
+            .await
+            {
+                Ok(inner) => inner,
+                Err(_elapsed) => {
+                    ctx.cancellation.cancel();
+                    log::warn!("request timeout exceeded for plugin route");
+                    session
+                        .respond_error_with_body(
+                            504,
+                            GatewayError::gateway_timeout("request timeout exceeded").body(),
+                        )
+                        .await
+                        .ok();
+                    Ok(true)
+                }
+            };
+        }
+
+        // Phase 1 of on_request for HTTP/Static routes: budget-capped interceptor calls.
         for hook in &op.interceptors.on_request {
+            let timeout = effective_timeout(ctx, op, hook);
+            if ctx.cancellation.is_cancelled() {
+                session
+                    .respond_error_with_body(
+                        504,
+                        GatewayError::gateway_timeout("request timeout exceeded").body(),
+                    )
+                    .await
+                    .ok();
+                return Ok(true);
+            }
+
             let input = request_input_from_parts(
                 &session.req_header().method,
                 &session.req_header().uri,
@@ -136,7 +247,7 @@ impl ProxyHttp for Plenum {
                 &hook.function,
                 input_json,
                 None,
-                hook.timeout,
+                timeout,
             )
             .instrument(span)
             .await
@@ -168,34 +279,6 @@ impl ProxyHttp for Plenum {
                     return Ok(true);
                 }
             }
-        }
-
-        // For plugin routes: handle the entire request here and short-circuit the proxy pipeline.
-        // This prevents upstream_peer from being called (which would return InternalError for
-        // Upstream::Plugin). Returning Ok(true) skips all subsequent hooks.
-        // The entire dispatch is wrapped in a timeout race — if the deadline is exceeded,
-        // the future is dropped (cancelling all in-flight plugin/interceptor calls).
-        if let Upstream::Plugin(plugin) = &route_arc.upstream {
-            let backend_config = op.backend_config.clone();
-            return match tokio::time::timeout(
-                op.request_timeout,
-                upstream_plugin::dispatch(session, ctx, op, plugin, backend_config),
-            )
-            .await
-            {
-                Ok(inner) => inner,
-                Err(_elapsed) => {
-                    log::warn!("request timeout exceeded for plugin route");
-                    session
-                        .respond_error_with_body(
-                            504,
-                            GatewayError::gateway_timeout("request timeout exceeded").body(),
-                        )
-                        .await
-                        .ok();
-                    Ok(true)
-                }
-            };
         }
 
         // For static routes: write the pre-built response and short-circuit.
@@ -281,6 +364,19 @@ impl ProxyHttp for Plenum {
                     .map(|s| s.to_string());
                 let mut current_buf = buf;
                 for hook in &op.interceptors.on_request {
+                    let timeout = effective_timeout(ctx, op, hook);
+                    if ctx.cancellation.is_cancelled() {
+                        session
+                            .respond_error_with_body(
+                                504,
+                                GatewayError::gateway_timeout("request timeout exceeded").body(),
+                            )
+                            .await
+                            .ok();
+                        ctx.filter_responded = true;
+                        return Ok(());
+                    }
+
                     let js_body = js_body_from_content_type(content_type.as_deref(), &current_buf);
                     let input = request_input_from_parts(
                         &session.req_header().method,
@@ -301,7 +397,7 @@ impl ProxyHttp for Plenum {
                         &hook.function,
                         input_json,
                         js_body,
-                        hook.timeout,
+                        timeout,
                     )
                     .instrument(span)
                     .await
@@ -386,6 +482,12 @@ impl ProxyHttp for Plenum {
         }
 
         for hook in &op.interceptors.before_upstream {
+            let timeout = effective_timeout(ctx, op, hook);
+            if ctx.cancellation.is_cancelled() {
+                log::warn!("request timeout exceeded during before_upstream interceptors");
+                break;
+            }
+
             let input = request_input_from_parts(
                 &upstream_request.method,
                 &upstream_request.uri,
@@ -406,7 +508,7 @@ impl ProxyHttp for Plenum {
                 &hook.function,
                 input_json,
                 None,
-                hook.timeout,
+                timeout,
             )
             .instrument(span)
             .await
@@ -444,6 +546,12 @@ impl ProxyHttp for Plenum {
         };
 
         for hook in &op.interceptors.on_response {
+            let timeout = effective_timeout(ctx, op, hook);
+            if ctx.cancellation.is_cancelled() {
+                log::warn!("request timeout exceeded during on_response interceptors");
+                break;
+            }
+
             let input = response_input_from_parts(
                 upstream_response.status,
                 &upstream_response.headers,
@@ -462,7 +570,7 @@ impl ProxyHttp for Plenum {
                 &hook.function,
                 input_json,
                 None,
-                hook.timeout,
+                timeout,
             )
             .instrument(span)
             .await
@@ -534,6 +642,16 @@ impl ProxyHttp for Plenum {
             let final_buf = tokio::task::block_in_place(|| {
                 let mut current_buf = buf;
                 for hook in &op.interceptors.on_response_body {
+                    if ctx.cancellation.is_cancelled() {
+                        log::warn!("request timeout exceeded during on_response_body interceptors");
+                        break;
+                    }
+                    let timeout = effective_timeout(ctx, op, hook);
+                    if ctx.cancellation.is_cancelled() {
+                        log::warn!("request timeout exceeded during on_response_body interceptors");
+                        break;
+                    }
+
                     let js_body = js_body_from_content_type(
                         ctx.upstream_response_content_type.as_deref(),
                         &current_buf,
@@ -557,7 +675,7 @@ impl ProxyHttp for Plenum {
                         &hook.function,
                         input_json,
                         js_body,
-                        hook.timeout,
+                        timeout,
                     ) {
                         Ok((InterceptorOutput::Continue { .. }, body_out)) => {
                             current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
@@ -589,6 +707,12 @@ impl ProxyHttp for Plenum {
         if ctx.filter_responded {
             return Err(pingora_core::Error::new(
                 pingora_core::ErrorType::HTTPStatus(400),
+            ));
+        }
+        if ctx.cancellation.is_cancelled() {
+            return Err(pingora_core::Error::explain(
+                pingora_core::ErrorType::ConnectTimedout,
+                "request cancelled",
             ));
         }
         let route = ctx
