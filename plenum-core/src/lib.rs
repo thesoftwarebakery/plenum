@@ -23,6 +23,7 @@ pub mod interceptor;
 mod openapi;
 pub mod path_match;
 mod proxy_utils;
+pub mod request_timeout;
 pub mod upstream_http;
 mod upstream_plugin;
 
@@ -566,16 +567,7 @@ impl ProxyHttp for Plenum {
                     ctx.request_start,
                     matched_op(&ctx.matched_route, &ctx.matched_method),
                 ) {
-                    let remaining = op.request_timeout.saturating_sub(start.elapsed());
-                    if remaining.is_zero() {
-                        return Err(pingora_core::Error::explain(
-                            pingora_core::ErrorType::ConnectTimedout,
-                            "request timeout exceeded before upstream connection",
-                        ));
-                    }
-                    peer.options.connection_timeout = Some(remaining);
-                    peer.options.total_connection_timeout = Some(remaining);
-                    peer.options.read_timeout = Some(remaining);
+                    request_timeout::apply_to_peer(&mut peer, start, op.request_timeout)?;
                 }
 
                 Ok(peer)
@@ -601,24 +593,18 @@ impl ProxyHttp for Plenum {
     {
         // When an overall request timeout is active and the upstream error is a timeout,
         // return 504 with a JSON body instead of pingora's default error page.
-        if ctx.request_start.is_some() {
-            let is_timeout = matches!(
-                e.etype(),
-                pingora_core::ErrorType::ConnectTimedout | pingora_core::ErrorType::ReadTimedout
-            );
-            if is_timeout {
-                session
-                    .respond_error_with_body(
-                        504,
-                        GatewayError::gateway_timeout("request timeout exceeded").body(),
-                    )
-                    .await
-                    .ok();
-                return FailToProxy {
-                    error_code: 504,
-                    can_reuse_downstream: false,
-                };
-            }
+        if ctx.request_start.is_some() && request_timeout::is_timeout_error(e) {
+            session
+                .respond_error_with_body(
+                    504,
+                    GatewayError::gateway_timeout("request timeout exceeded").body(),
+                )
+                .await
+                .ok();
+            return FailToProxy {
+                error_code: 504,
+                can_reuse_downstream: false,
+            };
         }
 
         // Fall through to default pingora behaviour for non-timeout errors.
