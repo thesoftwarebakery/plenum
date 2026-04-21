@@ -1,0 +1,24 @@
+openapi: 3.1.0
+info:
+  title: Timeout Test API
+  version: 1.0.0
+paths:
+  /fast:
+    get:
+      operationId: fast
+      responses:
+        "200":
+          description: Fast endpoint
+  /slow-op-timeout:
+    get:
+      operationId: slowOpTimeout
+      x-plenum-timeout: 1000
+      responses:
+        "200":
+          description: Slow endpoint with 1s operation-level timeout
+  /slow-global-timeout:
+    get:
+      operationId: slowGlobalTimeout
+      responses:
+        "200":
+          description: Slow endpoint using global 2s timeout

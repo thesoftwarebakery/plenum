@@ -68,6 +68,8 @@ pub struct OperationSchemas {
     /// summary, parameters, requestBody, responses, and a bundled components.schemas for any
     /// referenced component schemas. x-plenum-* extensions are stripped.
     pub operation_meta: serde_json::Value,
+    /// Overall request timeout resolved from operation > path > global default.
+    pub request_timeout: Duration,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -266,6 +268,7 @@ pub fn build_router(
     let default_interceptor_timeout =
         Duration::from_millis(server_config.interceptor_default_timeout_ms);
     let default_plugin_timeout = Duration::from_millis(server_config.plugin_default_timeout_ms);
+    let default_request_timeout = Duration::from_millis(server_config.request_timeout_ms);
 
     let mut router = Router::new();
     let mut interceptor_runtime_cache: HashMap<
@@ -363,6 +366,12 @@ pub fn build_router(
             .extension(&path_item.extensions, "plenum-validation")
             .ok();
 
+        // Path-level request timeout override
+        let path_request_timeout: Option<Duration> = config
+            .extension::<u64>(&path_item.extensions, "plenum-timeout")
+            .ok()
+            .map(Duration::from_millis);
+
         // Build operation metadata for each method on this path
         let mut operations = HashMap::new();
         for (method, operation) in path_item.methods() {
@@ -371,6 +380,15 @@ pub fn build_router(
                 .extensions
                 .get("plenum-validation")
                 .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+            // Operation-level request timeout override (op > path > global)
+            let request_timeout = operation
+                .extensions
+                .get("plenum-timeout")
+                .and_then(|v| v.as_u64())
+                .map(Duration::from_millis)
+                .or(path_request_timeout)
+                .unwrap_or(default_request_timeout);
 
             // Operation-level interceptors
             let interceptors = build_operation_interceptors(
@@ -395,6 +413,7 @@ pub fn build_router(
                     interceptors,
                     backend_config,
                     operation_meta,
+                    request_timeout,
                 },
             );
         }
@@ -1399,5 +1418,98 @@ mod tests {
         assert_ne!(key_none, key_with_env);
         assert_ne!(key_with_env, key_env_reordered);
         assert_eq!(key_env_reordered, key_env_same_order_independent);
+    }
+
+    #[test]
+    fn request_timeout_defaults_to_global() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/items").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.request_timeout, Duration::from_millis(30_000));
+    }
+
+    #[test]
+    fn request_timeout_from_global_config() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "x-plenum-config": { "request_timeout_ms": 5000 },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.request_timeout, Duration::from_millis(5000));
+    }
+
+    #[test]
+    fn request_timeout_path_overrides_global() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "x-plenum-config": { "request_timeout_ms": 5000 },
+            "paths": {
+                "/test": {
+                    "x-plenum-timeout": 2000,
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.request_timeout, Duration::from_millis(2000));
+    }
+
+    #[test]
+    fn request_timeout_operation_overrides_path() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "x-plenum-timeout": 5000,
+                    "get": {
+                        "x-plenum-timeout": 1000,
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.request_timeout, Duration::from_millis(1000));
     }
 }

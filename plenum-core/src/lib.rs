@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
@@ -12,7 +12,7 @@ use interceptor::{InterceptorOutput, request_input_from_parts, response_input_fr
 use path_match::{OperationSchemas, RouteEntry, Upstream, build_router};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_http::{RequestHeader, ResponseHeader};
-use pingora_proxy::{ProxyHttp, Session};
+use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use tracing::Instrument;
 
 pub mod config;
@@ -63,6 +63,7 @@ impl ProxyHttp for Plenum {
             upstream_response_status: None,
             upstream_response_content_type: None,
             path_params: HashMap::new(),
+            request_start: None,
         }
     }
 
@@ -106,6 +107,8 @@ impl ProxyHttp for Plenum {
         let Some(op) = route_arc.operations.get(&method) else {
             return Ok(false);
         };
+
+        ctx.request_start = Some(Instant::now());
 
         // Phase 1 of on_request: call with null body so header modifications are applied
         // before the upstream request is built. Fires for all requests including GET.
@@ -169,9 +172,29 @@ impl ProxyHttp for Plenum {
         // For plugin routes: handle the entire request here and short-circuit the proxy pipeline.
         // This prevents upstream_peer from being called (which would return InternalError for
         // Upstream::Plugin). Returning Ok(true) skips all subsequent hooks.
+        // The entire dispatch is wrapped in a timeout race — if the deadline is exceeded,
+        // the future is dropped (cancelling all in-flight plugin/interceptor calls).
         if let Upstream::Plugin(plugin) = &route_arc.upstream {
             let backend_config = op.backend_config.clone();
-            return upstream_plugin::dispatch(session, ctx, op, plugin, backend_config).await;
+            return match tokio::time::timeout(
+                op.request_timeout,
+                upstream_plugin::dispatch(session, ctx, op, plugin, backend_config),
+            )
+            .await
+            {
+                Ok(inner) => inner,
+                Err(_elapsed) => {
+                    log::warn!("request timeout exceeded for plugin route");
+                    session
+                        .respond_error_with_body(
+                            504,
+                            GatewayError::gateway_timeout("request timeout exceeded").body(),
+                        )
+                        .await
+                        .ok();
+                    Ok(true)
+                }
+            };
         }
 
         Ok(false)
@@ -534,7 +557,29 @@ impl ProxyHttp for Plenum {
             .as_ref()
             .ok_or_else(|| pingora_core::Error::new(pingora_core::ErrorType::InternalError))?;
         match &route.upstream {
-            crate::path_match::Upstream::Http(peer) => Ok(Box::new(*peer.clone())),
+            crate::path_match::Upstream::Http(peer) => {
+                let mut peer = Box::new(*peer.clone());
+
+                // Set upstream timeouts to remaining request budget so pingora races
+                // the upstream I/O against the overall request timeout.
+                if let (Some(start), Some(op)) = (
+                    ctx.request_start,
+                    matched_op(&ctx.matched_route, &ctx.matched_method),
+                ) {
+                    let remaining = op.request_timeout.saturating_sub(start.elapsed());
+                    if remaining.is_zero() {
+                        return Err(pingora_core::Error::explain(
+                            pingora_core::ErrorType::ConnectTimedout,
+                            "request timeout exceeded before upstream connection",
+                        ));
+                    }
+                    peer.options.connection_timeout = Some(remaining);
+                    peer.options.total_connection_timeout = Some(remaining);
+                    peer.options.read_timeout = Some(remaining);
+                }
+
+                Ok(peer)
+            }
             crate::path_match::Upstream::Plugin(_) => {
                 // Should never be reached -- plugin routes return Ok(true) from request_filter,
                 // skipping upstream_peer entirely. This branch is a safety net.
@@ -542,6 +587,45 @@ impl ProxyHttp for Plenum {
                     pingora_core::ErrorType::InternalError,
                 ))
             }
+        }
+    }
+
+    async fn fail_to_proxy(
+        &self,
+        session: &mut Session,
+        e: &pingora_core::Error,
+        ctx: &mut Self::CTX,
+    ) -> FailToProxy
+    where
+        Self::CTX: Send + Sync,
+    {
+        // When an overall request timeout is active and the upstream error is a timeout,
+        // return 504 with a JSON body instead of pingora's default error page.
+        if ctx.request_start.is_some() {
+            let is_timeout = matches!(
+                e.etype(),
+                pingora_core::ErrorType::ConnectTimedout | pingora_core::ErrorType::ReadTimedout
+            );
+            if is_timeout {
+                session
+                    .respond_error_with_body(
+                        504,
+                        GatewayError::gateway_timeout("request timeout exceeded").body(),
+                    )
+                    .await
+                    .ok();
+                return FailToProxy {
+                    error_code: 504,
+                    can_reuse_downstream: false,
+                };
+            }
+        }
+
+        // Fall through to default pingora behaviour for non-timeout errors.
+        session.respond_error(502).await.ok();
+        FailToProxy {
+            error_code: 502,
+            can_reuse_downstream: false,
         }
     }
 }

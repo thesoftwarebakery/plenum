@@ -1,0 +1,12 @@
+overlay: 1.1.0
+info:
+  title: Gateway configuration with request timeout
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        daemon: false
+        listen: "0.0.0.0:6188"
+        request_timeout_ms: 2000

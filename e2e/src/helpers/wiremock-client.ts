@@ -8,6 +8,7 @@ export interface StubMapping {
     body?: string;
     jsonBody?: unknown;
     headers?: Record<string, string>;
+    fixedDelayMilliseconds?: number;
   };
 }
 
