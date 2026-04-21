@@ -1,0 +1,25 @@
+overlay: 1.1.0
+info:
+  title: Static upstream configuration
+  version: 1.0.0
+actions:
+  - target: $.paths['/health']
+    update:
+      x-plenum-upstream:
+        kind: "static"
+        status: 200
+        headers:
+          Content-Type: "application/json"
+        body: '{"status":"ok"}'
+  - target: $.paths['/ready']
+    update:
+      x-plenum-upstream:
+        kind: "static"
+        status: 204
+  - target: $.paths['/docs']
+    update:
+      x-plenum-upstream:
+        kind: "static"
+        status: 301
+        headers:
+          Location: "https://docs.example.com"
