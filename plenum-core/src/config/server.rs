@@ -23,6 +23,8 @@ pub struct ServerConfig {
     pub interceptor_default_timeout_ms: u64,
     #[serde(default = "default_timeout_ms")]
     pub plugin_default_timeout_ms: u64,
+    #[serde(default = "default_timeout_ms")]
+    pub request_timeout_ms: u64,
 }
 
 impl Default for ServerConfig {
@@ -33,6 +35,7 @@ impl Default for ServerConfig {
             listen: default_listen(),
             interceptor_default_timeout_ms: default_timeout_ms(),
             plugin_default_timeout_ms: default_timeout_ms(),
+            request_timeout_ms: default_timeout_ms(),
         }
     }
 }
@@ -101,6 +104,22 @@ mod tests {
         let json = serde_json::json!({});
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.plugin_default_timeout_ms, 30_000);
+    }
+
+    #[test]
+    fn deserializes_request_timeout_ms() {
+        let json = serde_json::json!({
+            "request_timeout_ms": 10000
+        });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.request_timeout_ms, 10000);
+    }
+
+    #[test]
+    fn request_timeout_ms_defaults_to_30_000() {
+        let json = serde_json::json!({});
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.request_timeout_ms, 30_000);
     }
 
     #[test]

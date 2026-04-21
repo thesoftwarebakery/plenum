@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::path_match::RouteEntry;
 use bytes::BytesMut;
 use http::Method;
+use tokio_util::sync::CancellationToken;
 
 pub struct GatewayCtx {
     pub(crate) matched_route: Option<Arc<RouteEntry>>,
@@ -17,4 +19,11 @@ pub struct GatewayCtx {
     pub(crate) upstream_response_status: Option<http::StatusCode>,
     pub(crate) upstream_response_content_type: Option<String>,
     pub(crate) path_params: HashMap<String, String>,
+    /// Timestamp when the request started processing (set after route matching).
+    /// Used to compute remaining time budget for overall request timeout.
+    pub(crate) request_start: Option<Instant>,
+    /// Generic cancellation signal for this request. Triggered by the overall request
+    /// timeout, but can also be used for other cancellation scenarios (client disconnect,
+    /// rate limiting, circuit breakers, etc.).
+    pub(crate) cancellation: CancellationToken,
 }
