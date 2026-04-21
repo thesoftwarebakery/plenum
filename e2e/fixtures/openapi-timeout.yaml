@@ -22,3 +22,10 @@ paths:
       responses:
         "200":
           description: Slow endpoint using global 2s timeout
+  /slow-interceptor:
+    get:
+      operationId: slowInterceptor
+      x-plenum-timeout: 1000
+      responses:
+        "200":
+          description: Endpoint with slow interceptor and 1s timeout

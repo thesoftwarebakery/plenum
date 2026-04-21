@@ -11,6 +11,7 @@ use crate::path_match::OperationSchemas;
 use crate::proxy_utils::{
     call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_options,
 };
+use crate::request_timeout;
 
 /// Run on_request phase 1 interceptors (headers only, null body).
 /// Returns `Ok(true)` if the request was short-circuited (respond or error).
@@ -84,14 +85,28 @@ pub(crate) async fn run_phase1(
                 return Ok(true);
             }
             Err(e) => {
-                log::error!("on_request interceptor error: {}", e);
-                session
-                    .respond_error_with_body(
-                        500,
-                        GatewayError::internal(format!("interceptor error: {}", e)).body(),
-                    )
-                    .await
-                    .ok();
+                // If budget is exhausted, this was a timeout — return 504.
+                if ctx.request_start.is_some_and(|start| {
+                    request_timeout::remaining_budget(start, op.request_timeout).is_none()
+                }) {
+                    ctx.cancellation.cancel();
+                    session
+                        .respond_error_with_body(
+                            504,
+                            GatewayError::gateway_timeout("request timeout exceeded").body(),
+                        )
+                        .await
+                        .ok();
+                } else {
+                    log::error!("on_request interceptor error: {}", e);
+                    session
+                        .respond_error_with_body(
+                            500,
+                            GatewayError::internal(format!("interceptor error: {}", e)).body(),
+                        )
+                        .await
+                        .ok();
+                }
                 return Ok(true);
             }
         }
@@ -174,14 +189,27 @@ pub(crate) async fn run_phase2_body(
                 return Ok(None);
             }
             Err(e) => {
-                log::error!("on_request interceptor error: {}", e);
-                session
-                    .respond_error_with_body(
-                        500,
-                        GatewayError::internal(format!("interceptor error: {}", e)).body(),
-                    )
-                    .await
-                    .ok();
+                if ctx.request_start.is_some_and(|start| {
+                    request_timeout::remaining_budget(start, op.request_timeout).is_none()
+                }) {
+                    ctx.cancellation.cancel();
+                    session
+                        .respond_error_with_body(
+                            504,
+                            GatewayError::gateway_timeout("request timeout exceeded").body(),
+                        )
+                        .await
+                        .ok();
+                } else {
+                    log::error!("on_request interceptor error: {}", e);
+                    session
+                        .respond_error_with_body(
+                            500,
+                            GatewayError::internal(format!("interceptor error: {}", e)).body(),
+                        )
+                        .await
+                        .ok();
+                }
                 ctx.filter_responded = true;
                 return Ok(None);
             }

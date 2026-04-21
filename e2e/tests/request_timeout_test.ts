@@ -18,7 +18,14 @@ describe("request timeout", () => {
       network,
       fixtures: {
         openapi: "openapi-timeout.yaml",
-        overlays: ["overlay-timeout-gateway.yaml", "overlay-timeout-upstream.yaml"],
+        overlays: [
+          "overlay-timeout-gateway.yaml",
+          "overlay-timeout-upstream.yaml",
+          "overlay-timeout-slow-interceptor.yaml",
+        ],
+        extraFiles: [
+          { source: "interceptors/slow.js", target: "/config/interceptors/slow.js" },
+        ],
       },
     });
     wm = new WireMockClient(wiremock.adminUrl);
@@ -59,6 +66,22 @@ describe("request timeout", () => {
     });
 
     const resp = await fetch(`${gateway.baseUrl}/slow-global-timeout`);
+    expect(resp.status).toEqual(504);
+    const body = await resp.json() as { error: string };
+    expect(body.error).toBeDefined();
+  });
+
+  test("returns 504 when interceptor exceeds request timeout", async () => {
+    await wm.stubFor({
+      request: { method: "GET", urlPath: "/slow-interceptor" },
+      response: {
+        status: 200,
+        jsonBody: { result: "should not reach upstream" },
+        headers: { "Content-Type": "application/json" },
+      },
+    });
+
+    const resp = await fetch(`${gateway.baseUrl}/slow-interceptor`);
     expect(resp.status).toEqual(504);
     const body = await resp.json() as { error: string };
     expect(body.error).toBeDefined();

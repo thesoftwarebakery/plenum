@@ -1,0 +1,13 @@
+overlay: 1.1.0
+info:
+  title: Attach slow interceptor to /slow-interceptor path
+  version: 1.0.0
+actions:
+  - target: $.paths["/slow-interceptor"].get
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/slow.js"
+          hook: on_request
+          function: onRequest
+          options:
+            delay_ms: 3000
