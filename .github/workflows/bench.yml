@@ -47,6 +47,56 @@ jobs:
       - name: Run benchmarks
         run: npm run bench --prefix e2e
 
+      - name: Post PR comment with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = await import('fs');
+            const results = JSON.parse(fs.readFileSync('e2e/bench-results.json', 'utf8'));
+
+            const rows = [];
+            for (let i = 0; i < results.length; i += 2) {
+              const mean = results[i];
+              const p99  = results[i + 1];
+              const name = mean.name.replace(' mean latency', '');
+              rows.push(`| ${name} | ${mean.value.toFixed(2)} ms | ${p99.value.toFixed(2)} ms | ${mean.extra} |`);
+            }
+
+            const body = [
+              '## Latency Benchmarks',
+              '',
+              '| Scenario | Mean | p99 | Samples |',
+              '|---|---|---|---|',
+              ...rows,
+              '',
+              '_Measured on GitHub-hosted runner — absolute values vary run-to-run. Regressions >2× alert on merge to main._',
+            ].join('\n');
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const existing = comments.find(c =>
+              c.user.login === 'github-actions[bot]' && c.body.startsWith('## Latency Benchmarks')
+            );
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
         with:
@@ -57,7 +107,6 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           auto-push: ${{ github.event_name != 'pull_request' }}
           save-data-file: ${{ github.event_name != 'pull_request' }}
-          comment-always: true
           alert-threshold: '200%'
           comment-on-alert: true
           fail-on-alert: false
