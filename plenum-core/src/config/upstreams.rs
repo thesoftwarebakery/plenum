@@ -24,14 +24,9 @@ struct PluginUpstreamFields {
     timeout_ms: Option<u64>,
 }
 
-fn default_status() -> u16 {
-    200
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StaticUpstreamFields {
-    #[serde(default = "default_status")]
     status: u16,
     #[serde(default)]
     headers: Option<HashMap<String, String>>,
@@ -418,8 +413,16 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_static_variant_defaults() {
+    fn rejects_static_variant_without_status() {
         let json = serde_json::json!({ "kind": "static" });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("status"), "got: {err}");
+    }
+
+    #[test]
+    fn deserializes_static_variant_with_status_only() {
+        let json = serde_json::json!({ "kind": "static", "status": 204 });
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
         match config {
             UpstreamConfig::Static {
@@ -427,7 +430,7 @@ mod tests {
                 headers,
                 body,
             } => {
-                assert_eq!(status, 200);
+                assert_eq!(status, 204);
                 assert!(headers.is_none());
                 assert!(body.is_none());
             }
@@ -439,6 +442,7 @@ mod tests {
     fn deserializes_static_variant_with_file_body() {
         let json = serde_json::json!({
             "kind": "static",
+            "status": 200,
             "body": "file:./version.json"
         });
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
