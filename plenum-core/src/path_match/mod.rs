@@ -6,6 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bytes::Bytes;
 use http::Method;
 use matchit::Router;
 use oas3::spec::{Operation, PathItem};
@@ -32,11 +33,21 @@ impl std::fmt::Debug for PluginHandle {
     }
 }
 
-/// The upstream target for a route -- either an HTTP peer or a Node.js backend plugin.
+/// Pre-built static response, ready to write directly to the downstream session.
+#[derive(Debug)]
+pub struct StaticResponse {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Bytes,
+}
+
+/// The upstream target for a route -- either an HTTP peer, a Node.js backend plugin,
+/// or a pre-built static response.
 #[derive(Debug)]
 pub enum Upstream {
     Http(Box<HttpPeer>),
     Plugin(PluginHandle),
+    Static(StaticResponse),
 }
 
 /// A resolved interceptor hook: runtime handle, JS function name, call timeout, and options.
@@ -357,6 +368,36 @@ pub fn build_router(
                 Upstream::Plugin(PluginHandle {
                     runtime: h,
                     timeout: plugin_timeout,
+                })
+            }
+            UpstreamConfig::Static {
+                status,
+                headers,
+                body,
+            } => {
+                let body_bytes = match body {
+                    Some(s) if s.starts_with("file:") => {
+                        let file_ref = &s[5..];
+                        let file_path = config_base.join(file_ref);
+                        std::fs::read(&file_path).map_err(|e| {
+                            format!(
+                                "path '{}': static body file '{}': {}",
+                                path,
+                                file_path.display(),
+                                e
+                            )
+                        })?
+                    }
+                    Some(s) => s.as_bytes().to_vec(),
+                    None => Vec::new(),
+                };
+                Upstream::Static(StaticResponse {
+                    status: *status,
+                    headers: headers
+                        .as_ref()
+                        .map(|h| h.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                        .unwrap_or_default(),
+                    body: Bytes::from(body_bytes),
                 })
             }
         };

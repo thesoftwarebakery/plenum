@@ -1,0 +1,30 @@
+openapi: 3.1.0
+info:
+  title: Static Upstream Test API
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      responses:
+        "200":
+          description: Health check
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+  /ready:
+    get:
+      operationId: readyCheck
+      responses:
+        "204":
+          description: Ready signal
+  /docs:
+    get:
+      operationId: docsRedirect
+      responses:
+        "301":
+          description: Redirect to documentation

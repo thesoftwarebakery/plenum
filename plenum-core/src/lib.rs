@@ -198,6 +198,44 @@ impl ProxyHttp for Plenum {
             };
         }
 
+        // For static routes: write the pre-built response and short-circuit.
+        if let Upstream::Static(static_resp) = &route_arc.upstream {
+            let mut resp_header = pingora_http::ResponseHeader::build(static_resp.status, None)
+                .map_err(|e| {
+                    pingora_core::Error::because(
+                        pingora_core::ErrorType::InternalError,
+                        "build static response header",
+                        e,
+                    )
+                })?;
+            for (name, value) in &static_resp.headers {
+                resp_header
+                    .insert_header(name.clone(), value.as_bytes())
+                    .ok();
+            }
+            session
+                .write_response_header(Box::new(resp_header), false)
+                .await
+                .map_err(|e| {
+                    pingora_core::Error::because(
+                        pingora_core::ErrorType::InternalError,
+                        "write static response header",
+                        e,
+                    )
+                })?;
+            session
+                .write_response_body(Some(static_resp.body.clone()), true)
+                .await
+                .map_err(|e| {
+                    pingora_core::Error::because(
+                        pingora_core::ErrorType::InternalError,
+                        "write static response body",
+                        e,
+                    )
+                })?;
+            return Ok(true);
+        }
+
         Ok(false)
     }
 
@@ -572,9 +610,9 @@ impl ProxyHttp for Plenum {
 
                 Ok(peer)
             }
-            crate::path_match::Upstream::Plugin(_) => {
-                // Should never be reached -- plugin routes return Ok(true) from request_filter,
-                // skipping upstream_peer entirely. This branch is a safety net.
+            crate::path_match::Upstream::Plugin(_) | crate::path_match::Upstream::Static(_) => {
+                // Should never be reached -- plugin and static routes return Ok(true) from
+                // request_filter, skipping upstream_peer entirely. This branch is a safety net.
                 Err(pingora_core::Error::new(
                     pingora_core::ErrorType::InternalError,
                 ))
