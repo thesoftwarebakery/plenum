@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/thesoftwarebakery/plenum/compare/v0.3.0...v0.4.0) (2026-04-21)
+
+
+### Features
+
+* add CancellationToken and comprehensive timeout coverage ([68ada36](https://github.com/thesoftwarebakery/plenum/commit/68ada36d8b8f46394260e0699a4fc6523b37ea55))
+* add overall request timeout ([e664a26](https://github.com/thesoftwarebakery/plenum/commit/e664a26c7a93c8577762993869d20742e35a98db))
+
+
+### Bug Fixes
+
+* resolve merge conflict with main (static upstream variant) ([b2c84b4](https://github.com/thesoftwarebakery/plenum/commit/b2c84b492e154cec7162bcc1325b129aecaf5ad8))
+
 ## [0.3.0](https://github.com/thesoftwarebakery/plenum/compare/v0.2.0...v0.3.0) (2026-04-21)
 
 
