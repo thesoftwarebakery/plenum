@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -22,6 +24,21 @@ struct PluginUpstreamFields {
     timeout_ms: Option<u64>,
 }
 
+fn default_status() -> u16 {
+    200
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StaticUpstreamFields {
+    #[serde(default = "default_status")]
+    status: u16,
+    #[serde(default)]
+    headers: Option<HashMap<String, String>>,
+    #[serde(default)]
+    body: Option<String>,
+}
+
 #[derive(Debug)]
 pub enum UpstreamConfig {
     HTTP {
@@ -34,6 +51,11 @@ pub enum UpstreamConfig {
         options: Option<Value>,
         permissions: Option<super::PermissionsConfig>,
         timeout_ms: Option<u64>,
+    },
+    Static {
+        status: u16,
+        headers: Option<HashMap<String, String>>,
+        body: Option<String>,
     },
 }
 
@@ -74,8 +96,17 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
                     timeout_ms: fields.timeout_ms,
                 })
             }
+            "static" => {
+                let fields: StaticUpstreamFields =
+                    serde_json::from_value(remaining).map_err(serde::de::Error::custom)?;
+                Ok(UpstreamConfig::Static {
+                    status: fields.status,
+                    headers: fields.headers,
+                    body: fields.body,
+                })
+            }
             other => Err(serde::de::Error::custom(format!(
-                "unknown upstream kind `{other}`; expected `HTTP` or `plugin`"
+                "unknown upstream kind `{other}`; expected `HTTP`, `plugin`, or `static`"
             ))),
         }
     }
@@ -250,6 +281,7 @@ mod tests {
         assert!(err.contains("unknown upstream kind"), "got: {err}");
         assert!(err.contains("HTTP"), "got: {err}");
         assert!(err.contains("plugin"), "got: {err}");
+        assert!(err.contains("static"), "got: {err}");
     }
 
     #[test]
@@ -359,6 +391,77 @@ mod tests {
         let value = serde_json::json!("${PLENUM_TEST_EMPTY_STRING_VAR}");
         let result = resolve_env_vars(value).unwrap();
         assert_eq!(result, serde_json::json!(""));
+    }
+
+    #[test]
+    fn deserializes_static_variant_with_all_fields() {
+        let json = serde_json::json!({
+            "kind": "static",
+            "status": 201,
+            "headers": { "Content-Type": "application/json" },
+            "body": "{\"created\": true}"
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::Static {
+                status,
+                headers,
+                body,
+            } => {
+                assert_eq!(status, 201);
+                let h = headers.unwrap();
+                assert_eq!(h.get("Content-Type").unwrap(), "application/json");
+                assert_eq!(body.unwrap(), "{\"created\": true}");
+            }
+            _ => panic!("expected Static variant"),
+        }
+    }
+
+    #[test]
+    fn deserializes_static_variant_defaults() {
+        let json = serde_json::json!({ "kind": "static" });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::Static {
+                status,
+                headers,
+                body,
+            } => {
+                assert_eq!(status, 200);
+                assert!(headers.is_none());
+                assert!(body.is_none());
+            }
+            _ => panic!("expected Static variant"),
+        }
+    }
+
+    #[test]
+    fn deserializes_static_variant_with_file_body() {
+        let json = serde_json::json!({
+            "kind": "static",
+            "body": "file:./version.json"
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::Static { body, .. } => {
+                assert_eq!(body.unwrap(), "file:./version.json");
+            }
+            _ => panic!("expected Static variant"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_field_on_static_variant() {
+        let json = serde_json::json!({
+            "kind": "static",
+            "status": 200,
+            "typo_field": 1
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected error for unknown field typo_field"
+        );
     }
 
     #[test]
