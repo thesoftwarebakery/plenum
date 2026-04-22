@@ -1,3 +1,4 @@
 target
 .worktrees
 interceptors/node_modules/
+.DS_Store
