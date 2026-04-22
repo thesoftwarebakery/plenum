@@ -1,0 +1,27 @@
+overlay: 1.1.0
+info:
+  title: Ctx bag test — two interceptors sharing state via ctx
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        listen: "0.0.0.0:6188"
+      x-plenum-upstreams:
+        default:
+          kind: "HTTP"
+          address: "wiremock"
+          port: 8080
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/x-plenum-upstreams/default"
+  - target: $.paths['/products'].get
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/set-ctx.js"
+          hook: on_request
+          function: setCtx
+        - module: "./interceptors/read-ctx.js"
+          hook: on_response
+          function: readCtx

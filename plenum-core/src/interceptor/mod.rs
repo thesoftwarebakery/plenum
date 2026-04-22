@@ -1,8 +1,10 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use typeshare::typeshare;
 
 /// Input passed to on_request and before_upstream interceptors.
+#[typeshare]
 #[derive(Debug, Serialize)]
 pub struct RequestInput {
     pub method: String,
@@ -11,14 +13,19 @@ pub struct RequestInput {
     pub query: String,
     pub params: HashMap<String, String>,
     pub operation: serde_json::Value,
+    /// The request-scoped context bag. User-land keys plus `ctx.gateway.*` populated by the gateway.
+    pub ctx: serde_json::Value,
 }
 
 /// Input passed to on_response interceptors.
+#[typeshare]
 #[derive(Debug, Serialize)]
 pub struct ResponseInput {
     pub status: u16,
     pub headers: HashMap<String, String>,
     pub operation: serde_json::Value,
+    /// The request-scoped context bag. User-land keys plus `ctx.gateway.*` populated by the gateway.
+    pub ctx: serde_json::Value,
 }
 
 /// Output returned by any interceptor.
@@ -26,6 +33,9 @@ pub struct ResponseInput {
 /// The JS interceptor returns `{ "action": "continue", ... }` to proceed
 /// (optionally modifying headers/status), or `{ "action": "respond", ... }`
 /// to short-circuit with an immediate response.
+// Note: not annotated with #[typeshare] — typeshare requires tag+content for enums,
+// but this uses internally-tagged serde (tag only). The TypeScript type is written
+// manually in sdk/plenum.ts.
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action")]
 pub enum InterceptorOutput {
@@ -37,6 +47,11 @@ pub enum InterceptorOutput {
         status: Option<u16>,
         #[serde(default)]
         headers: Option<HashMap<String, Option<String>>>,
+        /// Ctx modifications to merge back into the request-scoped ctx bag.
+        /// Shallow merge: returned keys overwrite; absent keys preserved.
+        /// The `gateway` key is ignored — user-land cannot overwrite gateway-populated keys.
+        #[serde(default)]
+        ctx: Option<serde_json::Map<String, serde_json::Value>>,
     },
 
     /// Short-circuit: send this response immediately instead of proxying.
@@ -57,6 +72,7 @@ pub fn request_input_from_parts(
     headers: &http::HeaderMap,
     params: HashMap<String, String>,
     operation: serde_json::Value,
+    ctx: serde_json::Value,
 ) -> RequestInput {
     RequestInput {
         method: method.to_string(),
@@ -65,6 +81,7 @@ pub fn request_input_from_parts(
         query: uri.query().unwrap_or("").to_string(),
         params,
         operation,
+        ctx,
     }
 }
 
@@ -73,11 +90,13 @@ pub fn response_input_from_parts(
     status: http::StatusCode,
     headers: &http::HeaderMap,
     operation: serde_json::Value,
+    ctx: serde_json::Value,
 ) -> ResponseInput {
     ResponseInput {
         status: status.as_u16(),
         headers: header_map_to_hash_map(headers),
         operation,
+        ctx,
     }
 }
 
@@ -106,9 +125,10 @@ mod tests {
             serde_json::from_value(json!({"action": "continue"})).unwrap();
 
         match output {
-            InterceptorOutput::Continue { status, headers } => {
+            InterceptorOutput::Continue { status, headers, ctx } => {
                 assert!(status.is_none());
                 assert!(headers.is_none());
+                assert!(ctx.is_none());
             }
             _ => panic!("expected Continue"),
         }
@@ -212,6 +232,37 @@ mod tests {
     }
 
     #[test]
+    fn deserializes_continue_with_ctx() {
+        let output: InterceptorOutput = serde_json::from_value(json!({
+            "action": "continue",
+            "ctx": {"userTier": "pro", "tokenCost": 420}
+        }))
+        .unwrap();
+
+        match output {
+            InterceptorOutput::Continue { ctx, .. } => {
+                let c = ctx.unwrap();
+                assert_eq!(c["userTier"], "pro");
+                assert_eq!(c["tokenCost"], 420);
+            }
+            _ => panic!("expected Continue"),
+        }
+    }
+
+    #[test]
+    fn deserializes_continue_without_ctx_is_none() {
+        let output: InterceptorOutput =
+            serde_json::from_value(json!({"action": "continue"})).unwrap();
+
+        match output {
+            InterceptorOutput::Continue { ctx, .. } => {
+                assert!(ctx.is_none());
+            }
+            _ => panic!("expected Continue"),
+        }
+    }
+
+    #[test]
     fn rejects_invalid_action() {
         let result = serde_json::from_value::<InterceptorOutput>(json!({"action": "invalid"}));
         assert!(result.is_err());
@@ -237,6 +288,7 @@ mod tests {
             query: "page=1".into(),
             params: HashMap::from([("id".into(), "123".into())]),
             operation: serde_json::Value::Null,
+            ctx: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&input).unwrap();
         assert_eq!(json["method"], "POST");
@@ -254,6 +306,7 @@ mod tests {
             status: 200,
             headers: HashMap::from([("x-request-id".into(), "abc".into())]),
             operation: serde_json::Value::Null,
+            ctx: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&input).unwrap();
         assert_eq!(json["status"], 200);
@@ -275,6 +328,7 @@ mod tests {
             &headers,
             HashMap::new(),
             serde_json::Value::Null,
+            serde_json::Value::Null,
         );
         assert_eq!(input.method, "GET");
         assert_eq!(input.path, "/items");
@@ -291,7 +345,7 @@ mod tests {
         let params = HashMap::from([("id".to_string(), "42".to_string())]);
 
         let input =
-            request_input_from_parts(&method, &uri, &headers, params, serde_json::Value::Null);
+            request_input_from_parts(&method, &uri, &headers, params, serde_json::Value::Null, serde_json::Value::Null);
         assert_eq!(input.params.get("id").unwrap(), "42");
     }
 
@@ -301,7 +355,7 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("content-type", "text/plain".parse().unwrap());
 
-        let input = response_input_from_parts(status, &headers, serde_json::Value::Null);
+        let input = response_input_from_parts(status, &headers, serde_json::Value::Null, serde_json::Value::Null);
         assert_eq!(input.status, 404);
         assert_eq!(input.headers.get("content-type").unwrap(), "text/plain");
     }

@@ -1,0 +1,11 @@
+{
+  "name": "@plenum/types",
+  "version": "0.1.0",
+  "description": "TypeScript types for Plenum interceptors and plugins",
+  "main": "plenum.ts",
+  "types": "plenum.ts",
+  "license": "MIT",
+  "devDependencies": {
+    "typescript": "^6.0.3"
+  }
+}

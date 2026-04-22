@@ -1,0 +1,4 @@
+[typescript]
+# Regenerate with: typeshare plenum-core/src --lang=typescript --output-file=sdk/plenum-generated.ts
+# Note: InterceptorOutput and plugin types are written manually in sdk/plenum.ts
+# because typeshare requires tag+content for enums but we use internally-tagged serde.

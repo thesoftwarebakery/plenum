@@ -29,4 +29,8 @@ pub struct GatewayCtx {
     /// Running tally of inbound request body bytes received across all chunks.
     /// Incremented in request_body_filter on each chunk; checked against the per-operation limit.
     pub(crate) request_body_bytes_received: usize,
+    /// User-land context bag. Carried across the full request lifecycle and passed into
+    /// every interceptor and plugin call. Interceptors and plugins can read and write
+    /// arbitrary keys; the gateway populates reserved keys under `ctx.gateway.*`.
+    pub(crate) user_ctx: serde_json::Map<String, serde_json::Value>,
 }

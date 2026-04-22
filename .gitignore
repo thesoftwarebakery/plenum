@@ -3,4 +3,5 @@ target
 .claude/worktrees/
 .claude/settings.local.json
 interceptors/node_modules/
+sdk/node_modules/
 .DS_Store

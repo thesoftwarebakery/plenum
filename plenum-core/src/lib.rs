@@ -1,14 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use config::Config;
 use gateway_error::GatewayError;
-use http::Method;
-use path_match::{HookHandle, OperationSchemas, RouteEntry, Upstream, build_router};
+use path_match::{HookHandle, OperationSchemas, Upstream, build_router};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
@@ -70,6 +68,7 @@ impl ProxyHttp for Plenum {
             request_start: None,
             cancellation: CancellationToken::new(),
             request_body_bytes_received: 0,
+            user_ctx: serde_json::Map::new(),
         }
     }
 
@@ -220,7 +219,15 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
-        let Some(op) = matched_op(&ctx.matched_route, &ctx.matched_method) else {
+        // Clone the Arc so `op` doesn't borrow from `ctx`, allowing ctx to be
+        // passed mutably to the phase handler.
+        let Some(route_arc) = ctx.matched_route.clone() else {
+            return Ok(());
+        };
+        let Some(method) = ctx.matched_method.clone() else {
+            return Ok(());
+        };
+        let Some(op) = route_arc.operations.get(&method) else {
             return Ok(());
         };
         phases::before_upstream::run(upstream_request, ctx, op).await
@@ -235,7 +242,15 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
-        let Some(op) = matched_op(&ctx.matched_route, &ctx.matched_method) else {
+        // Clone the Arc so `op` doesn't borrow from `ctx`, allowing ctx to be
+        // passed mutably to the phase handler.
+        let Some(route_arc) = ctx.matched_route.clone() else {
+            return Ok(());
+        };
+        let Some(method) = ctx.matched_method.clone() else {
+            return Ok(());
+        };
+        let Some(op) = route_arc.operations.get(&method) else {
             return Ok(());
         };
 
@@ -266,7 +281,15 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
-        let Some(op) = matched_op(&ctx.matched_route, &ctx.matched_method) else {
+        // Clone the Arc so `op` doesn't borrow from `ctx`, allowing ctx to be
+        // passed mutably to the phase handler.
+        let Some(route_arc) = ctx.matched_route.clone() else {
+            return Ok(None);
+        };
+        let Some(method) = ctx.matched_method.clone() else {
+            return Ok(None);
+        };
+        let Some(op) = route_arc.operations.get(&method) else {
             return Ok(None);
         };
 
@@ -332,15 +355,6 @@ impl ProxyHttp for Plenum {
     }
 }
 
-/// Look up the matched operation from context.
-fn matched_op<'a>(
-    matched_route: &'a Option<Arc<RouteEntry>>,
-    matched_method: &Option<Method>,
-) -> Option<&'a OperationSchemas> {
-    let route = matched_route.as_ref()?;
-    let method = matched_method.as_ref()?;
-    route.operations.get(method)
-}
 
 pub fn build_gateway(config: &Config, config_path: &str) -> Result<Plenum, Box<dyn Error>> {
     let empty = BTreeMap::new();
