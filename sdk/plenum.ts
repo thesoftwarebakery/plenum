@@ -152,7 +152,8 @@ export interface PluginInput {
 /** Output returned by a plugin's `handle()` function. */
 export interface PluginOutput {
   status?: number;
-  headers?: Record<string, string>;
+  /** Headers to set on the response. A `null` value removes the header. */
+  headers?: Record<string, string | null>;
   body?: JsonValue;
   /** Ctx modifications to merge back into the request-scoped ctx bag. */
   ctx?: Record<string, JsonValue>;
