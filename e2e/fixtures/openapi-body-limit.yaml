@@ -1,0 +1,32 @@
+openapi: 3.1.0
+info:
+  title: Body Limit Test API
+  version: 1.0.0
+paths:
+  /echo:
+    post:
+      operationId: echo
+      responses:
+        "200":
+          description: Echoes the request body
+  /strict:
+    post:
+      operationId: strict
+      x-plenum-body-limit: 100
+      responses:
+        "200":
+          description: Endpoint with a 100-byte body limit
+  /generous:
+    post:
+      operationId: generous
+      x-plenum-body-limit: 1048576
+      responses:
+        "200":
+          description: Endpoint with a 1MB body limit (above global default)
+  /with-interceptor:
+    post:
+      operationId: withInterceptor
+      x-plenum-body-limit: 50
+      responses:
+        "200":
+          description: Endpoint with a small limit and an on_request interceptor

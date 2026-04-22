@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use pingora_proxy::Session;
 use tracing::Instrument;
 
@@ -216,4 +216,60 @@ pub(crate) async fn run_phase2_body(
         }
     }
     Ok(Some(current_buf))
+}
+
+/// Run the request body filter phase:
+/// 1. Enforce the per-operation body size limit on every chunk, before any interceptor runs.
+/// 2. Buffer chunks and run on_request phase-2 interceptors when configured.
+///
+/// Returns `Ok(true)` if a response was already written (413 or interceptor short-circuit),
+/// meaning no further processing should occur for this request.
+pub(crate) async fn run_body_filter(
+    session: &mut Session,
+    body: &mut Option<Bytes>,
+    end_of_stream: bool,
+    ctx: &mut GatewayCtx,
+    op: &OperationSchemas,
+) -> pingora_core::Result<bool> {
+    // 1. Body size enforcement — runs on every chunk, regardless of interceptors.
+    if let Some(b) = body {
+        let new_total = ctx.request_body_bytes_received + b.len();
+        if new_total > op.max_request_body_bytes as usize {
+            b.clear();
+            session
+                .respond_error_with_body(
+                    413,
+                    GatewayError::payload_too_large("request body too large").body(),
+                )
+                .await
+                .ok();
+            ctx.filter_responded = true;
+            return Ok(true);
+        }
+        ctx.request_body_bytes_received = new_total;
+    }
+
+    // 2. Interceptor buffering — only when on_request interceptors are configured.
+    if op.interceptors.on_request.is_empty() {
+        return Ok(false);
+    }
+
+    if let Some(b) = body {
+        ctx.request_body_buf.put(b.as_ref());
+        b.clear();
+    }
+
+    if end_of_stream {
+        let buf = ctx.request_body_buf.split().freeze();
+        match run_phase2_body(session, ctx, op, buf).await? {
+            Some(final_buf) => {
+                if !final_buf.is_empty() {
+                    *body = Some(final_buf);
+                }
+            }
+            None => return Ok(true), // short-circuited (filter_responded already set)
+        }
+    }
+
+    Ok(false)
 }
