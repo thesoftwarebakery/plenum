@@ -92,7 +92,12 @@ pub(crate) async fn dispatch(
             .instrument(span)
             .await
             {
-                Ok((InterceptorOutput::Continue { ctx: returned_ctx, .. }, body_out)) => {
+                Ok((
+                    InterceptorOutput::Continue {
+                        ctx: returned_ctx, ..
+                    },
+                    body_out,
+                )) => {
                     current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
                     merge_ctx(&mut ctx.user_ctx, returned_ctx);
                 }
@@ -153,7 +158,14 @@ pub(crate) async fn dispatch(
         .instrument(span)
         .await
         {
-            Ok((InterceptorOutput::Continue { headers, ctx: returned_ctx, .. }, _)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    headers,
+                    ctx: returned_ctx,
+                    ..
+                },
+                _,
+            )) => {
                 if let Some(mods) = headers {
                     apply_header_modifications(&mut request_headers, &mods);
                 }
@@ -271,7 +283,9 @@ pub(crate) async fn dispatch(
         {
             Ok((
                 InterceptorOutput::Continue {
-                    status, headers, ctx: returned_ctx,
+                    status,
+                    headers,
+                    ctx: returned_ctx,
                 },
                 _,
             )) => {
@@ -329,7 +343,9 @@ pub(crate) async fn dispatch(
         {
             Ok((
                 InterceptorOutput::Continue {
-                    status, headers, ctx: returned_ctx,
+                    status,
+                    headers,
+                    ctx: returned_ctx,
                 },
                 body_out,
             )) => {

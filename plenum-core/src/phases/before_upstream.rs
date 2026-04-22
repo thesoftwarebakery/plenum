@@ -81,7 +81,14 @@ pub(crate) async fn run(
         .instrument(span)
         .await
         {
-            Ok((InterceptorOutput::Continue { headers, ctx: returned_ctx, .. }, _)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    headers,
+                    ctx: returned_ctx,
+                    ..
+                },
+                _,
+            )) => {
                 if let Some(mods) = &headers {
                     apply_header_modifications(upstream_request, mods);
                 }

@@ -79,7 +79,14 @@ pub(crate) async fn run_phase1(
         .instrument(span)
         .await
         {
-            Ok((InterceptorOutput::Continue { headers, ctx: returned_ctx, .. }, _)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    headers,
+                    ctx: returned_ctx,
+                    ..
+                },
+                _,
+            )) => {
                 if let Some(mods) = headers {
                     apply_header_modifications(session.req_header_mut(), &mods);
                 }
@@ -194,7 +201,12 @@ pub(crate) async fn run_phase2_body(
         .instrument(span)
         .await
         {
-            Ok((InterceptorOutput::Continue { ctx: returned_ctx, .. }, body_out)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    ctx: returned_ctx, ..
+                },
+                body_out,
+            )) => {
                 current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
                 merge_ctx(&mut ctx.user_ctx, returned_ctx);
             }

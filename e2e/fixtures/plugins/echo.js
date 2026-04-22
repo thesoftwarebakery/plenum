@@ -15,7 +15,7 @@ exports.handle = function handle(input) {
       query: input.request.query,
       headers: input.request.headers,
       config: input.config,
-      requestBody: input.body,
+      requestBody: input.request.body,
       operation: input.operation,
     },
   };

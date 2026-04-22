@@ -355,7 +355,6 @@ impl ProxyHttp for Plenum {
     }
 }
 
-
 pub fn build_gateway(config: &Config, config_path: &str) -> Result<Plenum, Box<dyn Error>> {
     let empty = BTreeMap::new();
     let paths = config.spec.paths.as_ref().unwrap_or(&empty);

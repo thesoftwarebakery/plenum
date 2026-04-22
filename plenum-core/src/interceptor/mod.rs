@@ -125,7 +125,11 @@ mod tests {
             serde_json::from_value(json!({"action": "continue"})).unwrap();
 
         match output {
-            InterceptorOutput::Continue { status, headers, ctx } => {
+            InterceptorOutput::Continue {
+                status,
+                headers,
+                ctx,
+            } => {
                 assert!(status.is_none());
                 assert!(headers.is_none());
                 assert!(ctx.is_none());
@@ -344,8 +348,14 @@ mod tests {
         let headers = http::HeaderMap::new();
         let params = HashMap::from([("id".to_string(), "42".to_string())]);
 
-        let input =
-            request_input_from_parts(&method, &uri, &headers, params, serde_json::Value::Null, serde_json::Value::Null);
+        let input = request_input_from_parts(
+            &method,
+            &uri,
+            &headers,
+            params,
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
         assert_eq!(input.params.get("id").unwrap(), "42");
     }
 
@@ -355,7 +365,12 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("content-type", "text/plain".parse().unwrap());
 
-        let input = response_input_from_parts(status, &headers, serde_json::Value::Null, serde_json::Value::Null);
+        let input = response_input_from_parts(
+            status,
+            &headers,
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
         assert_eq!(input.status, 404);
         assert_eq!(input.headers.get("content-type").unwrap(), "text/plain");
     }

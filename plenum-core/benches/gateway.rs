@@ -63,6 +63,7 @@ fn bench_interceptor_serialization(c: &mut Criterion) {
         },
         params: HashMap::new(),
         operation: serde_json::Value::Null,
+        ctx: serde_json::Value::Null,
     };
 
     let continue_json = serde_json::json!({

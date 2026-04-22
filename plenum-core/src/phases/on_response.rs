@@ -62,7 +62,14 @@ pub(crate) async fn run(
         .instrument(span)
         .await
         {
-            Ok((InterceptorOutput::Continue { status, headers, ctx: returned_ctx }, _)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    status,
+                    headers,
+                    ctx: returned_ctx,
+                },
+                _,
+            )) => {
                 if let Some(code) = status
                     && let Ok(status_code) = http::StatusCode::from_u16(code)
                 {
@@ -142,7 +149,12 @@ pub(crate) fn run_body(
             js_body,
             timeout,
         ) {
-            Ok((InterceptorOutput::Continue { ctx: returned_ctx, .. }, body_out)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    ctx: returned_ctx, ..
+                },
+                body_out,
+            )) => {
                 current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
                 merge_ctx(&mut ctx.user_ctx, returned_ctx);
             }
