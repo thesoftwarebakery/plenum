@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
-use typeshare::typeshare;
+use ts_rs::TS;
 
 /// Sandbox permissions for an interceptor or plugin.
-#[typeshare]
-#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+#[derive(Debug, Deserialize, Serialize, Default, Clone, TS)]
+#[ts(export)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionsConfig {
     #[serde(default)]

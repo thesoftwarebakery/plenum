@@ -15,12 +15,14 @@ use bytes::{BufMut, BytesMut};
 use pingora_proxy::Session;
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
+use ts_rs::TS;
 
 /// The request sub-object inside [`PluginInput`].
 /// Note: the request body is injected at the top level of the input by the JS
 /// runtime and is accessible as `input.body` in JavaScript.
-#[derive(Serialize)]
-pub(crate) struct PluginRequest {
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct PluginRequest {
     pub method: String,
     pub path: String,
     pub query: String,
@@ -29,21 +31,29 @@ pub(crate) struct PluginRequest {
 }
 
 /// Input passed to a plugin's `handle()` function.
-#[derive(Serialize)]
-pub(crate) struct PluginInput {
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct PluginInput {
     pub request: PluginRequest,
+    #[ts(type = "unknown")]
     pub config: serde_json::Value,
+    #[ts(type = "unknown")]
     pub operation: serde_json::Value,
+    #[ts(type = "Ctx")]
     pub ctx: serde_json::Value,
 }
 
 /// Output returned by a plugin's `handle()` function.
 /// The response body is extracted separately by the JS runtime.
-#[derive(Deserialize, Default)]
-pub(crate) struct PluginOutput {
+#[derive(Deserialize, Default, TS)]
+#[ts(export)]
+pub struct PluginOutput {
+    #[ts(optional)]
     pub status: Option<u16>,
     /// Headers to set on the response. A `null` value removes the header.
+    #[ts(optional)]
     pub headers: Option<HashMap<String, Option<String>>>,
+    #[ts(optional, type = "Record<string, unknown>")]
     pub ctx: Option<serde_json::Map<String, serde_json::Value>>,
 }
 

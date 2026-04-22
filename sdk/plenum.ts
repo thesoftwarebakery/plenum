@@ -3,9 +3,9 @@
  *
  * TypeScript types for Plenum interceptors and plugins.
  *
- * Structs are generated from Rust source via typeshare.
- * InterceptorOutput and plugin types are written manually (typeshare does not
- * support internally-tagged serde enums without a `content` key).
+ * Core types are generated from Rust structs via ts-rs — see plenum-generated.ts.
+ * This file defines the TypeScript-only primitives that the generated types
+ * reference, then re-exports everything as the stable public surface.
  *
  * Pipeline ordering:
  *   on_request → [gateway stages, e.g. rate limiting] → before_upstream → upstream → on_response → on_response_body
@@ -15,6 +15,9 @@
  *   - `ctx.gateway` is populated by the gateway (read-only for user-land code)
  *   - Interceptors/plugins can read and write any other top-level key
  *   - Returned `ctx` modifications are shallow-merged before the next invocation
+ *
+ * Regenerate plenum-generated.ts:
+ *   cargo run -p plenum-core --bin export_types
  */
 
 // ---------------------------------------------------------------------------
@@ -51,110 +54,38 @@ export interface Ctx {
 }
 
 // ---------------------------------------------------------------------------
-// Interceptor input types (generated from Rust via typeshare)
+// Re-export generated types (all except PluginInput — extended below)
 // ---------------------------------------------------------------------------
 
-/** Sandbox permissions for an interceptor or plugin. */
-export interface PermissionsConfig {
-  env?: string[];
-  read?: string[];
-  net?: string[];
-}
-
-/** Input passed to on_request and before_upstream interceptors. */
-export interface RequestInput {
-  method: string;
-  path: string;
-  headers: Record<string, string>;
-  query: string;
-  /** Path parameters extracted from the matched route template. */
-  params: Record<string, string>;
-  /** Curated OpenAPI operation metadata (operationId, parameters, requestBody, responses, components). */
-  operation: JsonValue;
-  /** The request-scoped context bag. User-land keys plus `ctx.gateway.*` populated by the gateway. */
-  ctx: Ctx;
-  /** Options passed to this interceptor via `x-plenum-interceptor[*].options`. */
-  options?: JsonValue;
-}
-
-/** Input passed to on_response and on_response_body interceptors. */
-export interface ResponseInput {
-  status: number;
-  headers: Record<string, string>;
-  /** Curated OpenAPI operation metadata. */
-  operation: JsonValue;
-  /** The request-scoped context bag. User-land keys plus `ctx.gateway.*` populated by the gateway. */
-  ctx: Ctx;
-  /** Options passed to this interceptor via `x-plenum-interceptor[*].options`. */
-  options?: JsonValue;
-}
+export type {
+  PermissionsConfig,
+  RequestInput,
+  ResponseInput,
+  InterceptorOutput,
+  PluginRequest,
+  PluginOutput,
+} from "./plenum-generated";
 
 // ---------------------------------------------------------------------------
-// Interceptor output type (manually written — typeshare doesn't support
-// internally-tagged serde enums without a `content` field)
+// Plugin input — generated struct extended with runtime-injected body fields
 // ---------------------------------------------------------------------------
+
+import type { PluginInput as _PluginInput } from "./plenum-generated";
 
 /**
- * Returned by an interceptor to continue processing with optional modifications.
- * Headers are merged: new keys added, existing overwritten, `null` removes the header.
- * `ctx` is shallow-merged into the request-scoped ctx bag.
+ * Input passed to a plugin's `handle()` function.
+ *
+ * Structured fields (request, config, operation, ctx) come from the Rust
+ * PluginInput struct. The JS runtime additionally injects the request body
+ * at the top level of the object before calling `handle()`.
  */
-export interface InterceptorContinue {
-  action: "continue";
-  status?: number;
-  headers?: Record<string, string | null>;
-  ctx?: Record<string, JsonValue>;
-}
-
-/**
- * Returned by an on_request interceptor to short-circuit with an immediate response.
- * Not valid in on_response or on_response_body hooks (ignored with a warning).
- */
-export interface InterceptorRespond {
-  action: "respond";
-  status: number;
-  headers?: Record<string, string>;
-  body?: string;
-}
-
-/** Output returned by any interceptor. */
-export type InterceptorOutput = InterceptorContinue | InterceptorRespond;
-
-// ---------------------------------------------------------------------------
-// Plugin types
-// ---------------------------------------------------------------------------
-
-/** Input passed to a plugin's `handle()` function. */
-export interface PluginInput {
-  request: {
-    method: string;
-    path: string;
-    query: string;
-    headers: Record<string, string>;
-    params: Record<string, string>;
-  };
-  /** The `x-plenum-backend` value for this operation. Opaque to the gateway. */
-  config: JsonValue;
-  /** Curated OpenAPI operation metadata. */
-  operation: JsonValue;
-  /** The request-scoped context bag. */
-  ctx: Ctx;
+export interface PluginInput extends _PluginInput {
   /**
-   * The parsed request body. Injected at the top level of the input object by
-   * the JS runtime. JSON bodies are parsed objects; text bodies are strings;
+   * The parsed request body. Injected at the top level by the JS runtime.
+   * JSON bodies are parsed objects; text bodies are strings;
    * binary bodies are base64 strings (check `bodyEncoding === "base64"`).
    */
   body?: JsonValue;
   /** Present and set to `"base64"` when `body` is a base64-encoded binary. */
   bodyEncoding?: string;
-}
-
-/** Output returned by a plugin's `handle()` function. */
-export interface PluginOutput {
-  status?: number;
-  /** Headers to set on the response. A `null` value removes the header. */
-  headers?: Record<string, string | null>;
-  body?: JsonValue;
-  /** Ctx modifications to merge back into the request-scoped ctx bag. */
-  ctx?: Record<string, JsonValue>;
 }

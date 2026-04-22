@@ -1,4 +1,5 @@
-[typescript]
-# Regenerate with: typeshare plenum-core/src --lang=typescript --output-file=sdk/plenum-generated.ts
-# Note: InterceptorOutput and plugin types are written manually in sdk/plenum.ts
-# because typeshare requires tag+content for enums but we use internally-tagged serde.
+# TypeScript type generation is handled by ts-rs, not typeshare.
+# Regenerate sdk/plenum-generated.ts with:
+#   cargo run -p plenum-core --bin export_types
+#
+# This runs automatically via the e2e pretest hook (npm test in e2e/).

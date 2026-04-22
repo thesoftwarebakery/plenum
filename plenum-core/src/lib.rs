@@ -23,7 +23,7 @@ mod phases;
 mod proxy_utils;
 pub mod request_timeout;
 pub mod upstream_http;
-mod upstream_plugin;
+pub mod upstream_plugin;
 
 pub use ctx::GatewayCtx;
 

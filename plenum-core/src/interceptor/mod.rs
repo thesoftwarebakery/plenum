@@ -1,30 +1,34 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use typeshare::typeshare;
+use ts_rs::TS;
 
 /// Input passed to on_request and before_upstream interceptors.
-#[typeshare]
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct RequestInput {
     pub method: String,
     pub path: String,
     pub headers: HashMap<String, String>,
     pub query: String,
     pub params: HashMap<String, String>,
+    #[ts(type = "unknown")]
     pub operation: serde_json::Value,
     /// The request-scoped context bag. User-land keys plus `ctx.gateway.*` populated by the gateway.
+    #[ts(type = "Ctx")]
     pub ctx: serde_json::Value,
 }
 
 /// Input passed to on_response interceptors.
-#[typeshare]
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
 pub struct ResponseInput {
     pub status: u16,
     pub headers: HashMap<String, String>,
+    #[ts(type = "unknown")]
     pub operation: serde_json::Value,
     /// The request-scoped context bag. User-land keys plus `ctx.gateway.*` populated by the gateway.
+    #[ts(type = "Ctx")]
     pub ctx: serde_json::Value,
 }
 
@@ -33,10 +37,8 @@ pub struct ResponseInput {
 /// The JS interceptor returns `{ "action": "continue", ... }` to proceed
 /// (optionally modifying headers/status), or `{ "action": "respond", ... }`
 /// to short-circuit with an immediate response.
-// Note: not annotated with #[typeshare] — typeshare requires tag+content for enums,
-// but this uses internally-tagged serde (tag only). The TypeScript type is written
-// manually in sdk/plenum.ts.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
+#[ts(export)]
 #[serde(tag = "action")]
 pub enum InterceptorOutput {
     /// Continue processing. Any fields present are applied as modifications.
@@ -44,13 +46,16 @@ pub enum InterceptorOutput {
     #[serde(rename = "continue")]
     Continue {
         #[serde(default)]
+        #[ts(optional)]
         status: Option<u16>,
         #[serde(default)]
+        #[ts(optional)]
         headers: Option<HashMap<String, Option<String>>>,
         /// Ctx modifications to merge back into the request-scoped ctx bag.
         /// Shallow merge: returned keys overwrite; absent keys preserved.
         /// The `gateway` key is ignored — user-land cannot overwrite gateway-populated keys.
         #[serde(default)]
+        #[ts(optional, type = "Record<string, unknown>")]
         ctx: Option<serde_json::Map<String, serde_json::Value>>,
     },
 
@@ -59,8 +64,10 @@ pub enum InterceptorOutput {
     Respond {
         status: u16,
         #[serde(default)]
+        #[ts(optional)]
         headers: Option<HashMap<String, String>>,
         #[serde(default)]
+        #[ts(optional)]
         body: Option<String>,
     },
 }

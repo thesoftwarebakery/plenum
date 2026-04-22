@@ -1,5 +1,6 @@
 target
 .worktrees
+sdk/plenum-generated.ts
 .claude/worktrees/
 .claude/settings.local.json
 interceptors/node_modules/
