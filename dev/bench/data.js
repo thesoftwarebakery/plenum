@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776877373634,
+  "lastUpdate": 1776894693409,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -288,6 +288,78 @@ window.BENCHMARK_DATA = {
             "value": 5.589,
             "unit": "ms",
             "extra": "n=6323"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "1ad8d8ef8b07d519e150e546bc38da93ac27b678",
+          "message": "Merge pull request #94 from thesoftwarebakery/feature/ctx-bag\n\nfeat: request-scoped ctx bag for interceptors and plugins",
+          "timestamp": "2026-04-22T22:43:24+01:00",
+          "tree_id": "cd745861893d626c392f76a35fcb5d0cc9ded68c",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/1ad8d8ef8b07d519e150e546bc38da93ac27b678"
+        },
+        "date": 1776894692056,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 1.294,
+            "unit": "ms",
+            "extra": "n=7726"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 6.64,
+            "unit": "ms",
+            "extra": "n=7726"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 1.32,
+            "unit": "ms",
+            "extra": "n=7575"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 7.107,
+            "unit": "ms",
+            "extra": "n=7575"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.525,
+            "unit": "ms",
+            "extra": "n=6558"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 5.708,
+            "unit": "ms",
+            "extra": "n=6558"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.63,
+            "unit": "ms",
+            "extra": "n=6137"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 5.789,
+            "unit": "ms",
+            "extra": "n=6137"
           }
         ]
       }
