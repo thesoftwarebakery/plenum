@@ -81,6 +81,8 @@ pub struct OperationSchemas {
     pub operation_meta: serde_json::Value,
     /// Overall request timeout resolved from operation > path > global default.
     pub request_timeout: Duration,
+    /// Maximum inbound request body size in bytes, resolved from operation > path > global default.
+    pub max_request_body_bytes: u64,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -280,6 +282,7 @@ pub fn build_router(
         Duration::from_millis(server_config.interceptor_default_timeout_ms);
     let default_plugin_timeout = Duration::from_millis(server_config.plugin_default_timeout_ms);
     let default_request_timeout = Duration::from_millis(server_config.request_timeout_ms);
+    let default_max_body_bytes = server_config.max_request_body_bytes;
 
     let mut router = Router::new();
     let mut interceptor_runtime_cache: HashMap<
@@ -413,6 +416,11 @@ pub fn build_router(
             .ok()
             .map(Duration::from_millis);
 
+        // Path-level body size limit override
+        let path_max_body_bytes: Option<u64> = config
+            .extension::<u64>(&path_item.extensions, "plenum-body-limit")
+            .ok();
+
         // Build operation metadata for each method on this path
         let mut operations = HashMap::new();
         for (method, operation) in path_item.methods() {
@@ -430,6 +438,14 @@ pub fn build_router(
                 .map(Duration::from_millis)
                 .or(path_request_timeout)
                 .unwrap_or(default_request_timeout);
+
+            // Operation-level body size limit override (op > path > global)
+            let max_request_body_bytes = operation
+                .extensions
+                .get("plenum-body-limit")
+                .and_then(|v| v.as_u64())
+                .or(path_max_body_bytes)
+                .unwrap_or(default_max_body_bytes);
 
             // Operation-level interceptors
             let interceptors = build_operation_interceptors(
@@ -455,6 +471,7 @@ pub fn build_router(
                     backend_config,
                     operation_meta,
                     request_timeout,
+                    max_request_body_bytes,
                 },
             );
         }
@@ -1552,5 +1569,98 @@ mod tests {
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(1000));
+    }
+
+    #[test]
+    fn body_limit_defaults_to_global() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/items").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.max_request_body_bytes, 10_485_760);
+    }
+
+    #[test]
+    fn body_limit_from_global_config() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "x-plenum-config": { "max_request_body_bytes": 1024 },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.max_request_body_bytes, 1024);
+    }
+
+    #[test]
+    fn body_limit_path_overrides_global() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "x-plenum-config": { "max_request_body_bytes": 1024 },
+            "paths": {
+                "/test": {
+                    "x-plenum-body-limit": 512,
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.max_request_body_bytes, 512);
+    }
+
+    #[test]
+    fn body_limit_operation_overrides_path() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "x-plenum-body-limit": 512,
+                    "get": {
+                        "x-plenum-body-limit": 256,
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.max_request_body_bytes, 256);
     }
 }

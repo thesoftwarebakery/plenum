@@ -9,6 +9,9 @@ fn default_listen() -> String {
 fn default_timeout_ms() -> u64 {
     30_000
 }
+fn default_max_body_bytes() -> u64 {
+    10_485_760
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -25,6 +28,8 @@ pub struct ServerConfig {
     pub plugin_default_timeout_ms: u64,
     #[serde(default = "default_timeout_ms")]
     pub request_timeout_ms: u64,
+    #[serde(default = "default_max_body_bytes")]
+    pub max_request_body_bytes: u64,
 }
 
 impl Default for ServerConfig {
@@ -36,6 +41,7 @@ impl Default for ServerConfig {
             interceptor_default_timeout_ms: default_timeout_ms(),
             plugin_default_timeout_ms: default_timeout_ms(),
             request_timeout_ms: default_timeout_ms(),
+            max_request_body_bytes: default_max_body_bytes(),
         }
     }
 }
@@ -120,6 +126,22 @@ mod tests {
         let json = serde_json::json!({});
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.request_timeout_ms, 30_000);
+    }
+
+    #[test]
+    fn deserializes_max_request_body_bytes() {
+        let json = serde_json::json!({
+            "max_request_body_bytes": 1048576
+        });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.max_request_body_bytes, 1048576);
+    }
+
+    #[test]
+    fn max_request_body_bytes_defaults_to_10mb() {
+        let json = serde_json::json!({});
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.max_request_body_bytes, 10_485_760);
     }
 
     #[test]

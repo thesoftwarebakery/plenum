@@ -26,4 +26,7 @@ pub struct GatewayCtx {
     /// timeout, but can also be used for other cancellation scenarios (client disconnect,
     /// rate limiting, circuit breakers, etc.).
     pub(crate) cancellation: CancellationToken,
+    /// Running tally of inbound request body bytes received across all chunks.
+    /// Incremented in request_body_filter on each chunk; checked against the per-operation limit.
+    pub(crate) request_body_bytes_received: usize,
 }
