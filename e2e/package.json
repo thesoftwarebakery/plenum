@@ -3,6 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "pretest": "cargo run -p plenum-core --bin export_types --manifest-path ../Cargo.toml",
     "test": "vitest run --reporter=verbose",
     "bench": "tsx benchmarks/latency_bench.ts"
   },

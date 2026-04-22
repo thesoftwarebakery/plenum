@@ -32,6 +32,20 @@ pub(crate) fn call_interceptor_blocking(
     Ok((output, result.body))
 }
 
+/// Shallow-merge a ctx object returned by an interceptor or plugin into the user ctx bag.
+///
+/// Top-level keys from `returned` overwrite existing keys; keys absent from `returned`
+/// are preserved.
+pub(crate) fn merge_ctx(
+    user_ctx: &mut serde_json::Map<String, serde_json::Value>,
+    returned: Option<serde_json::Map<String, serde_json::Value>>,
+) {
+    let Some(returned) = returned else { return };
+    for (k, v) in returned {
+        user_ctx.insert(k, v);
+    }
+}
+
 /// Helper to merge interceptor options into the input JSON value.
 pub(crate) fn merge_options(
     input_json: &mut serde_json::Value,
@@ -72,5 +86,38 @@ pub(crate) fn js_body_to_bytes(body: JsBody) -> Bytes {
         JsBody::Json(v) => Bytes::from(serde_json::to_vec(&v).unwrap_or_default()),
         JsBody::Text(s) => Bytes::from(s.into_bytes()),
         JsBody::Bytes(b) => Bytes::from(b),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn merge_ctx_shallow_merges_keys() {
+        let mut user_ctx = serde_json::Map::new();
+        user_ctx.insert("a".to_string(), json!(1));
+        user_ctx.insert("b".to_string(), json!(2));
+
+        let mut returned = serde_json::Map::new();
+        returned.insert("b".to_string(), json!(99));
+        returned.insert("c".to_string(), json!(3));
+
+        merge_ctx(&mut user_ctx, Some(returned));
+
+        assert_eq!(user_ctx["a"], json!(1)); // preserved
+        assert_eq!(user_ctx["b"], json!(99)); // overwritten
+        assert_eq!(user_ctx["c"], json!(3)); // added
+    }
+
+    #[test]
+    fn merge_ctx_none_is_noop() {
+        let mut user_ctx = serde_json::Map::new();
+        user_ctx.insert("x".to_string(), json!(42));
+
+        merge_ctx(&mut user_ctx, None);
+
+        assert_eq!(user_ctx["x"], json!(42));
     }
 }

@@ -95,6 +95,9 @@ pub struct RouteEntry {
     pub buffer_response: bool,
     pub operations: HashMap<Method, OperationSchemas>,
     pub validation_override: Option<ValidationOverride>,
+    /// The OpenAPI path template for this route (e.g. `/users/{id}`).
+    /// Populated in `ctx.gateway.route` for each interceptor/plugin call.
+    pub path: String,
 }
 
 pub type PlenumRouter = Router<Arc<RouteEntry>>;
@@ -522,6 +525,7 @@ pub fn build_router(
             buffer_response: upstream_buffer_response,
             operations,
             validation_override: path_validation,
+            path: path.to_string(),
         });
         router
             .insert(path, entry)

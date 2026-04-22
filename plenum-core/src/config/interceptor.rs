@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Deserialize, Serialize, Default, Clone)]
+/// Sandbox permissions for an interceptor or plugin.
+#[derive(Debug, Deserialize, Serialize, Default, Clone, TS)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionsConfig {
     #[serde(default)]

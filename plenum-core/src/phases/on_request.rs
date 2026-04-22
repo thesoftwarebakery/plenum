@@ -9,7 +9,7 @@ use crate::headers::apply_header_modifications;
 use crate::interceptor::{InterceptorOutput, request_input_from_parts};
 use crate::path_match::OperationSchemas;
 use crate::proxy_utils::{
-    call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_options,
+    call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_ctx, merge_options,
 };
 use crate::request_timeout;
 
@@ -22,10 +22,16 @@ use crate::request_timeout;
 /// own per-interceptor timeout and no budget check is performed.
 pub(crate) async fn run_phase1(
     session: &mut Session,
-    ctx: &GatewayCtx,
+    ctx: &mut GatewayCtx,
     op: &OperationSchemas,
     budget_cap: bool,
 ) -> pingora_core::Result<bool> {
+    let route = ctx
+        .matched_route
+        .as_ref()
+        .map(|r| r.path.clone())
+        .unwrap_or_default();
+
     for hook in &op.interceptors.on_request {
         let timeout = if budget_cap {
             let t = effective_timeout(ctx, op, hook);
@@ -50,6 +56,8 @@ pub(crate) async fn run_phase1(
             &session.req_header().headers,
             ctx.path_params.clone(),
             op.operation_meta.clone(),
+            &route,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());
@@ -69,10 +77,18 @@ pub(crate) async fn run_phase1(
         .instrument(span)
         .await
         {
-            Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    headers,
+                    ctx: returned_ctx,
+                    ..
+                },
+                _,
+            )) => {
                 if let Some(mods) = headers {
                     apply_header_modifications(session.req_header_mut(), &mods);
                 }
+                merge_ctx(&mut ctx.user_ctx, returned_ctx);
             }
             Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
                 session
@@ -135,6 +151,12 @@ pub(crate) async fn run_phase2_body(
         .map(|s| s.to_string());
     let mut current_buf = buf;
 
+    let route = ctx
+        .matched_route
+        .as_ref()
+        .map(|r| r.path.clone())
+        .unwrap_or_default();
+
     for hook in &op.interceptors.on_request {
         let timeout = effective_timeout(ctx, op, hook);
         if ctx.cancellation.is_cancelled() {
@@ -156,6 +178,8 @@ pub(crate) async fn run_phase2_body(
             &session.req_header().headers,
             ctx.path_params.clone(),
             op.operation_meta.clone(),
+            &route,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());
@@ -174,8 +198,14 @@ pub(crate) async fn run_phase2_body(
         .instrument(span)
         .await
         {
-            Ok((InterceptorOutput::Continue { .. }, body_out)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    ctx: returned_ctx, ..
+                },
+                body_out,
+            )) => {
                 current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
+                merge_ctx(&mut ctx.user_ctx, returned_ctx);
             }
             Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
                 session

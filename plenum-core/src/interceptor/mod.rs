@@ -1,24 +1,38 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// Input passed to on_request and before_upstream interceptors.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
 pub struct RequestInput {
     pub method: String,
+    /// The matched OpenAPI path template, e.g. `/users/{id}`.
+    pub route: String,
     pub path: String,
     pub headers: HashMap<String, String>,
     pub query: String,
     pub params: HashMap<String, String>,
+    #[ts(type = "unknown")]
     pub operation: serde_json::Value,
+    /// Request-scoped context bag for passing data between interceptors and plugins.
+    #[ts(type = "Ctx")]
+    pub ctx: serde_json::Value,
 }
 
-/// Input passed to on_response interceptors.
-#[derive(Debug, Serialize)]
+/// Input passed to on_response and on_response_body interceptors.
+#[derive(Debug, Serialize, TS)]
 pub struct ResponseInput {
     pub status: u16,
+    pub method: String,
+    /// The matched OpenAPI path template, e.g. `/users/{id}`.
+    pub route: String,
     pub headers: HashMap<String, String>,
+    #[ts(type = "unknown")]
     pub operation: serde_json::Value,
+    /// Request-scoped context bag for passing data between interceptors and plugins.
+    #[ts(type = "Ctx")]
+    pub ctx: serde_json::Value,
 }
 
 /// Output returned by any interceptor.
@@ -26,7 +40,7 @@ pub struct ResponseInput {
 /// The JS interceptor returns `{ "action": "continue", ... }` to proceed
 /// (optionally modifying headers/status), or `{ "action": "respond", ... }`
 /// to short-circuit with an immediate response.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, TS)]
 #[serde(tag = "action")]
 pub enum InterceptorOutput {
     /// Continue processing. Any fields present are applied as modifications.
@@ -34,9 +48,17 @@ pub enum InterceptorOutput {
     #[serde(rename = "continue")]
     Continue {
         #[serde(default)]
+        #[ts(optional)]
         status: Option<u16>,
         #[serde(default)]
+        #[ts(optional)]
         headers: Option<HashMap<String, Option<String>>>,
+        /// Ctx modifications to merge back into the request-scoped ctx bag.
+        /// Shallow merge: returned keys overwrite; absent keys preserved.
+        /// The `gateway` key is ignored — user-land cannot overwrite gateway-populated keys.
+        #[serde(default)]
+        #[ts(optional, type = "Record<string, unknown>")]
+        ctx: Option<serde_json::Map<String, serde_json::Value>>,
     },
 
     /// Short-circuit: send this response immediately instead of proxying.
@@ -44,8 +66,10 @@ pub enum InterceptorOutput {
     Respond {
         status: u16,
         #[serde(default)]
+        #[ts(optional)]
         headers: Option<HashMap<String, String>>,
         #[serde(default)]
+        #[ts(optional)]
         body: Option<String>,
     },
 }
@@ -57,27 +81,37 @@ pub fn request_input_from_parts(
     headers: &http::HeaderMap,
     params: HashMap<String, String>,
     operation: serde_json::Value,
+    route: &str,
+    ctx: serde_json::Value,
 ) -> RequestInput {
     RequestInput {
         method: method.to_string(),
+        route: route.to_string(),
         path: uri.path().to_string(),
         headers: header_map_to_hash_map(headers),
         query: uri.query().unwrap_or("").to_string(),
         params,
         operation,
+        ctx,
     }
 }
 
 /// Build a `ResponseInput` from an HTTP response's components.
 pub fn response_input_from_parts(
     status: http::StatusCode,
+    method: &str,
+    route: &str,
     headers: &http::HeaderMap,
     operation: serde_json::Value,
+    ctx: serde_json::Value,
 ) -> ResponseInput {
     ResponseInput {
         status: status.as_u16(),
+        method: method.to_string(),
+        route: route.to_string(),
         headers: header_map_to_hash_map(headers),
         operation,
+        ctx,
     }
 }
 
@@ -106,9 +140,14 @@ mod tests {
             serde_json::from_value(json!({"action": "continue"})).unwrap();
 
         match output {
-            InterceptorOutput::Continue { status, headers } => {
+            InterceptorOutput::Continue {
+                status,
+                headers,
+                ctx,
+            } => {
                 assert!(status.is_none());
                 assert!(headers.is_none());
+                assert!(ctx.is_none());
             }
             _ => panic!("expected Continue"),
         }
@@ -212,6 +251,37 @@ mod tests {
     }
 
     #[test]
+    fn deserializes_continue_with_ctx() {
+        let output: InterceptorOutput = serde_json::from_value(json!({
+            "action": "continue",
+            "ctx": {"userTier": "pro", "tokenCost": 420}
+        }))
+        .unwrap();
+
+        match output {
+            InterceptorOutput::Continue { ctx, .. } => {
+                let c = ctx.unwrap();
+                assert_eq!(c["userTier"], "pro");
+                assert_eq!(c["tokenCost"], 420);
+            }
+            _ => panic!("expected Continue"),
+        }
+    }
+
+    #[test]
+    fn deserializes_continue_without_ctx_is_none() {
+        let output: InterceptorOutput =
+            serde_json::from_value(json!({"action": "continue"})).unwrap();
+
+        match output {
+            InterceptorOutput::Continue { ctx, .. } => {
+                assert!(ctx.is_none());
+            }
+            _ => panic!("expected Continue"),
+        }
+    }
+
+    #[test]
     fn rejects_invalid_action() {
         let result = serde_json::from_value::<InterceptorOutput>(json!({"action": "invalid"}));
         assert!(result.is_err());
@@ -229,6 +299,7 @@ mod tests {
     fn request_input_serializes_correctly() {
         let input = RequestInput {
             method: "POST".into(),
+            route: "/items/{id}".into(),
             path: "/items/123".into(),
             headers: HashMap::from([
                 ("content-type".into(), "application/json".into()),
@@ -237,6 +308,7 @@ mod tests {
             query: "page=1".into(),
             params: HashMap::from([("id".into(), "123".into())]),
             operation: serde_json::Value::Null,
+            ctx: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&input).unwrap();
         assert_eq!(json["method"], "POST");
@@ -252,8 +324,11 @@ mod tests {
     fn response_input_serializes_correctly() {
         let input = ResponseInput {
             status: 200,
+            method: "GET".into(),
+            route: "/items".into(),
             headers: HashMap::from([("x-request-id".into(), "abc".into())]),
             operation: serde_json::Value::Null,
+            ctx: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&input).unwrap();
         assert_eq!(json["status"], 200);
@@ -275,8 +350,11 @@ mod tests {
             &headers,
             HashMap::new(),
             serde_json::Value::Null,
+            "/items",
+            serde_json::Value::Null,
         );
         assert_eq!(input.method, "GET");
+        assert_eq!(input.route, "/items");
         assert_eq!(input.path, "/items");
         assert_eq!(input.query, "page=2&limit=10");
         assert_eq!(input.headers.get("x-custom").unwrap(), "value");
@@ -290,8 +368,15 @@ mod tests {
         let headers = http::HeaderMap::new();
         let params = HashMap::from([("id".to_string(), "42".to_string())]);
 
-        let input =
-            request_input_from_parts(&method, &uri, &headers, params, serde_json::Value::Null);
+        let input = request_input_from_parts(
+            &method,
+            &uri,
+            &headers,
+            params,
+            serde_json::Value::Null,
+            "/items/{id}",
+            serde_json::Value::Null,
+        );
         assert_eq!(input.params.get("id").unwrap(), "42");
     }
 
@@ -301,8 +386,17 @@ mod tests {
         let mut headers = http::HeaderMap::new();
         headers.insert("content-type", "text/plain".parse().unwrap());
 
-        let input = response_input_from_parts(status, &headers, serde_json::Value::Null);
+        let input = response_input_from_parts(
+            status,
+            "GET",
+            "/items/{id}",
+            &headers,
+            serde_json::Value::Null,
+            serde_json::Value::Null,
+        );
         assert_eq!(input.status, 404);
+        assert_eq!(input.method, "GET");
+        assert_eq!(input.route, "/items/{id}");
         assert_eq!(input.headers.get("content-type").unwrap(), "text/plain");
     }
 }

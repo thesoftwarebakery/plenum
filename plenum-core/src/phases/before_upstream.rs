@@ -6,7 +6,7 @@ use crate::effective_timeout;
 use crate::headers::apply_header_modifications;
 use crate::interceptor::{InterceptorOutput, request_input_from_parts};
 use crate::path_match::OperationSchemas;
-use crate::proxy_utils::{call_interceptor, merge_options};
+use crate::proxy_utils::{call_interceptor, merge_ctx, merge_options};
 
 /// Prepare upstream request headers and run before_upstream interceptors.
 ///
@@ -15,7 +15,7 @@ use crate::proxy_utils::{call_interceptor, merge_options};
 /// need raw bytes. Then runs before_upstream interceptors with budget-capped timeouts.
 pub(crate) async fn run(
     upstream_request: &mut RequestHeader,
-    ctx: &GatewayCtx,
+    ctx: &mut GatewayCtx,
     op: &OperationSchemas,
 ) -> pingora_core::Result<()> {
     // When on_request is configured, the body may be modified in request_body_filter.
@@ -40,6 +40,12 @@ pub(crate) async fn run(
             .ok();
     }
 
+    let route = ctx
+        .matched_route
+        .as_ref()
+        .map(|r| r.path.clone())
+        .unwrap_or_default();
+
     for hook in &op.interceptors.before_upstream {
         let timeout = effective_timeout(ctx, op, hook);
         if ctx.cancellation.is_cancelled() {
@@ -53,6 +59,8 @@ pub(crate) async fn run(
             &upstream_request.headers,
             ctx.path_params.clone(),
             op.operation_meta.clone(),
+            &route,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());
@@ -72,10 +80,18 @@ pub(crate) async fn run(
         .instrument(span)
         .await
         {
-            Ok((InterceptorOutput::Continue { headers, .. }, _)) => {
+            Ok((
+                InterceptorOutput::Continue {
+                    headers,
+                    ctx: returned_ctx,
+                    ..
+                },
+                _,
+            )) => {
                 if let Some(mods) = &headers {
                     apply_header_modifications(upstream_request, mods);
                 }
+                merge_ctx(&mut ctx.user_ctx, returned_ctx);
             }
             Ok((InterceptorOutput::Respond { .. }, _)) => {
                 log::warn!(
