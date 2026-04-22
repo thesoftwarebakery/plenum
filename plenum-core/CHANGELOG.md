@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.5.0](https://github.com/thesoftwarebakery/plenum/compare/v0.4.0...v0.5.0) (2026-04-22)
+
+
+### Features
+
+* enforce inbound body size limits with 413 on excess ([1a70490](https://github.com/thesoftwarebakery/plenum/commit/1a70490fbaf6b36babd54d6bf0d723b9484a3d30)), closes [#67](https://github.com/thesoftwarebakery/plenum/issues/67)
+* inbound body size limits (413 on excess) ([b4296bd](https://github.com/thesoftwarebakery/plenum/commit/b4296bdd7c61bcb44b88d642aedb67590bf0b6e9))
+
+
+### Bug Fixes
+
+* remove broken schema_validation bench left over from validation removal ([b2930be](https://github.com/thesoftwarebakery/plenum/commit/b2930bed8627baf8d75902d2a21a3cd28847e55a))
+
 ## [0.4.0](https://github.com/thesoftwarebakery/plenum/compare/v0.3.0...v0.4.0) (2026-04-21)
 
 
