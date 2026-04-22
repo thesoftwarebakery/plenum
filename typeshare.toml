@@ -1,5 +1,0 @@
-# TypeScript type generation is handled by ts-rs, not typeshare.
-# Regenerate sdk/plenum-generated.ts with:
-#   cargo run -p plenum-core --bin export_types
-#
-# This runs automatically via the e2e pretest hook (npm test in e2e/).

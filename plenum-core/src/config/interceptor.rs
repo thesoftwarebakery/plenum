@@ -3,7 +3,6 @@ use ts_rs::TS;
 
 /// Sandbox permissions for an interceptor or plugin.
 #[derive(Debug, Deserialize, Serialize, Default, Clone, TS)]
-#[ts(export)]
 #[serde(deny_unknown_fields)]
 pub struct PermissionsConfig {
     #[serde(default)]

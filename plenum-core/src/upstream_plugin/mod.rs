@@ -8,8 +8,7 @@ use crate::interceptor::{
 };
 use crate::path_match::{OperationSchemas, PluginHandle};
 use crate::proxy_utils::{
-    build_call_ctx, call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_ctx,
-    merge_options,
+    call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_ctx, merge_options,
 };
 use bytes::{BufMut, BytesMut};
 use pingora_proxy::Session;
@@ -21,9 +20,10 @@ use ts_rs::TS;
 /// Note: the request body is injected at the top level of the input by the JS
 /// runtime and is accessible as `input.body` in JavaScript.
 #[derive(Serialize, TS)]
-#[ts(export)]
 pub struct PluginRequest {
     pub method: String,
+    /// The matched OpenAPI path template, e.g. `/users/{id}`.
+    pub route: String,
     pub path: String,
     pub query: String,
     pub headers: HashMap<String, String>,
@@ -32,7 +32,6 @@ pub struct PluginRequest {
 
 /// Input passed to a plugin's `handle()` function.
 #[derive(Serialize, TS)]
-#[ts(export)]
 pub struct PluginInput {
     pub request: PluginRequest,
     #[ts(type = "unknown")]
@@ -46,7 +45,6 @@ pub struct PluginInput {
 /// Output returned by a plugin's `handle()` function.
 /// The response body is extracted separately by the JS runtime.
 #[derive(Deserialize, Default, TS)]
-#[ts(export)]
 pub struct PluginOutput {
     #[ts(optional)]
     pub status: Option<u16>,
@@ -108,14 +106,14 @@ pub(crate) async fn dispatch(
         let mut current_buf = buf;
         for hook in &op.interceptors.on_request {
             let js_body = js_body_from_content_type(content_type.as_deref(), &current_buf);
-            let call_ctx = build_call_ctx(&ctx.user_ctx, &route, &method);
             let input = request_input_from_parts(
                 &session.req_header().method,
                 &session.req_header().uri,
                 &session.req_header().headers,
                 ctx.path_params.clone(),
                 op.operation_meta.clone(),
-                call_ctx,
+                &route,
+                serde_json::Value::Object(ctx.user_ctx.clone()),
             );
             let mut input_json = serde_json::to_value(&input).unwrap();
             merge_options(&mut input_json, hook.options.as_ref());
@@ -174,14 +172,14 @@ pub(crate) async fn dispatch(
     // Step A: before_upstream interceptors
     let mut request_headers = session.req_header().headers.clone();
     for hook in &op.interceptors.before_upstream {
-        let call_ctx = build_call_ctx(&ctx.user_ctx, &route, &method);
         let input = request_input_from_parts(
             &session.req_header().method,
             &session.req_header().uri,
             &request_headers,
             ctx.path_params.clone(),
             op.operation_meta.clone(),
-            call_ctx,
+            &route,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());
@@ -238,10 +236,10 @@ pub(crate) async fn dispatch(
     }
 
     // Step B: call plugin handle()
-    let plugin_ctx = build_call_ctx(&ctx.user_ctx, &route, &method);
     let plugin_input = PluginInput {
         request: PluginRequest {
             method: session.req_header().method.to_string(),
+            route: route.clone(),
             path: session.req_header().uri.path().to_string(),
             query: session.req_header().uri.query().unwrap_or("").to_string(),
             headers: header_map_to_hash_map(&request_headers),
@@ -249,7 +247,7 @@ pub(crate) async fn dispatch(
         },
         config: backend_config.unwrap_or(serde_json::Value::Null),
         operation: op.operation_meta.clone(),
-        ctx: plugin_ctx,
+        ctx: serde_json::Value::Object(ctx.user_ctx.clone()),
     };
     let js_body = js_body_from_content_type(
         session
@@ -299,12 +297,13 @@ pub(crate) async fn dispatch(
             .iter()
             .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
             .collect();
-        let call_ctx = build_call_ctx(&ctx.user_ctx, &route, &method);
         let input = response_input_from_parts(
             http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
+            &method,
+            &route,
             &headers_hashmap_to_http_headermap(&effective_headers),
             op.operation_meta.clone(),
-            call_ctx,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());
@@ -372,12 +371,13 @@ pub(crate) async fn dispatch(
             .iter()
             .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
             .collect();
-        let call_ctx = build_call_ctx(&ctx.user_ctx, &route, &method);
         let input = response_input_from_parts(
             http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
+            &method,
+            &route,
             &headers_hashmap_to_http_headermap(&effective_headers),
             op.operation_meta.clone(),
-            call_ctx,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());

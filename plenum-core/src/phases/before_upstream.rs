@@ -6,7 +6,7 @@ use crate::effective_timeout;
 use crate::headers::apply_header_modifications;
 use crate::interceptor::{InterceptorOutput, request_input_from_parts};
 use crate::path_match::OperationSchemas;
-use crate::proxy_utils::{build_call_ctx, call_interceptor, merge_ctx, merge_options};
+use crate::proxy_utils::{call_interceptor, merge_ctx, merge_options};
 
 /// Prepare upstream request headers and run before_upstream interceptors.
 ///
@@ -45,7 +45,6 @@ pub(crate) async fn run(
         .as_ref()
         .map(|r| r.path.clone())
         .unwrap_or_default();
-    let method = upstream_request.method.to_string();
 
     for hook in &op.interceptors.before_upstream {
         let timeout = effective_timeout(ctx, op, hook);
@@ -54,14 +53,14 @@ pub(crate) async fn run(
             break;
         }
 
-        let call_ctx = build_call_ctx(&ctx.user_ctx, &route, &method);
         let input = request_input_from_parts(
             &upstream_request.method,
             &upstream_request.uri,
             &upstream_request.headers,
             ctx.path_params.clone(),
             op.operation_meta.clone(),
-            call_ctx,
+            &route,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());

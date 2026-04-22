@@ -11,10 +11,10 @@
  *   on_request → [gateway stages, e.g. rate limiting] → before_upstream → upstream → on_response → on_response_body
  *
  * Context bag:
- *   - `ctx` is passed into every interceptor and plugin call
- *   - `ctx.gateway` is populated by the gateway (read-only for user-land code)
- *   - Interceptors/plugins can read and write any other top-level key
+ *   - `ctx` is a plain user-land object passed into every interceptor and plugin call
+ *   - Interceptors/plugins can read and write any key
  *   - Returned `ctx` modifications are shallow-merged before the next invocation
+ *   - Gateway metadata (route, method) is available as first-class fields on the input struct
  *
  * Regenerate plenum-generated.ts:
  *   cargo run -p plenum-core --bin export_types
@@ -28,30 +28,15 @@
 export type JsonValue = unknown;
 
 // ---------------------------------------------------------------------------
-// Gateway-populated ctx sub-object
-// ---------------------------------------------------------------------------
-
-/** Gateway-populated fields under `ctx.gateway`. Read-only for user-land code. */
-export interface GatewayCtx {
-  /** The matched OpenAPI path template, e.g. `/users/{id}`. */
-  route: string;
-  /** The HTTP method of the request, e.g. `GET`. */
-  method: string;
-}
-
-// ---------------------------------------------------------------------------
 // Request-scoped context bag
 // ---------------------------------------------------------------------------
 
 /**
  * The request-scoped context bag.
- * User-land code can read and write any key except `gateway`.
- * `gateway` is always overwritten by the gateway before each call.
+ * User-land code can freely read and write any key.
+ * Shallow-merged between interceptor/plugin invocations within a request.
  */
-export interface Ctx {
-  gateway: GatewayCtx;
-  [key: string]: JsonValue;
-}
+export type Ctx = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
 // Re-export generated types (all except PluginInput — extended below)

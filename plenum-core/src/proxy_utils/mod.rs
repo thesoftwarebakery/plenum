@@ -32,37 +32,17 @@ pub(crate) fn call_interceptor_blocking(
     Ok((output, result.body))
 }
 
-/// Build the `ctx` object passed to every interceptor and plugin call.
-///
-/// Merges the user-land ctx with a `gateway` sub-object containing route-level
-/// metadata populated by the gateway. The `gateway` key always takes precedence —
-/// user-land code cannot overwrite it.
-pub(crate) fn build_call_ctx(
-    user_ctx: &serde_json::Map<String, serde_json::Value>,
-    route: &str,
-    method: &str,
-) -> serde_json::Value {
-    let mut ctx = user_ctx.clone();
-    ctx.insert(
-        "gateway".to_string(),
-        serde_json::json!({ "route": route, "method": method }),
-    );
-    serde_json::Value::Object(ctx)
-}
-
 /// Shallow-merge a ctx object returned by an interceptor or plugin into the user ctx bag.
 ///
 /// Top-level keys from `returned` overwrite existing keys; keys absent from `returned`
-/// are preserved. The `gateway` key is stripped — user-land code cannot overwrite it.
+/// are preserved.
 pub(crate) fn merge_ctx(
     user_ctx: &mut serde_json::Map<String, serde_json::Value>,
     returned: Option<serde_json::Map<String, serde_json::Value>>,
 ) {
     let Some(returned) = returned else { return };
     for (k, v) in returned {
-        if k != "gateway" {
-            user_ctx.insert(k, v);
-        }
+        user_ctx.insert(k, v);
     }
 }
 
@@ -115,30 +95,6 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn build_call_ctx_includes_user_keys_and_gateway_sub_object() {
-        let mut user_ctx = serde_json::Map::new();
-        user_ctx.insert("userTier".to_string(), json!("pro"));
-
-        let ctx = build_call_ctx(&user_ctx, "/users/{id}", "GET");
-
-        assert_eq!(ctx["userTier"], "pro");
-        assert_eq!(ctx["gateway"]["route"], "/users/{id}");
-        assert_eq!(ctx["gateway"]["method"], "GET");
-    }
-
-    #[test]
-    fn build_call_ctx_overwrites_user_gateway_key() {
-        // user-land cannot set ctx.gateway — it gets overwritten
-        let mut user_ctx = serde_json::Map::new();
-        user_ctx.insert("gateway".to_string(), json!({"route": "attacker"}));
-
-        let ctx = build_call_ctx(&user_ctx, "/real", "POST");
-
-        assert_eq!(ctx["gateway"]["route"], "/real");
-        assert_eq!(ctx["gateway"]["method"], "POST");
-    }
-
-    #[test]
     fn merge_ctx_shallow_merges_keys() {
         let mut user_ctx = serde_json::Map::new();
         user_ctx.insert("a".to_string(), json!(1));
@@ -153,20 +109,6 @@ mod tests {
         assert_eq!(user_ctx["a"], json!(1)); // preserved
         assert_eq!(user_ctx["b"], json!(99)); // overwritten
         assert_eq!(user_ctx["c"], json!(3)); // added
-    }
-
-    #[test]
-    fn merge_ctx_strips_gateway_key() {
-        let mut user_ctx = serde_json::Map::new();
-
-        let mut returned = serde_json::Map::new();
-        returned.insert("gateway".to_string(), json!({"route": "hacked"}));
-        returned.insert("legit".to_string(), json!("yes"));
-
-        merge_ctx(&mut user_ctx, Some(returned));
-
-        assert!(!user_ctx.contains_key("gateway"));
-        assert_eq!(user_ctx["legit"], "yes");
     }
 
     #[test]

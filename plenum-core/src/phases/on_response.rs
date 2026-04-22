@@ -8,8 +8,8 @@ use crate::headers::apply_header_modifications;
 use crate::interceptor::{InterceptorOutput, response_input_from_parts};
 use crate::path_match::OperationSchemas;
 use crate::proxy_utils::{
-    build_call_ctx, call_interceptor, call_interceptor_blocking, js_body_from_content_type,
-    js_body_to_bytes, merge_ctx, merge_options,
+    call_interceptor, call_interceptor_blocking, js_body_from_content_type, js_body_to_bytes,
+    merge_ctx, merge_options,
 };
 
 /// Run on_response interceptors with budget-capped timeouts.
@@ -37,12 +37,13 @@ pub(crate) async fn run(
             break;
         }
 
-        let call_ctx = build_call_ctx(&ctx.user_ctx, route, method);
         let input = response_input_from_parts(
             upstream_response.status,
+            method,
+            route,
             &upstream_response.headers,
             op.operation_meta.clone(),
-            call_ctx,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());
@@ -126,12 +127,13 @@ pub(crate) fn run_body(
 
         let js_body =
             js_body_from_content_type(ctx.upstream_response_content_type.as_deref(), &current_buf);
-        let call_ctx = build_call_ctx(&ctx.user_ctx, &route, &method);
         let input = response_input_from_parts(
             status,
+            &method,
+            &route,
             &http::HeaderMap::new(),
             op.operation_meta.clone(),
-            call_ctx,
+            serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
         merge_options(&mut input_json, hook.options.as_ref());

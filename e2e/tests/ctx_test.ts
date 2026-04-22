@@ -45,7 +45,7 @@ test("ctx written in on_request is readable in on_response", async () => {
   }
 });
 
-test("ctx.gateway.route and ctx.gateway.method are populated", async () => {
+test("input.route and input.method are populated on interceptor input", async () => {
   const network = await new Network().start();
   const wiremock = await startWiremock({ network, alias: "wiremock" });
   const gateway = await startGateway({
