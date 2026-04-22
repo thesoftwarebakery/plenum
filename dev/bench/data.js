@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776858509696,
+  "lastUpdate": 1776877373634,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -216,6 +216,78 @@ window.BENCHMARK_DATA = {
             "value": 6.097,
             "unit": "ms",
             "extra": "n=6038"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "george@bakes.software",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "george@bakes.software",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "distinct": true,
+          "id": "7e6bedf78247b6d09099b89fe7dfba59f7abdcea",
+          "message": "chore: update .gitignore",
+          "timestamp": "2026-04-22T17:59:58+01:00",
+          "tree_id": "1c9d551dc9b7bfbf64bab23de00b1cf3c8627faa",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/7e6bedf78247b6d09099b89fe7dfba59f7abdcea"
+        },
+        "date": 1776877372377,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 1.358,
+            "unit": "ms",
+            "extra": "n=7362"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 7.531,
+            "unit": "ms",
+            "extra": "n=7362"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 1.273,
+            "unit": "ms",
+            "extra": "n=7859"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 6.386,
+            "unit": "ms",
+            "extra": "n=7859"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.445,
+            "unit": "ms",
+            "extra": "n=6921"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 6.013,
+            "unit": "ms",
+            "extra": "n=6921"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.582,
+            "unit": "ms",
+            "extra": "n=6323"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 5.589,
+            "unit": "ms",
+            "extra": "n=6323"
           }
         ]
       }
