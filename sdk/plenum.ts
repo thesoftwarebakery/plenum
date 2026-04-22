@@ -132,7 +132,6 @@ export interface PluginInput {
     query: string;
     headers: Record<string, string>;
     params: Record<string, string>;
-    body?: JsonValue;
   };
   /** The `x-plenum-backend` value for this operation. Opaque to the gateway. */
   config: JsonValue;
@@ -140,6 +139,14 @@ export interface PluginInput {
   operation: JsonValue;
   /** The request-scoped context bag. */
   ctx: Ctx;
+  /**
+   * The parsed request body. Injected at the top level of the input object by
+   * the JS runtime. JSON bodies are parsed objects; text bodies are strings;
+   * binary bodies are base64 strings (check `bodyEncoding === "base64"`).
+   */
+  body?: JsonValue;
+  /** Present and set to `"base64"` when `body` is a base64-encoded binary. */
+  bodyEncoding?: string;
 }
 
 /** Output returned by a plugin's `handle()` function. */
