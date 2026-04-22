@@ -69,6 +69,7 @@ impl ProxyHttp for Plenum {
             path_params: HashMap::new(),
             request_start: None,
             cancellation: CancellationToken::new(),
+            request_body_bytes_received: 0,
         }
     }
 
@@ -206,31 +207,7 @@ impl ProxyHttp for Plenum {
         let Some(op) = route_arc.operations.get(&method) else {
             return Ok(());
         };
-
-        if op.interceptors.on_request.is_empty() {
-            return Ok(());
-        }
-
-        // Buffer chunks until end_of_stream
-        if let Some(b) = body {
-            ctx.request_body_buf.put(b.as_ref());
-            b.clear();
-        }
-
-        if end_of_stream {
-            let buf = ctx.request_body_buf.split().freeze();
-
-            let final_buf = match phases::on_request::run_phase2_body(session, ctx, op, buf).await?
-            {
-                Some(b) => b,
-                None => return Ok(()), // short-circuited (filter_responded already set)
-            };
-
-            if !final_buf.is_empty() {
-                *body = Some(final_buf);
-            }
-        }
-
+        phases::on_request::run_body_filter(session, body, end_of_stream, ctx, op).await?;
         Ok(())
     }
 

@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use plenum_core::interceptor::{InterceptorOutput, RequestInput};
-use plenum_core::validation::schema::CompiledSchema;
 
 // ---------------------------------------------------------------------------
 // Route matching
@@ -37,38 +36,6 @@ fn bench_route_matching(c: &mut Criterion) {
             },
         );
     }
-    group.finish();
-}
-
-// ---------------------------------------------------------------------------
-// JSON schema validation
-// ---------------------------------------------------------------------------
-
-fn bench_schema_validation(c: &mut Criterion) {
-    let schema_json = serde_json::json!({
-        "type": "object",
-        "properties": {
-            "name":  { "type": "string" },
-            "email": { "type": "string", "format": "email" },
-            "age":   { "type": "integer", "minimum": 0 }
-        },
-        "required": ["name", "email"]
-    });
-    let schema = CompiledSchema::compile(&schema_json).unwrap();
-
-    let valid = serde_json::json!({"name": "Alice", "email": "alice@example.com", "age": 30});
-    let invalid = serde_json::json!({"age": "not-a-number"});
-
-    let mut group = c.benchmark_group("schema_validation");
-
-    group.bench_function("valid_input", |b| {
-        b.iter(|| schema.validate(&valid).unwrap());
-    });
-
-    group.bench_function("invalid_input", |b| {
-        b.iter(|| schema.validate(&invalid).unwrap_err());
-    });
-
     group.finish();
 }
 
@@ -122,7 +89,6 @@ fn bench_interceptor_serialization(c: &mut Criterion) {
 criterion_group!(
     benches,
     bench_route_matching,
-    bench_schema_validation,
     bench_interceptor_serialization
 );
 criterion_main!(benches);

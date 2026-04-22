@@ -33,6 +33,11 @@ impl GatewayError {
         Self::new(503, message)
     }
 
+    /// 413 Payload Too Large — the inbound request body exceeded the configured limit.
+    pub fn payload_too_large(message: impl std::fmt::Display) -> Self {
+        Self::new(413, message)
+    }
+
     /// 504 Gateway Timeout — the upstream did not respond in time.
     pub fn gateway_timeout(message: impl std::fmt::Display) -> Self {
         Self::new(504, message)
@@ -72,5 +77,14 @@ mod tests {
         assert_eq!(GatewayError::bad_gateway("x").status, 502);
         assert_eq!(GatewayError::service_unavailable("x").status, 503);
         assert_eq!(GatewayError::gateway_timeout("x").status, 504);
+        assert_eq!(GatewayError::payload_too_large("x").status, 413);
+    }
+
+    #[test]
+    fn payload_too_large_has_correct_status() {
+        let e = GatewayError::payload_too_large("request body too large");
+        assert_eq!(e.status, 413);
+        let v: serde_json::Value = serde_json::from_slice(&e.body()).unwrap();
+        assert_eq!(v["error"], "request body too large");
     }
 }

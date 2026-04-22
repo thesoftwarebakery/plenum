@@ -1,0 +1,11 @@
+overlay: 1.1.0
+info:
+  title: Add on_request interceptor to /with-interceptor
+  version: 1.0.0
+actions:
+  - target: $.paths["/with-interceptor"].post
+    update:
+      x-plenum-interceptor:
+        - module: /config/interceptors/add-header.js
+          hook: on_request
+          function: onRequest
