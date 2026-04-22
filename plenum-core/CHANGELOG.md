@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.6.0](https://github.com/thesoftwarebakery/plenum/compare/v0.5.0...v0.6.0) (2026-04-22)
+
+
+### Features
+
+* introduce PluginInput/PluginOutput structs, support header removal ([2c3c359](https://github.com/thesoftwarebakery/plenum/commit/2c3c3596350b9687aeff660f4e20c0d024650cac))
+* move route/method onto input structs, make ctx purely user-land ([6306cca](https://github.com/thesoftwarebakery/plenum/commit/6306ccaff4530f772092bb0fc4e27b14d539e49e))
+* replace typeshare with ts-rs for TypeScript type generation ([b8b60cf](https://github.com/thesoftwarebakery/plenum/commit/b8b60cf1f14ed772d8d1bc0b587fc627fd251622))
+* request-scoped ctx bag for interceptors and plugins ([1ad8d8e](https://github.com/thesoftwarebakery/plenum/commit/1ad8d8ef8b07d519e150e546bc38da93ac27b678))
+* request-scoped ctx bag for interceptors and plugins ([07c8492](https://github.com/thesoftwarebakery/plenum/commit/07c849234676c8a5c8d4241509268a03ec21e47f))
+
+
+### Bug Fixes
+
+* apply cargo fmt, fix clippy bench error, fix echo plugin input.body ([b74373f](https://github.com/thesoftwarebakery/plenum/commit/b74373f38768af7c401ad948151f9caaa0f97104))
+
 ## [0.5.0](https://github.com/thesoftwarebakery/plenum/compare/v0.4.0...v0.5.0) (2026-04-22)
 
 
