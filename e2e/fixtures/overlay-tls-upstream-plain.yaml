@@ -1,0 +1,11 @@
+overlay: 1.1.0
+info:
+  title: TLS test — plain HTTP upstream (wiremock)
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        kind: "HTTP"
+        address: "wiremock"
+        port: 8080

@@ -307,10 +307,42 @@ pub fn build_router(
                 ..
             }
         );
-        let upstream = match &upstream_config {
-            UpstreamConfig::HTTP { address, port, .. } => {
-                Upstream::Http(Box::new(make_peer(address, *port)))
+        // Validate TLS config before building the upstream.
+        if let UpstreamConfig::HTTP {
+            tls,
+            tls_verify,
+            address,
+            port,
+            ..
+        } = &upstream_config
+        {
+            if tls_verify.is_some() && !tls {
+                return Err(format!(
+                    "path '{}': upstream {}:{}: `tls-verify` is set but `tls` is false — \
+                     `tls-verify` only applies when `tls: true`",
+                    path, address, port
+                )
+                .into());
             }
+            if *tls_verify == Some(false) {
+                log::warn!(
+                    "path '{}': TLS VERIFICATION DISABLED for upstream {}:{} — \
+                     DO NOT USE IN PRODUCTION",
+                    path,
+                    address,
+                    port
+                );
+            }
+        }
+
+        let upstream = match &upstream_config {
+            UpstreamConfig::HTTP {
+                address,
+                port,
+                tls,
+                tls_verify,
+                ..
+            } => Upstream::Http(Box::new(make_peer(address, *port, *tls, *tls_verify))),
             UpstreamConfig::Plugin {
                 plugin,
                 options,
@@ -1666,5 +1698,61 @@ mod tests {
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 256);
+    }
+
+    #[test]
+    fn rejects_tls_verify_without_tls() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": { "responses": { "200": { "description": "ok" } } },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080,
+                        "tls-verify": false
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(result.is_err());
+        let err = result.err().unwrap().to_string();
+        assert!(
+            err.contains("tls-verify"),
+            "expected error mentioning tls-verify, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn accepts_tls_upstream() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": { "responses": { "200": { "description": "ok" } } },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 443,
+                        "tls": true
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, Path::new("/"));
+        assert!(
+            result.is_ok(),
+            "expected Ok for TLS upstream, got: {:?}",
+            result.err()
+        );
     }
 }

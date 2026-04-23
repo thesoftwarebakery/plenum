@@ -1,0 +1,15 @@
+openapi: 3.1.0
+info:
+  title: TLS Test API
+  version: 1.0.0
+paths:
+  /proxy:
+    get:
+      operationId: tlsProxy
+      responses:
+        "200":
+          description: Proxied response
+          content:
+            application/json:
+              schema:
+                type: object

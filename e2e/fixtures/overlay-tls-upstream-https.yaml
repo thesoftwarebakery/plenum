@@ -1,0 +1,12 @@
+overlay: 1.1.0
+info:
+  title: TLS test — HTTPS upstream (Node.js HTTPS echo server)
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        kind: "HTTP"
+        address: "upstream-tls"
+        port: 443
+        tls: true
