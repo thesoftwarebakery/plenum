@@ -7,7 +7,7 @@
     "build:fixtures": "tsc -p tsconfig.fixtures.json",
     "pretest": "pnpm run build:types && pnpm run build:fixtures",
     "test": "vitest run --reporter=verbose",
-    "prebench": "pnpm run build:fixtures",
+    "prebench": "pnpm run build:types && pnpm run build:fixtures",
     "bench": "tsx benchmarks/latency_bench.ts"
   },
   "devDependencies": {
