@@ -3,7 +3,7 @@ FROM node:22-bookworm-slim AS node-runtime-builder
 RUN corepack enable pnpm
 
 WORKDIR /usr/src/plenum
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY plenum-js-runtime/node-runtime/package.json plenum-js-runtime/node-runtime/
 RUN pnpm install --filter plenum-node-runtime --prod --frozen-lockfile
 COPY plenum-js-runtime/node-runtime/ plenum-js-runtime/node-runtime/
