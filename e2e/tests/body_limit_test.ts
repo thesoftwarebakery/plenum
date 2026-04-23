@@ -101,6 +101,7 @@ describe("body size limits", () => {
   });
 
   test("returns 413 before interceptor runs when body exceeds limit", async () => {
+    await wm.resetRequests();
     // /with-interceptor has a 50-byte limit and an on_request interceptor.
     // The 413 must fire before the interceptor, so wiremock must never receive the request.
     const body = "x".repeat(100);
