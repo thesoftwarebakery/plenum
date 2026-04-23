@@ -51,10 +51,6 @@ jobs:
       - name: Run benchmarks
         run: cd e2e && pnpm run bench
 
-      - name: Debug working tree changes
-        if: always()
-        run: git diff && git status
-
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
         with:
