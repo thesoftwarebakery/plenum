@@ -47,25 +47,8 @@ export type {
   RequestInput,
   ResponseInput,
   InterceptorOutput,
+  InterceptorReturn,
   PluginRequest,
   PluginInput,
   PluginOutput,
 } from "./plenum-generated";
-
-// ---------------------------------------------------------------------------
-// Interceptor return type — what JS actually returns (before runtime body extraction)
-// ---------------------------------------------------------------------------
-
-/**
- * What a JS interceptor function returns.
- *
- * This differs from `InterceptorOutput` because the JS runtime extracts the
- * `body` field from the return value before Rust deserialises the remainder.
- * As a result, `body` can be any JSON-serialisable value on either variant.
- *
- * `InterceptorOutput` is the Rust deserialisation target (post-extraction);
- * `InterceptorReturn` is the JS-facing contract (pre-extraction).
- */
-export type InterceptorReturn =
-  | { action: "continue"; status?: number; headers?: Record<string, string | null>; ctx?: Record<string, unknown>; body?: unknown }
-  | { action: "respond"; status: number; headers?: Record<string, string>; body?: unknown };

@@ -74,6 +74,46 @@ pub enum InterceptorOutput {
     },
 }
 
+/// What a JS interceptor function actually returns (before the runtime extracts
+/// the `body` field).
+///
+/// This differs from [`InterceptorOutput`] because the JS runtime extracts `body`
+/// from the return value before Rust deserialises the remainder. As a result,
+/// `body` can be any JSON-serialisable value on either variant.
+///
+/// Used only for TypeScript type generation — never instantiated at runtime.
+#[derive(Serialize, TS)]
+#[serde(tag = "action")]
+#[ts(rename = "InterceptorReturn")]
+pub enum JsInterceptorOutput {
+    #[serde(rename = "continue")]
+    Continue {
+        #[serde(default)]
+        #[ts(optional)]
+        status: Option<u16>,
+        #[serde(default)]
+        #[ts(optional)]
+        headers: Option<HashMap<String, Option<String>>>,
+        #[serde(default)]
+        #[ts(optional, type = "Record<string, unknown>")]
+        ctx: Option<serde_json::Map<String, serde_json::Value>>,
+        #[serde(default)]
+        #[ts(optional, type = "unknown")]
+        body: Option<serde_json::Value>,
+    },
+
+    #[serde(rename = "respond")]
+    Respond {
+        status: u16,
+        #[serde(default)]
+        #[ts(optional)]
+        headers: Option<HashMap<String, String>>,
+        #[serde(default)]
+        #[ts(optional, type = "unknown")]
+        body: Option<serde_json::Value>,
+    },
+}
+
 /// The actual shape of the input object that JS on_request / before_upstream
 /// interceptors receive. Includes runtime-injected fields not present on the
 /// base [`RequestInput`] struct.
