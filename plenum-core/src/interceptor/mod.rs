@@ -74,6 +74,52 @@ pub enum InterceptorOutput {
     },
 }
 
+/// The actual shape of the input object that JS on_request / before_upstream
+/// interceptors receive. Includes runtime-injected fields not present on the
+/// base [`RequestInput`] struct.
+///
+/// Used only for TypeScript type generation — never instantiated at runtime.
+#[derive(Serialize, TS)]
+#[ts(rename = "RequestInput")]
+pub struct JsRequestInput {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    base: RequestInput,
+    /// Per-interceptor options from the overlay config, injected by `merge_options()`.
+    #[ts(optional, type = "unknown")]
+    options: Option<serde_json::Value>,
+    /// Request body, injected by the JS runtime.
+    #[ts(optional, type = "unknown")]
+    body: Option<serde_json::Value>,
+    /// Set to `"base64"` when `body` is a base64-encoded binary.
+    #[serde(rename = "bodyEncoding")]
+    #[ts(optional)]
+    body_encoding: Option<String>,
+}
+
+/// The actual shape of the input object that JS on_response / on_response_body
+/// interceptors receive. Includes runtime-injected fields not present on the
+/// base [`ResponseInput`] struct.
+///
+/// Used only for TypeScript type generation — never instantiated at runtime.
+#[derive(Serialize, TS)]
+#[ts(rename = "ResponseInput")]
+pub struct JsResponseInput {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    base: ResponseInput,
+    /// Per-interceptor options from the overlay config, injected by `merge_options()`.
+    #[ts(optional, type = "unknown")]
+    options: Option<serde_json::Value>,
+    /// Response body (on_response_body only), injected by the JS runtime.
+    #[ts(optional, type = "unknown")]
+    body: Option<serde_json::Value>,
+    /// Set to `"base64"` when `body` is a base64-encoded binary.
+    #[serde(rename = "bodyEncoding")]
+    #[ts(optional)]
+    body_encoding: Option<String>,
+}
+
 /// Build a `RequestInput` from an HTTP request's components.
 pub fn request_input_from_parts(
     method: &http::Method,

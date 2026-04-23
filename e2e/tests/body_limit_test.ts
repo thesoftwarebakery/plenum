@@ -130,9 +130,7 @@ describe("body size limits", () => {
     const resp = await fetch(`${gateway.baseUrl}/echo`, {
       method: "POST",
       headers: { "Content-Type": "text/plain" },
-      // @ts-expect-error Node.js fetch accepts ReadableStream as body
       body: stream,
-      // @ts-expect-error Node.js fetch duplex option
       duplex: "half",
     });
     expect(resp.status).toEqual(413);

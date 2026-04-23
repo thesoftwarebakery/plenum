@@ -39,7 +39,7 @@ export type JsonValue = unknown;
 export type Ctx = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
-// Re-export generated types (all except PluginInput — extended below)
+// Re-export all generated types
 // ---------------------------------------------------------------------------
 
 export type {
@@ -48,29 +48,24 @@ export type {
   ResponseInput,
   InterceptorOutput,
   PluginRequest,
+  PluginInput,
   PluginOutput,
 } from "./plenum-generated";
 
 // ---------------------------------------------------------------------------
-// Plugin input — generated struct extended with runtime-injected body fields
+// Interceptor return type — what JS actually returns (before runtime body extraction)
 // ---------------------------------------------------------------------------
 
-import type { PluginInput as _PluginInput } from "./plenum-generated";
-
 /**
- * Input passed to a plugin's `handle()` function.
+ * What a JS interceptor function returns.
  *
- * Structured fields (request, config, operation, ctx) come from the Rust
- * PluginInput struct. The JS runtime additionally injects the request body
- * at the top level of the object before calling `handle()`.
+ * This differs from `InterceptorOutput` because the JS runtime extracts the
+ * `body` field from the return value before Rust deserialises the remainder.
+ * As a result, `body` can be any JSON-serialisable value on either variant.
+ *
+ * `InterceptorOutput` is the Rust deserialisation target (post-extraction);
+ * `InterceptorReturn` is the JS-facing contract (pre-extraction).
  */
-export interface PluginInput extends _PluginInput {
-  /**
-   * The parsed request body. Injected at the top level by the JS runtime.
-   * JSON bodies are parsed objects; text bodies are strings;
-   * binary bodies are base64 strings (check `bodyEncoding === "base64"`).
-   */
-  body?: JsonValue;
-  /** Present and set to `"base64"` when `body` is a base64-encoded binary. */
-  bodyEncoding?: string;
-}
+export type InterceptorReturn =
+  | { action: "continue"; status?: number; headers?: Record<string, string | null>; ctx?: Record<string, unknown>; body?: unknown }
+  | { action: "respond"; status: number; headers?: Record<string, string>; body?: unknown };

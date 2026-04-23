@@ -42,8 +42,11 @@ export async function startGateway(opts: {
     // Wait for an HTTP response from any path — even a 404 (unmatched route)
     // confirms the gateway is initialised and serving. This is more reliable than
     // waiting for port binding alone, especially under parallel test load.
-    .withWaitStrategy(Wait.forHttp('/nonexistent', GATEWAY_PORT).forResponsePredicate(() => true))
-    .withPrivilegedMode(opts.privileged ?? false);
+    .withWaitStrategy(Wait.forHttp('/nonexistent', GATEWAY_PORT).forResponsePredicate(() => true));
+
+  if (opts.privileged) {
+    builder = builder.withPrivilegedMode();
+  }
 
   if (opts.environment) {
     builder = builder.withEnvironment(opts.environment);

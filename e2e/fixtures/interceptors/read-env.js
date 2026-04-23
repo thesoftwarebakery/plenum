@@ -1,8 +1,9 @@
-exports.readEnv = function readEnv(request) {
-  var envVar = request.options && request.options.envVar;
-  var value = process.env[envVar];
-  return {
-    action: "continue",
-    headers: { "x-env-value": value || "not-set" }
-  };
-};
+export function readEnv(request) {
+    const opts = request.options;
+    const envVar = opts?.envVar;
+    const value = envVar ? process.env[envVar] : undefined;
+    return {
+        action: "continue",
+        headers: { "x-env-value": value || "not-set" }
+    };
+}

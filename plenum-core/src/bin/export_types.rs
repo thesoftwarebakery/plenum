@@ -6,8 +6,8 @@
 /// This is invoked automatically by `e2e/package.json`'s `pretest` script.
 use plenum_core::{
     config::PermissionsConfig,
-    interceptor::{InterceptorOutput, RequestInput, ResponseInput},
-    upstream_plugin::{PluginInput, PluginOutput, PluginRequest},
+    interceptor::{InterceptorOutput, JsRequestInput, JsResponseInput},
+    upstream_plugin::{JsPluginInput, PluginOutput, PluginRequest},
 };
 use std::fmt::Write as _;
 use ts_rs::TS;
@@ -32,14 +32,14 @@ fn main() {
 
     for decl in [
         PermissionsConfig::decl(),
-        RequestInput::decl(),
-        ResponseInput::decl(),
+        JsRequestInput::decl(),
+        JsResponseInput::decl(),
         InterceptorOutput::decl(),
         PluginRequest::decl(),
-        PluginInput::decl(),
+        JsPluginInput::decl(),
         PluginOutput::decl(),
     ] {
-        writeln!(buf, "{decl}").unwrap();
+        writeln!(buf, "export {decl}").unwrap();
         writeln!(buf).unwrap();
     }
 

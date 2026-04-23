@@ -1,7 +1,8 @@
-exports.onRequest = function onRequest(req) {
-  if (req.body && req.body.flagged === true) {
-    var newBody = Object.assign({}, req.body, { flagChecked: true });
-    return { action: "continue", body: newBody };
-  }
-  return { action: "continue" };
-};
+export function onRequest(req) {
+    const body = req.body;
+    if (body && body.flagged === true) {
+        const newBody = Object.assign({}, body, { flagChecked: true });
+        return { action: "continue", body: newBody };
+    }
+    return { action: "continue" };
+}

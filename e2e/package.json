@@ -3,18 +3,23 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "pretest": "cargo run -p plenum-core --bin export_types --manifest-path ../Cargo.toml",
+    "build:types": "cargo run -p plenum-core --bin export_types --manifest-path ../Cargo.toml",
+    "build:fixtures": "tsc -p tsconfig.fixtures.json",
+    "pretest": "pnpm run build:types && pnpm run build:fixtures",
     "test": "vitest run --reporter=verbose",
     "bench": "tsx benchmarks/latency_bench.ts"
   },
   "devDependencies": {
+    "@plenum/types": "workspace:*",
     "@types/node": "^22",
+    "@types/pg": "^8.20.0",
     "mongodb": "^6.12.0",
     "mysql2": "^3.12.0",
     "pg": "^8.16.0",
     "testcontainers": "^11",
     "tinybench": "^6.0.0",
     "tsx": "^4",
+    "typescript": "^5",
     "vitest": "^3"
   }
 }
