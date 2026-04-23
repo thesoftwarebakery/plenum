@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776937403694,
+  "lastUpdate": 1776948294900,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -432,6 +432,78 @@ window.BENCHMARK_DATA = {
             "value": 4.839,
             "unit": "ms",
             "extra": "n=7967"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "7ac83d85ef9d18bafabfdea65d2187f51f4b2d17",
+          "message": "Merge pull request #97 from thesoftwarebakery/worktree-ts-fixtures-pnpm\n\nchore: migrate e2e fixtures to TypeScript with pnpm workspaces",
+          "timestamp": "2026-04-23T13:39:59+01:00",
+          "tree_id": "3b967b6ebcf3d52d5db8b91294f466b17a01028b",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/7ac83d85ef9d18bafabfdea65d2187f51f4b2d17"
+        },
+        "date": 1776948294183,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 1.227,
+            "unit": "ms",
+            "extra": "n=8148"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 5.77,
+            "unit": "ms",
+            "extra": "n=8148"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 1.205,
+            "unit": "ms",
+            "extra": "n=8298"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 5.372,
+            "unit": "ms",
+            "extra": "n=8298"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.4,
+            "unit": "ms",
+            "extra": "n=7145"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 5.293,
+            "unit": "ms",
+            "extra": "n=7145"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.7,
+            "unit": "ms",
+            "extra": "n=5881"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 5.678,
+            "unit": "ms",
+            "extra": "n=5881"
           }
         ]
       }
