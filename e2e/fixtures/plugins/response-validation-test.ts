@@ -1,3 +1,5 @@
+import type { PluginInput, PluginOutput } from '@plenum/types';
+
 /**
  * Test plugin for response validation e2e tests.
  * Returns a valid or invalid response based on the x-plenum-backend config.
@@ -6,12 +8,12 @@
  *   x-plenum-backend: { mode: "invalid" }  -> returns { wrong_field: "no id here" }
  */
 
-exports.init = function init(_options) {
+export function init(_options: unknown): Record<string, unknown> {
   return {};
-};
+}
 
-exports.handle = function handle(input) {
-  const mode = input.config && input.config.mode;
+export function handle(input: PluginInput): PluginOutput & { body?: unknown } {
+  const mode = (input.config as Record<string, unknown> | undefined)?.mode;
   if (mode === "valid") {
     return {
       status: 200,
@@ -25,4 +27,4 @@ exports.handle = function handle(input) {
     headers: { "content-type": "application/json" },
     body: { wrong_field: "no id here" },
   };
-};
+}

@@ -1,8 +1,10 @@
+import type { RequestInput, InterceptorOutput } from '@plenum/types';
+
 /**
  * on_request interceptor: reads x-user-tier header and stashes it in ctx.
  * Also verifies that input.route and input.method are populated.
  */
-export function setCtx(input) {
+export function setCtx(input: RequestInput): InterceptorOutput {
   const userTier = input.headers['x-user-tier'] || 'unknown';
 
   // Verify gateway-populated input fields are present

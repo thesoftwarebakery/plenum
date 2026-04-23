@@ -47,6 +47,7 @@ fn bench_interceptor_serialization(c: &mut Criterion) {
     // Realistic request input with a handful of headers.
     let input = RequestInput {
         method: "POST".to_string(),
+        route: "/api/v1/orders".to_string(),
         path: "/api/v1/orders".to_string(),
         query: "page=1&limit=20".to_string(),
         headers: {

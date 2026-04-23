@@ -55,6 +55,25 @@ pub struct PluginOutput {
     pub ctx: Option<serde_json::Map<String, serde_json::Value>>,
 }
 
+/// The actual shape of the input object that JS plugin `handle()` receives.
+/// Includes runtime-injected body fields not present on the base [`PluginInput`].
+///
+/// Used only for TypeScript type generation — never instantiated at runtime.
+#[derive(Serialize, TS)]
+#[ts(rename = "PluginInput")]
+pub struct JsPluginInput {
+    #[serde(flatten)]
+    #[ts(flatten)]
+    base: PluginInput,
+    /// The parsed request body, injected by the JS runtime.
+    #[ts(optional, type = "unknown")]
+    body: Option<serde_json::Value>,
+    /// Set to `"base64"` when `body` is a base64-encoded binary.
+    #[serde(rename = "bodyEncoding")]
+    #[ts(optional)]
+    body_encoding: Option<String>,
+}
+
 /// Handle a plugin route request end-to-end:
 /// reads the request body, runs interceptors, calls the plugin handle(), runs response
 /// interceptors, and writes the response to the downstream session.

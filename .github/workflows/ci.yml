@@ -24,11 +24,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: plenum-js-runtime/node-runtime/package-lock.json
+
+      - name: Install pnpm
+        run: corepack enable pnpm
 
       - name: Install node-runtime dependencies
-        run: npm ci --prefix plenum-js-runtime/node-runtime
+        run: pnpm install --filter plenum-node-runtime --frozen-lockfile
 
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -63,14 +64,15 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install pnpm
+        run: corepack enable pnpm
 
       - name: Install e2e dependencies
-        run: npm ci --prefix e2e
+        run: pnpm install --filter plenum-e2e --frozen-lockfile
 
       - name: Run E2E tests
-        run: cd e2e && npm test
+        run: cd e2e && pnpm test
 
       - name: Collect container logs on failure
         if: failure()

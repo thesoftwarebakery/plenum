@@ -1,8 +1,11 @@
 target
 .worktrees
+node_modules/
 sdk/plenum-generated.ts
 .claude/worktrees/
 .claude/settings.local.json
-interceptors/node_modules/
-sdk/node_modules/
 .DS_Store
+
+# Compiled fixture JS (source is .ts)
+e2e/fixtures/interceptors/*.js
+e2e/fixtures/plugins/*.js

@@ -34,18 +34,22 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Setup Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: e2e/package-lock.json
+
+      - name: Install pnpm
+        run: corepack enable pnpm
 
       - name: Install e2e dependencies
-        run: npm ci --prefix e2e
+        run: pnpm install --filter plenum-e2e --frozen-lockfile
 
       - name: Run benchmarks
-        run: npm run bench --prefix e2e
+        run: cd e2e && pnpm run bench
 
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1

@@ -1,8 +1,10 @@
-exports.init = function init(options) {
-  return {};
-};
+import type { PluginInput, PluginOutput } from '@plenum/types';
 
-exports.handle = function handle(input) {
+export function init(_options: unknown): Record<string, unknown> {
+  return {};
+}
+
+export function handle(input: PluginInput): PluginOutput & { body?: unknown } {
   return {
     status: 200,
     headers: {
@@ -19,4 +21,4 @@ exports.handle = function handle(input) {
       operation: input.operation,
     },
   };
-};
+}

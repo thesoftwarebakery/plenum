@@ -1,0 +1,6 @@
+packages:
+  - sdk
+  - e2e
+  - plenum-js-runtime/node-runtime
+
+injectWorkspacePackages: true

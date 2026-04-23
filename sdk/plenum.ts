@@ -39,7 +39,7 @@ export type JsonValue = unknown;
 export type Ctx = Record<string, unknown>;
 
 // ---------------------------------------------------------------------------
-// Re-export generated types (all except PluginInput — extended below)
+// Re-export all generated types
 // ---------------------------------------------------------------------------
 
 export type {
@@ -47,30 +47,8 @@ export type {
   RequestInput,
   ResponseInput,
   InterceptorOutput,
+  InterceptorReturn,
   PluginRequest,
+  PluginInput,
   PluginOutput,
 } from "./plenum-generated";
-
-// ---------------------------------------------------------------------------
-// Plugin input — generated struct extended with runtime-injected body fields
-// ---------------------------------------------------------------------------
-
-import type { PluginInput as _PluginInput } from "./plenum-generated";
-
-/**
- * Input passed to a plugin's `handle()` function.
- *
- * Structured fields (request, config, operation, ctx) come from the Rust
- * PluginInput struct. The JS runtime additionally injects the request body
- * at the top level of the object before calling `handle()`.
- */
-export interface PluginInput extends _PluginInput {
-  /**
-   * The parsed request body. Injected at the top level by the JS runtime.
-   * JSON bodies are parsed objects; text bodies are strings;
-   * binary bodies are base64 strings (check `bodyEncoding === "base64"`).
-   */
-  body?: JsonValue;
-  /** Present and set to `"base64"` when `body` is a base64-encoded binary. */
-  bodyEncoding?: string;
-}

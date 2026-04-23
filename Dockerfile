@@ -1,9 +1,13 @@
 FROM node:22-bookworm-slim AS node-runtime-builder
 
-WORKDIR /usr/src/plenum/node-runtime
-COPY plenum-js-runtime/node-runtime/package.json plenum-js-runtime/node-runtime/package-lock.json ./
-RUN npm ci --omit=dev
-COPY plenum-js-runtime/node-runtime/ ./
+RUN corepack enable pnpm
+
+WORKDIR /usr/src/plenum
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY plenum-js-runtime/node-runtime/package.json plenum-js-runtime/node-runtime/
+RUN pnpm install --filter plenum-node-runtime --prod --frozen-lockfile
+COPY plenum-js-runtime/node-runtime/ plenum-js-runtime/node-runtime/
+RUN pnpm --filter plenum-node-runtime deploy /usr/src/plenum/node-runtime-deploy --prod
 
 FROM lukemathwalker/cargo-chef:latest-rust-1.93-bookworm AS chef
 
@@ -45,6 +49,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /usr/src/plenum/target/release/plenum-core /usr/local/bin/plenum-core
 # Place node-runtime alongside the binary so locate_server_script() finds it.
-COPY --from=node-runtime-builder /usr/src/plenum/node-runtime /usr/local/bin/node-runtime
+COPY --from=node-runtime-builder /usr/src/plenum/node-runtime-deploy /usr/local/bin/node-runtime
 
 ENTRYPOINT ["/usr/local/bin/plenum-core"]
