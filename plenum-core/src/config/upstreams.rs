@@ -61,6 +61,28 @@ pub enum UpstreamConfig {
     },
 }
 
+impl UpstreamConfig {
+    /// Emit any security-relevant warnings for this upstream configuration.
+    /// Call once per route at startup after the config has been parsed.
+    pub fn emit_security_warnings(&self, path: &str) {
+        if let UpstreamConfig::HTTP {
+            tls_verify: Some(false),
+            address,
+            port,
+            ..
+        } = self
+        {
+            log::warn!(
+                "path '{}': TLS VERIFICATION DISABLED for upstream \
+                 {}:{} — DO NOT USE IN PRODUCTION",
+                path,
+                address,
+                port
+            );
+        }
+    }
+}
+
 impl<'de> serde::Deserialize<'de> for UpstreamConfig {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

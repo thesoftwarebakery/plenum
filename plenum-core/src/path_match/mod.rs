@@ -307,21 +307,7 @@ pub fn build_router(
                 ..
             }
         );
-        if let UpstreamConfig::HTTP {
-            tls_verify: Some(false),
-            address,
-            port,
-            ..
-        } = &upstream_config
-        {
-            log::warn!(
-                "path '{}': TLS VERIFICATION DISABLED for upstream {}:{} — \
-                 DO NOT USE IN PRODUCTION",
-                path,
-                address,
-                port
-            );
-        }
+        upstream_config.emit_security_warnings(path);
 
         let upstream = match &upstream_config {
             UpstreamConfig::HTTP {
