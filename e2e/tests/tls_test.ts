@@ -36,15 +36,23 @@ function httpsGet(url: string, caPath: string): Promise<{ status: number; body: 
   });
 }
 
-/** Collect all container log output as a string. */
+/**
+ * Collect container log output as a string.
+ * Docker log streams stay open while the container runs and never emit 'end',
+ * so we collect for a short window then close the stream. Startup logs (including
+ * the TLS verification warning) are already buffered by the time the gateway is
+ * ready, so they arrive in the first data events.
+ */
 async function containerLogs(container: StartedTestContainer): Promise<string> {
   const stream = await container.logs();
-  return new Promise<string>((resolve, reject) => {
-    const chunks: string[] = [];
+  const chunks: string[] = [];
+  await new Promise<void>((resolve) => {
     stream.on('data', (c: Buffer | string) => chunks.push(c.toString()));
-    stream.on('end', () => resolve(chunks.join('')));
-    stream.on('error', reject);
+    stream.on('error', resolve);
+    setTimeout(resolve, 1_000);
   });
+  stream.destroy();
+  return chunks.join('');
 }
 
 // ---------------------------------------------------------------------------
