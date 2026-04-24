@@ -307,32 +307,20 @@ pub fn build_router(
                 ..
             }
         );
-        // Validate TLS config before building the upstream.
         if let UpstreamConfig::HTTP {
-            tls,
-            tls_verify,
+            tls_verify: Some(false),
             address,
             port,
             ..
         } = &upstream_config
         {
-            if tls_verify.is_some() && !tls {
-                return Err(format!(
-                    "path '{}': upstream {}:{}: `tls-verify` is set but `tls` is false — \
-                     `tls-verify` only applies when `tls: true`",
-                    path, address, port
-                )
-                .into());
-            }
-            if *tls_verify == Some(false) {
-                log::warn!(
-                    "path '{}': TLS VERIFICATION DISABLED for upstream {}:{} — \
-                     DO NOT USE IN PRODUCTION",
-                    path,
-                    address,
-                    port
-                );
-            }
+            log::warn!(
+                "path '{}': TLS VERIFICATION DISABLED for upstream {}:{} — \
+                 DO NOT USE IN PRODUCTION",
+                path,
+                address,
+                port
+            );
         }
 
         let upstream = match &upstream_config {

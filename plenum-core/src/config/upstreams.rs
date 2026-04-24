@@ -82,6 +82,12 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
             "HTTP" => {
                 let fields: HttpUpstreamFields =
                     serde_json::from_value(remaining).map_err(serde::de::Error::custom)?;
+                if fields.tls_verify.is_some() && !fields.tls {
+                    return Err(serde::de::Error::custom(
+                        "`tls-verify` is set but `tls` is false — \
+                         `tls-verify` only applies when `tls: true`",
+                    ));
+                }
                 Ok(UpstreamConfig::HTTP {
                     address: fields.address,
                     port: fields.port,
@@ -256,6 +262,26 @@ mod tests {
         });
         let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
         assert!(result.is_err(), "expected error for misspelled tls-verfy");
+    }
+
+    #[test]
+    fn rejects_tls_verify_without_tls() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "address": "127.0.0.1",
+            "port": 80,
+            "tls-verify": false
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected error when tls-verify is set without tls: true"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("tls-verify"),
+            "error should mention tls-verify, got: {err}"
+        );
     }
 
     #[test]
