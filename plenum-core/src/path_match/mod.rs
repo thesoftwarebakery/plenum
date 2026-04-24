@@ -17,7 +17,7 @@ use crate::config::{
     Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
 };
 use crate::openapi::operation::build_operation_meta;
-use crate::upstream_http::make_peer;
+use crate::upstream_peer::make_peer;
 
 /// Handle to a spawned backend plugin runtime (Node.js out-of-process).
 pub struct PluginHandle {

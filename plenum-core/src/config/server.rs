@@ -77,6 +77,49 @@ impl Default for ServerConfig {
     }
 }
 
+impl ServerConfig {
+    /// Expand env vars, resolve relative paths against `config_base`, and
+    /// validate that all configured cert/key/CA files exist on disk.
+    ///
+    /// Call this once after deserialization, before using any path fields.
+    pub fn resolve_paths(&mut self, config_base: &str) -> Result<(), String> {
+        if let Some(tls) = self.tls.as_mut() {
+            tls.cert_path = resolve_path_field(&tls.cert_path, config_base, "tls.cert_path")?;
+            tls.key_path = resolve_path_field(&tls.key_path, config_base, "tls.key_path")?;
+        }
+        if let Some(ca_file) = self.ca_file.as_mut() {
+            *ca_file = resolve_path_field(ca_file, config_base, "ca_file")?;
+        }
+        Ok(())
+    }
+}
+
+/// Expand env vars in `s`, resolve it relative to `config_base` if not absolute,
+/// then verify the resulting path exists. Returns the final absolute path.
+fn resolve_path_field(s: &str, config_base: &str, field: &str) -> Result<String, String> {
+    // Env var expansion: reuse the same logic as upstream config paths.
+    let expanded = super::resolve_env_vars(serde_json::Value::String(s.to_string()))
+        .map_err(|e| format!("{field}: {e}"))?;
+    let expanded = expanded.as_str().unwrap_or_default();
+
+    // Resolve relative paths against the config directory.
+    let path = if std::path::Path::new(expanded).is_absolute() {
+        expanded.to_string()
+    } else {
+        std::path::Path::new(config_base)
+            .join(expanded)
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    // Fail loudly before pingora gets a chance to panic on a missing file.
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("{field} not found: {path}"));
+    }
+
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
