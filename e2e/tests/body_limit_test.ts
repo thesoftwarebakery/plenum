@@ -40,6 +40,15 @@ describe("body size limits", () => {
   beforeEach(async () => {
     await wm.reset();
     await wm.resetRequests();
+    // Wiremock logs requests asynchronously — a previous test's proxied request
+    // can arrive after resetRequests() returns. Poll until the log is confirmed
+    // empty so tests start from a clean baseline.
+    for (let i = 0; i < 20; i++) {
+      const pending = await wm.getRequests();
+      if (pending.length === 0) break;
+      await wm.resetRequests();
+      await new Promise((r) => setTimeout(r, 100));
+    }
   });
 
   test("returns 413 when body exceeds global limit", async () => {
@@ -101,7 +110,6 @@ describe("body size limits", () => {
   });
 
   test("returns 413 before interceptor runs when body exceeds limit", async () => {
-    await wm.resetRequests();
     // /with-interceptor has a 50-byte limit and an on_request interceptor.
     // The 413 must fire before the interceptor, so wiremock must never receive the request.
     const body = "x".repeat(100);
