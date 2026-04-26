@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.8.0](https://github.com/thesoftwarebakery/plenum/compare/v0.7.0...v0.8.0) (2026-04-26)
+
+
+### Features
+
+* load balancing and health checks for HTTP upstreams ([4426160](https://github.com/thesoftwarebakery/plenum/commit/442616032e94ac259faa97611fd620606384a4a8))
+
+
+### Bug Fixes
+
+* resolve clippy collapsible_if warnings ([463acb5](https://github.com/thesoftwarebakery/plenum/commit/463acb58eeef2fa4c1326863a5353a8c6e9f902e))
+
+
+### Performance Improvements
+
+* avoid write lock on passive_failures in common case ([fa27d38](https://github.com/thesoftwarebakery/plenum/commit/fa27d38211e4d4bc2f694ac51f0a67b0efb5ab9d))
+
 ## [0.7.0](https://github.com/thesoftwarebakery/plenum/compare/v0.6.0...v0.7.0) (2026-04-26)
 
 
