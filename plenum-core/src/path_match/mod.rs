@@ -14,8 +14,10 @@ use pingora_core::upstreams::peer::HttpPeer;
 use plenum_js_runtime::PluginRuntime;
 
 use crate::config::{
-    Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
+    Config, CorsConfig, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride,
+    resolve_env_vars,
 };
+use crate::cors;
 use crate::openapi::operation::build_operation_meta;
 use crate::upstream_peer::make_peer;
 
@@ -83,6 +85,8 @@ pub struct OperationSchemas {
     pub request_timeout: Duration,
     /// Maximum inbound request body size in bytes, resolved from operation > path > global default.
     pub max_request_body_bytes: u64,
+    /// CORS configuration for this operation, if `x-plenum-cors` is present.
+    pub cors: Option<CorsConfig>,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -469,6 +473,21 @@ pub fn build_router(
             let backend_config: Option<serde_json::Value> =
                 operation.extensions.get("plenum-backend").cloned();
 
+            // Operation-level CORS config
+            let cors: Option<CorsConfig> = operation
+                .extensions
+                .get("plenum-cors")
+                .map(|v| serde_json::from_value::<CorsConfig>(v.clone()))
+                .transpose()
+                .map_err(|e| format!("path '{}' method {}: x-plenum-cors: {}", path, method, e))?;
+
+            // Validate CORS config at boot time
+            if let Some(ref cors_config) = cors {
+                cors::validate_cors_config(cors_config).map_err(|e| {
+                    format!("path '{}' method {}: {}", path, method, e)
+                })?;
+            }
+
             // Curated operation metadata for runtime use by plugins/interceptors
             let operation_meta = build_operation_meta(operation, &config.spec);
 
@@ -481,6 +500,7 @@ pub fn build_router(
                     operation_meta,
                     request_timeout,
                     max_request_body_bytes,
+                    cors,
                 },
             );
         }
