@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1776948294900,
+  "lastUpdate": 1777216419383,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -504,6 +504,78 @@ window.BENCHMARK_DATA = {
             "value": 5.678,
             "unit": "ms",
             "extra": "n=5881"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ff8632b94b82a9a95bfecfdd5f0e2ca6846330f2",
+          "message": "Merge pull request #98 from thesoftwarebakery/worktree-tls-support\n\nfeat: TLS support — inbound listener and HTTPS upstreams",
+          "timestamp": "2026-04-26T16:02:40+01:00",
+          "tree_id": "868308db2a71515c522e6884fa200ad77224a2fb",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/ff8632b94b82a9a95bfecfdd5f0e2ca6846330f2"
+        },
+        "date": 1777216418557,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 1.439,
+            "unit": "ms",
+            "extra": "n=6951"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 6.405,
+            "unit": "ms",
+            "extra": "n=6951"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 1.285,
+            "unit": "ms",
+            "extra": "n=7780"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 4.434,
+            "unit": "ms",
+            "extra": "n=7780"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.494,
+            "unit": "ms",
+            "extra": "n=6692"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 3.867,
+            "unit": "ms",
+            "extra": "n=6692"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.7,
+            "unit": "ms",
+            "extra": "n=5883"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 5.78,
+            "unit": "ms",
+            "extra": "n=5883"
           }
         ]
       }
