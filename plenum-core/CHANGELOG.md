@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.7.0](https://github.com/thesoftwarebakery/plenum/compare/v0.6.0...v0.7.0) (2026-04-26)
+
+
+### Features
+
+* TLS support — inbound listener and HTTPS upstreams ([ff8632b](https://github.com/thesoftwarebakery/plenum/commit/ff8632b94b82a9a95bfecfdd5f0e2ca6846330f2))
+* TLS support — inbound listener and HTTPS upstreams ([#65](https://github.com/thesoftwarebakery/plenum/issues/65)) ([7e9143a](https://github.com/thesoftwarebakery/plenum/commit/7e9143a7f1c354a0bdf9ec9b0796f3126a64b6f1))
+
+
+### Bug Fixes
+
+* enforce request body size limit on plugin upstream routes ([05c1023](https://github.com/thesoftwarebakery/plenum/commit/05c1023ba346c14f17b8e722f6339d8c90c06dcc))
+* enforce request body size limit on plugin upstream routes ([47d6e6b](https://github.com/thesoftwarebakery/plenum/commit/47d6e6bbb90dab7fa42a6f39f0db03802644b309)), closes [#99](https://github.com/thesoftwarebakery/plenum/issues/99)
+
 ## [0.6.0](https://github.com/thesoftwarebakery/plenum/compare/v0.5.0...v0.6.0) (2026-04-22)
 
 
