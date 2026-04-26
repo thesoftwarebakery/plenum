@@ -3,6 +3,86 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::Value;
 
+use crate::request_context::ContextRef;
+
+// ---------------------------------------------------------------------------
+// Selection algorithm
+// ---------------------------------------------------------------------------
+
+/// Backend selection strategy for multi-upstream HTTP routes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SelectionAlgorithm {
+    #[default]
+    RoundRobin,
+    Weighted,
+    Consistent,
+}
+
+impl SelectionAlgorithm {
+    fn from_str(s: &str) -> Result<Self, String> {
+        match s {
+            "round-robin" => Ok(Self::RoundRobin),
+            "weighted" => Ok(Self::Weighted),
+            "consistent" => Ok(Self::Consistent),
+            other => Err(format!(
+                "unknown selection algorithm '{other}'; expected \
+                 'round-robin', 'weighted', or 'consistent'"
+            )),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Health check config
+// ---------------------------------------------------------------------------
+
+fn default_hc_interval() -> u64 {
+    10
+}
+fn default_hc_status() -> u16 {
+    200
+}
+fn default_one() -> usize {
+    1
+}
+
+/// Active health check configuration for multi-upstream HTTP routes.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct HealthCheckConfig {
+    pub path: String,
+    #[serde(default = "default_hc_interval", rename = "interval-seconds")]
+    pub interval_seconds: u64,
+    #[serde(default = "default_hc_status", rename = "expected-status")]
+    pub expected_status: u16,
+    #[serde(default = "default_one", rename = "consecutive-success")]
+    pub consecutive_success: usize,
+    #[serde(default = "default_one", rename = "consecutive-failure")]
+    pub consecutive_failure: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Backend entry
+// ---------------------------------------------------------------------------
+
+fn default_weight() -> usize {
+    1
+}
+
+/// A single backend in a multi-upstream pool.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct BackendEntry {
+    pub address: String,
+    pub port: u16,
+    #[serde(default = "default_weight")]
+    pub weight: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Serde helper structs (private)
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct HttpUpstreamFields {
@@ -14,6 +94,24 @@ struct HttpUpstreamFields {
     tls: bool,
     #[serde(default, rename = "tls-verify")]
     tls_verify: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HttpPoolUpstreamFields {
+    backends: Vec<BackendEntry>,
+    #[serde(default, rename = "buffer-response")]
+    buffer_response: bool,
+    #[serde(default)]
+    tls: bool,
+    #[serde(default, rename = "tls-verify")]
+    tls_verify: Option<bool>,
+    #[serde(default)]
+    selection: Option<String>,
+    #[serde(default, rename = "hash-key")]
+    hash_key: Option<String>,
+    #[serde(default, rename = "health-check")]
+    health_check: Option<HealthCheckConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,8 +136,13 @@ struct StaticUpstreamFields {
     body: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// UpstreamConfig
+// ---------------------------------------------------------------------------
+
 #[derive(Debug)]
 pub enum UpstreamConfig {
+    /// Single HTTP upstream — direct proxy with zero load-balancing overhead.
     HTTP {
         address: String,
         port: u16,
@@ -47,6 +150,17 @@ pub enum UpstreamConfig {
         tls: bool,
         /// `None` means "use default" (true). Only takes effect when `tls` is true.
         tls_verify: Option<bool>,
+    },
+    /// Multi-upstream HTTP pool with load balancing and optional health checks.
+    HTTPPool {
+        backends: Vec<BackendEntry>,
+        buffer_response: bool,
+        tls: bool,
+        tls_verify: Option<bool>,
+        selection: SelectionAlgorithm,
+        /// Parsed `${{...}}` context reference for consistent hashing key.
+        hash_key: Option<ContextRef>,
+        health_check: Option<HealthCheckConfig>,
     },
     Plugin {
         plugin: String,
@@ -65,20 +179,38 @@ impl UpstreamConfig {
     /// Emit any security-relevant warnings for this upstream configuration.
     /// Call once per route at startup after the config has been parsed.
     pub fn emit_security_warnings(&self, path: &str) {
-        if let UpstreamConfig::HTTP {
-            tls_verify: Some(false),
-            address,
-            port,
-            ..
-        } = self
-        {
-            log::warn!(
-                "path '{}': TLS VERIFICATION DISABLED for upstream \
-                 {}:{} — DO NOT USE IN PRODUCTION",
-                path,
+        match self {
+            UpstreamConfig::HTTP {
+                tls_verify: Some(false),
                 address,
-                port
-            );
+                port,
+                ..
+            } => {
+                log::warn!(
+                    "path '{}': TLS VERIFICATION DISABLED for upstream \
+                     {}:{} — DO NOT USE IN PRODUCTION",
+                    path,
+                    address,
+                    port
+                );
+            }
+            UpstreamConfig::HTTPPool {
+                tls_verify: Some(false),
+                backends,
+                ..
+            } => {
+                let addrs: Vec<String> = backends
+                    .iter()
+                    .map(|b| format!("{}:{}", b.address, b.port))
+                    .collect();
+                log::warn!(
+                    "path '{}': TLS VERIFICATION DISABLED for upstream pool \
+                     [{}] — DO NOT USE IN PRODUCTION",
+                    path,
+                    addrs.join(", ")
+                );
+            }
+            _ => {}
         }
     }
 }
@@ -102,21 +234,70 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
 
         match kind_str {
             "HTTP" => {
-                let fields: HttpUpstreamFields =
-                    serde_json::from_value(remaining).map_err(serde::de::Error::custom)?;
-                if fields.tls_verify.is_some() && !fields.tls {
-                    return Err(serde::de::Error::custom(
-                        "`tls-verify` is set but `tls` is false — \
-                         `tls-verify` only applies when `tls: true`",
-                    ));
+                // Discriminate single vs multi-upstream by presence of `backends`.
+                let has_backends = remaining
+                    .as_object()
+                    .map(|m| m.contains_key("backends"))
+                    .unwrap_or(false);
+
+                if has_backends {
+                    let fields: HttpPoolUpstreamFields =
+                        serde_json::from_value(remaining).map_err(serde::de::Error::custom)?;
+                    if fields.tls_verify.is_some() && !fields.tls {
+                        return Err(serde::de::Error::custom(
+                            "`tls-verify` is set but `tls` is false — \
+                             `tls-verify` only applies when `tls: true`",
+                        ));
+                    }
+                    if fields.backends.is_empty() {
+                        return Err(serde::de::Error::custom(
+                            "`backends` must contain at least one entry",
+                        ));
+                    }
+                    let selection = match &fields.selection {
+                        Some(s) => {
+                            SelectionAlgorithm::from_str(s).map_err(serde::de::Error::custom)?
+                        }
+                        None => SelectionAlgorithm::default(),
+                    };
+                    // Validate hash-key: only allowed with consistent hashing
+                    let hash_key = match fields.hash_key {
+                        Some(ref token) => {
+                            if selection != SelectionAlgorithm::Consistent {
+                                return Err(serde::de::Error::custom(
+                                    "`hash-key` is only valid when `selection: consistent`",
+                                ));
+                            }
+                            Some(ContextRef::parse(token).map_err(serde::de::Error::custom)?)
+                        }
+                        None => None,
+                    };
+                    Ok(UpstreamConfig::HTTPPool {
+                        backends: fields.backends,
+                        buffer_response: fields.buffer_response,
+                        tls: fields.tls,
+                        tls_verify: fields.tls_verify,
+                        selection,
+                        hash_key,
+                        health_check: fields.health_check,
+                    })
+                } else {
+                    let fields: HttpUpstreamFields =
+                        serde_json::from_value(remaining).map_err(serde::de::Error::custom)?;
+                    if fields.tls_verify.is_some() && !fields.tls {
+                        return Err(serde::de::Error::custom(
+                            "`tls-verify` is set but `tls` is false — \
+                             `tls-verify` only applies when `tls: true`",
+                        ));
+                    }
+                    Ok(UpstreamConfig::HTTP {
+                        address: fields.address,
+                        port: fields.port,
+                        buffer_response: fields.buffer_response,
+                        tls: fields.tls,
+                        tls_verify: fields.tls_verify,
+                    })
                 }
-                Ok(UpstreamConfig::HTTP {
-                    address: fields.address,
-                    port: fields.port,
-                    buffer_response: fields.buffer_response,
-                    tls: fields.tls,
-                    tls_verify: fields.tls_verify,
-                })
             }
             "plugin" => {
                 let fields: PluginUpstreamFields =
@@ -589,5 +770,280 @@ mod tests {
         let value = serde_json::json!("${PLENUM_TEST_EXPLICIT_EMPTY_DEFAULT_VAR:-}");
         let result = resolve_env_vars(value).unwrap();
         assert_eq!(result, serde_json::json!(""));
+    }
+
+    // -----------------------------------------------------------------------
+    // HTTPPool (multi-upstream) tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn deserializes_http_pool_round_robin() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "backends": [
+                { "address": "api-1", "port": 8080 },
+                { "address": "api-2", "port": 8080 }
+            ]
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::HTTPPool {
+                backends,
+                selection,
+                health_check,
+                hash_key,
+                tls,
+                ..
+            } => {
+                assert_eq!(backends.len(), 2);
+                assert_eq!(backends[0].address, "api-1");
+                assert_eq!(backends[1].address, "api-2");
+                assert_eq!(backends[0].weight, 1); // default
+                assert_eq!(selection, SelectionAlgorithm::RoundRobin);
+                assert!(health_check.is_none());
+                assert!(hash_key.is_none());
+                assert!(!tls);
+            }
+            _ => panic!("expected HTTPPool variant"),
+        }
+    }
+
+    #[test]
+    fn deserializes_http_pool_weighted() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "selection": "weighted",
+            "backends": [
+                { "address": "api-1", "port": 8080, "weight": 5 },
+                { "address": "api-2", "port": 8080, "weight": 3 }
+            ]
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::HTTPPool {
+                backends,
+                selection,
+                ..
+            } => {
+                assert_eq!(selection, SelectionAlgorithm::Weighted);
+                assert_eq!(backends[0].weight, 5);
+                assert_eq!(backends[1].weight, 3);
+            }
+            _ => panic!("expected HTTPPool variant"),
+        }
+    }
+
+    #[test]
+    fn deserializes_http_pool_consistent_with_hash_key() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "selection": "consistent",
+            "hash-key": "${{header.x-user-id}}",
+            "backends": [
+                { "address": "cache-1", "port": 8080 },
+                { "address": "cache-2", "port": 8080 }
+            ]
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::HTTPPool {
+                selection,
+                hash_key,
+                ..
+            } => {
+                assert_eq!(selection, SelectionAlgorithm::Consistent);
+                assert!(hash_key.is_some());
+            }
+            _ => panic!("expected HTTPPool variant"),
+        }
+    }
+
+    #[test]
+    fn deserializes_http_pool_with_health_check() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "health-check": {
+                "path": "/healthz",
+                "interval-seconds": 5,
+                "expected-status": 200,
+                "consecutive-success": 2,
+                "consecutive-failure": 3
+            },
+            "backends": [
+                { "address": "api-1", "port": 8080 }
+            ]
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::HTTPPool { health_check, .. } => {
+                let hc = health_check.unwrap();
+                assert_eq!(hc.path, "/healthz");
+                assert_eq!(hc.interval_seconds, 5);
+                assert_eq!(hc.expected_status, 200);
+                assert_eq!(hc.consecutive_success, 2);
+                assert_eq!(hc.consecutive_failure, 3);
+            }
+            _ => panic!("expected HTTPPool variant"),
+        }
+    }
+
+    #[test]
+    fn health_check_defaults() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "health-check": { "path": "/health" },
+            "backends": [
+                { "address": "api-1", "port": 8080 }
+            ]
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::HTTPPool { health_check, .. } => {
+                let hc = health_check.unwrap();
+                assert_eq!(hc.interval_seconds, 10);
+                assert_eq!(hc.expected_status, 200);
+                assert_eq!(hc.consecutive_success, 1);
+                assert_eq!(hc.consecutive_failure, 1);
+            }
+            _ => panic!("expected HTTPPool variant"),
+        }
+    }
+
+    #[test]
+    fn rejects_empty_backends() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "backends": []
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("at least one entry"),
+            "expected error about empty backends, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_hash_key_without_consistent() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "selection": "round-robin",
+            "hash-key": "${{header.x-user-id}}",
+            "backends": [
+                { "address": "api-1", "port": 8080 }
+            ]
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("hash-key"),
+            "expected error about hash-key, got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_hash_key_token() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "selection": "consistent",
+            "hash-key": "not-a-token",
+            "backends": [
+                { "address": "api-1", "port": 8080 }
+            ]
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(result.is_err(), "expected error for invalid hash-key token");
+    }
+
+    #[test]
+    fn rejects_unknown_selection_algorithm() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "selection": "least-connections",
+            "backends": [
+                { "address": "api-1", "port": 8080 }
+            ]
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("unknown selection algorithm"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_tls_verify_without_tls_on_pool() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "tls-verify": false,
+            "backends": [
+                { "address": "api-1", "port": 8080 }
+            ]
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("tls-verify"),
+            "expected error about tls-verify, got: {err}"
+        );
+    }
+
+    #[test]
+    fn http_pool_with_tls() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "tls": true,
+            "tls-verify": false,
+            "backends": [
+                { "address": "api-1", "port": 443 }
+            ]
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::HTTPPool {
+                tls, tls_verify, ..
+            } => {
+                assert!(tls);
+                assert_eq!(tls_verify, Some(false));
+            }
+            _ => panic!("expected HTTPPool variant"),
+        }
+    }
+
+    #[test]
+    fn single_http_still_works_unchanged() {
+        // Ensure the existing single-upstream path isn't broken
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "address": "127.0.0.1",
+            "port": 8080
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        assert!(matches!(config, UpstreamConfig::HTTP { .. }));
+    }
+
+    #[test]
+    fn rejects_unknown_field_on_pool_variant() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "backends": [{ "address": "x", "port": 80 }],
+            "typo_field": true
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected error for unknown field typo_field"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_field_on_backend_entry() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "backends": [{ "address": "x", "port": 80, "priority": 1 }]
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected error for unknown field on backend entry"
+        );
     }
 }
