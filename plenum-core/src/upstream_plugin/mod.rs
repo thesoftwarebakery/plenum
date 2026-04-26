@@ -93,15 +93,13 @@ pub(crate) async fn dispatch(
     let method = session.req_header().method.to_string();
 
     // Read the full request body, enforcing the per-operation size limit.
-    let buf = match crate::proxy_utils::read_request_body(
-        session,
-        op.max_request_body_bytes as usize,
-    )
-    .await?
-    {
-        Some(b) => b,
-        None => return Ok(true),
-    };
+    let buf =
+        match crate::proxy_utils::read_request_body(session, op.max_request_body_bytes as usize)
+            .await?
+        {
+            Some(b) => b,
+            None => return Ok(true),
+        };
 
     // Phase 2 of on_request with body access.
     let final_buf = if !op.interceptors.on_request.is_empty() && !buf.is_empty() {
