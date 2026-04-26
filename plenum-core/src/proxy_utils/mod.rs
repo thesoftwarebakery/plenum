@@ -1,8 +1,10 @@
 use std::error::Error;
 use std::time::Duration;
 
+use crate::gateway_error::GatewayError;
 use crate::interceptor::InterceptorOutput;
-use bytes::Bytes;
+use bytes::{BufMut, Bytes, BytesMut};
+use pingora_proxy::Session;
 use plenum_js_runtime::{JsBody, PluginRuntime};
 
 /// Call a JS interceptor and deserialize the output.
@@ -78,6 +80,46 @@ pub(crate) fn js_body_from_content_type(content_type: Option<&str>, buf: &[u8]) 
         }
         _ => Some(JsBody::Bytes(buf.to_vec())),
     }
+}
+
+/// Read the full request body from the downstream session, enforcing a size limit.
+/// Returns `Ok(Some(bytes))` on success, or `Ok(None)` after responding with 413
+/// if the body exceeds `max_bytes`.
+pub(crate) async fn read_request_body(
+    session: &mut Session,
+    max_bytes: usize,
+) -> pingora_core::Result<Option<Bytes>> {
+    let mut body_bytes = BytesMut::new();
+    loop {
+        match session.downstream_session.read_request_body().await {
+            Ok(Some(chunk)) => {
+                if body_bytes.len() + chunk.len() > max_bytes {
+                    session
+                        .respond_error_with_body(
+                            413,
+                            GatewayError::payload_too_large("request body too large").body(),
+                        )
+                        .await
+                        .ok();
+                    return Ok(None);
+                }
+                body_bytes.put(chunk.as_ref());
+            }
+            Ok(None) => break,
+            Err(e) => {
+                log::error!("error reading request body: {}", e);
+                session
+                    .respond_error_with_body(
+                        500,
+                        GatewayError::internal(format!("error reading request body: {e}")).body(),
+                    )
+                    .await
+                    .ok();
+                return Ok(None);
+            }
+        }
+    }
+    Ok(Some(body_bytes.freeze()))
 }
 
 /// Convert a JsBody back to raw bytes for forwarding.
