@@ -1,6 +1,6 @@
 [package]
 name = "plenum-core"
-version = "0.6.0"
+version = "0.8.0"
 edition = "2024"
 
 [dependencies]
@@ -16,6 +16,7 @@ clap = { version = "4.5.60", features = ["derive", "env"] }
 pingora-http = "0.8.0"
 pingora-proxy = { version = "0.8.0", features = ["rustls"] }
 pingora-timeout = "0.8"
+pingora-load-balancing = { version = "0.8", features = ["rustls"] }
 log = "0.4.29"
 env_logger = "0.11.9"
 tracing = "0.1"
@@ -27,6 +28,8 @@ tokio = { version = "1", features = ["rt-multi-thread"] }
 tokio-util = "0.7"
 shellexpand = "3"
 globset = "0.4"
+parking_lot = "0.12"
+form_urlencoded = "1"
 
 [dev-dependencies]
 wiremock = "0.6"

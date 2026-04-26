@@ -18,6 +18,7 @@ use crate::config::{
     resolve_env_vars,
 };
 use crate::cors;
+use crate::load_balancing::{self, UpstreamPool};
 use crate::openapi::operation::build_operation_meta;
 use crate::upstream_peer::make_peer;
 
@@ -48,6 +49,7 @@ pub struct StaticResponse {
 #[derive(Debug)]
 pub enum Upstream {
     Http(Box<HttpPeer>),
+    HttpPool(Arc<UpstreamPool>),
     Plugin(PluginHandle),
     Static(StaticResponse),
 }
@@ -105,6 +107,13 @@ pub struct RouteEntry {
 }
 
 pub type PlenumRouter = Router<Arc<RouteEntry>>;
+
+/// Result of building the gateway router, including any background services
+/// that must be registered with the pingora server (e.g. health check loops).
+pub struct RouterBuildResult {
+    pub router: PlenumRouter,
+    pub background_services: Vec<load_balancing::builder::BackgroundHealthService>,
+}
 
 /// Cache key for plugin runtimes. Incorporates both the module identity and
 /// the normalized (sorted, order-independent) permissions so that the same
@@ -281,7 +290,7 @@ pub fn build_router(
     config: &Config,
     paths: &BTreeMap<String, PathItem>,
     config_base: &Path,
-) -> Result<PlenumRouter, Box<dyn Error>> {
+) -> Result<RouterBuildResult, Box<dyn Error>> {
     let server_config: ServerConfig = config
         .extension(&config.spec.extensions, "plenum-config")
         .unwrap_or_else(|_| ServerConfig::default());
@@ -292,6 +301,7 @@ pub fn build_router(
     let default_max_body_bytes = server_config.max_request_body_bytes;
 
     let mut router = Router::new();
+    let mut background_services = Vec::new();
     let mut interceptor_runtime_cache: HashMap<
         module_resolver::ModuleCacheKey,
         Arc<dyn PluginRuntime>,
@@ -309,6 +319,9 @@ pub fn build_router(
             UpstreamConfig::HTTP {
                 buffer_response: true,
                 ..
+            } | UpstreamConfig::HTTPPool {
+                buffer_response: true,
+                ..
             }
         );
         upstream_config.emit_security_warnings(path);
@@ -321,6 +334,29 @@ pub fn build_router(
                 tls_verify,
                 ..
             } => Upstream::Http(Box::new(make_peer(address, *port, *tls, *tls_verify))),
+            UpstreamConfig::HTTPPool {
+                backends,
+                tls,
+                tls_verify,
+                selection,
+                hash_key,
+                health_check,
+                ..
+            } => {
+                let result = load_balancing::build_pool(
+                    backends,
+                    *selection,
+                    *tls,
+                    *tls_verify,
+                    hash_key.as_ref(),
+                    health_check.as_ref(),
+                )
+                .map_err(|e| format!("path '{}': {}", path, e))?;
+                if let Some(bg) = result.background_service {
+                    background_services.push(bg);
+                }
+                Upstream::HttpPool(Arc::new(result.pool))
+            }
             UpstreamConfig::Plugin {
                 plugin,
                 options,
@@ -483,9 +519,8 @@ pub fn build_router(
 
             // Validate CORS config at boot time
             if let Some(ref cors_config) = cors {
-                cors::validate_cors_config(cors_config).map_err(|e| {
-                    format!("path '{}' method {}: {}", path, method, e)
-                })?;
+                cors::validate_cors_config(cors_config)
+                    .map_err(|e| format!("path '{}' method {}: {}", path, method, e))?;
             }
 
             // Curated operation metadata for runtime use by plugins/interceptors
@@ -533,7 +568,9 @@ pub fn build_router(
 
         // HTTP upstreams: on_response_body interceptors require buffer-response: true.
         // Plugin upstreams: response is always fully buffered (no restriction needed).
-        if matches!(upstream, Upstream::Http(_)) && !upstream_buffer_response {
+        if matches!(upstream, Upstream::Http(_) | Upstream::HttpPool(_))
+            && !upstream_buffer_response
+        {
             for (method, op_schemas) in &operations {
                 if !op_schemas.interceptors.on_response_body.is_empty() {
                     return Err(format!(
@@ -557,7 +594,10 @@ pub fn build_router(
             .insert(path, entry)
             .map_err(|e| format!("path '{}': {}", path, e))?;
     }
-    Ok(router)
+    Ok(RouterBuildResult {
+        router,
+        background_services,
+    })
 }
 
 #[cfg(test)]
@@ -654,7 +694,9 @@ mod tests {
         // interceptors).
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         assert!(matched.value.operations.contains_key(&Method::POST));
         assert!(matched.value.operations.contains_key(&Method::GET));
@@ -664,7 +706,9 @@ mod tests {
     fn operations_without_interceptor_have_empty_vecs() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert!(get.interceptors.on_request.is_empty());
@@ -701,7 +745,7 @@ mod tests {
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
         // Use "/" as config_base since module path is absolute
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.interceptors.on_request.len(), 1);
@@ -743,7 +787,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.interceptors.on_request.len(), 2);
@@ -812,7 +856,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(
@@ -851,7 +895,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         let options = get.interceptors.on_request[0].options.as_ref().unwrap();
@@ -885,7 +929,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert!(get.interceptors.on_request[0].options.is_none());
@@ -918,7 +962,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(
@@ -953,7 +997,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(
@@ -989,7 +1033,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.interceptors.on_request.len(), 1);
@@ -1018,7 +1062,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         assert!(matches!(matched.value.upstream, Upstream::Plugin(_)));
     }
@@ -1027,7 +1071,9 @@ mod tests {
     fn http_upstream_still_creates_upstream_http_variant() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         assert!(matches!(matched.value.upstream, Upstream::Http(_)));
     }
@@ -1053,7 +1099,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         let backend = get.backend_config.as_ref().unwrap();
@@ -1065,7 +1113,9 @@ mod tests {
     fn backend_config_is_none_when_extension_absent() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert!(get.backend_config.is_none());
@@ -1144,7 +1194,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         assert!(!matched.value.buffer_response);
     }
@@ -1272,7 +1322,7 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, Path::new("/")).unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
         let matched = router.at("/test").unwrap();
         if let Upstream::Plugin(handle) = &matched.value.upstream {
             assert_eq!(handle.timeout, Duration::from_millis(12345));
@@ -1512,7 +1562,9 @@ mod tests {
     fn request_timeout_defaults_to_global() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(30_000));
@@ -1539,7 +1591,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(5000));
@@ -1567,7 +1621,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(2000));
@@ -1595,7 +1651,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(1000));
@@ -1605,7 +1663,9 @@ mod tests {
     fn body_limit_defaults_to_global() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 10_485_760);
@@ -1632,7 +1692,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 1024);
@@ -1660,7 +1722,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 512);
@@ -1688,7 +1752,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 256);

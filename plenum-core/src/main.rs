@@ -1,5 +1,6 @@
 use plenum_core::build_gateway;
 use plenum_core::config::{Config, ServerConfig};
+use plenum_core::load_balancing::builder::BackgroundHealthService;
 
 use clap::Parser;
 
@@ -58,10 +59,12 @@ fn main() {
             std::process::exit(1);
         });
 
-    let gateway = build_gateway(&config, &args.config_path).unwrap_or_else(|err| {
+    let build_result = build_gateway(&config, &args.config_path).unwrap_or_else(|err| {
         eprintln!("Error building gateway: {}", err);
         std::process::exit(1);
     });
+    let gateway = build_result.gateway;
+    let bg_services = build_result.background_services;
 
     let conf = ServerConf {
         threads: server_config.threads,
@@ -91,5 +94,18 @@ fn main() {
     }
 
     my_server.add_service(proxy);
+
+    // Register load-balancing health check background services.
+    for svc in bg_services {
+        match svc {
+            BackgroundHealthService::RoundRobin(s) => {
+                my_server.add_service(s);
+            }
+            BackgroundHealthService::Consistent(s) => {
+                my_server.add_service(s);
+            }
+        }
+    }
+
     my_server.run_forever();
 }

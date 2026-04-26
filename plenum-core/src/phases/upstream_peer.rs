@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use http::Method;
 use pingora_core::upstreams::peer::HttpPeer;
+use pingora_proxy::Session;
 
 use crate::ctx::GatewayCtx;
 use crate::path_match::{OperationSchemas, RouteEntry};
@@ -23,7 +24,13 @@ fn matched_op<'a>(
 ///
 /// Checks for prior short-circuit responses and request cancellation, then
 /// builds an `HttpPeer` with upstream timeouts set to the remaining request budget.
-pub(crate) fn resolve(ctx: &GatewayCtx) -> pingora_core::Result<Box<HttpPeer>> {
+///
+/// For multi-upstream pool routes, selects a backend from the pool and stores
+/// the selected address in `ctx.selected_backend_addr` for passive health reporting.
+pub(crate) fn resolve(
+    ctx: &mut GatewayCtx,
+    session: &Session,
+) -> pingora_core::Result<Box<HttpPeer>> {
     if ctx.filter_responded {
         return Err(pingora_core::Error::new(
             pingora_core::ErrorType::HTTPStatus(400),
@@ -45,6 +52,29 @@ pub(crate) fn resolve(ctx: &GatewayCtx) -> pingora_core::Result<Box<HttpPeer>> {
 
             // Set upstream timeouts to remaining request budget so pingora races
             // the upstream I/O against the overall request timeout.
+            if let (Some(start), Some(op)) = (
+                ctx.request_start,
+                matched_op(&ctx.matched_route, &ctx.matched_method),
+            ) {
+                request_timeout::apply_to_peer(&mut peer, start, op.request_timeout)?;
+            }
+
+            Ok(peer)
+        }
+        crate::path_match::Upstream::HttpPool(pool) => {
+            let req = session.req_header();
+            let (mut peer, addr) = pool.select(req, &ctx.path_params).ok_or_else(|| {
+                pingora_core::Error::explain(
+                    pingora_core::ErrorType::ConnectRefused,
+                    "no healthy upstream available",
+                )
+            })?;
+
+            // Store the selected backend address for passive health reporting
+            // in fail_to_proxy.
+            ctx.selected_backend_addr = Some(addr);
+
+            // Set upstream timeouts to remaining request budget.
             if let (Some(start), Some(op)) = (
                 ctx.request_start,
                 matched_op(&ctx.matched_route, &ctx.matched_method),

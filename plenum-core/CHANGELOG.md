@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.8.0](https://github.com/thesoftwarebakery/plenum/compare/v0.7.0...v0.8.0) (2026-04-26)
+
+
+### Features
+
+* load balancing and health checks for HTTP upstreams ([4426160](https://github.com/thesoftwarebakery/plenum/commit/442616032e94ac259faa97611fd620606384a4a8))
+
+
+### Bug Fixes
+
+* resolve clippy collapsible_if warnings ([463acb5](https://github.com/thesoftwarebakery/plenum/commit/463acb58eeef2fa4c1326863a5353a8c6e9f902e))
+
+
+### Performance Improvements
+
+* avoid write lock on passive_failures in common case ([fa27d38](https://github.com/thesoftwarebakery/plenum/commit/fa27d38211e4d4bc2f694ac51f0a67b0efb5ab9d))
+
+## [0.7.0](https://github.com/thesoftwarebakery/plenum/compare/v0.6.0...v0.7.0) (2026-04-26)
+
+
+### Features
+
+* TLS support — inbound listener and HTTPS upstreams ([ff8632b](https://github.com/thesoftwarebakery/plenum/commit/ff8632b94b82a9a95bfecfdd5f0e2ca6846330f2))
+* TLS support — inbound listener and HTTPS upstreams ([#65](https://github.com/thesoftwarebakery/plenum/issues/65)) ([7e9143a](https://github.com/thesoftwarebakery/plenum/commit/7e9143a7f1c354a0bdf9ec9b0796f3126a64b6f1))
+
+
+### Bug Fixes
+
+* enforce request body size limit on plugin upstream routes ([05c1023](https://github.com/thesoftwarebakery/plenum/commit/05c1023ba346c14f17b8e722f6339d8c90c06dcc))
+* enforce request body size limit on plugin upstream routes ([47d6e6b](https://github.com/thesoftwarebakery/plenum/commit/47d6e6bbb90dab7fa42a6f39f0db03802644b309)), closes [#99](https://github.com/thesoftwarebakery/plenum/issues/99)
+
 ## [0.6.0](https://github.com/thesoftwarebakery/plenum/compare/v0.5.0...v0.6.0) (2026-04-22)
 
 

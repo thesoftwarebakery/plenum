@@ -37,7 +37,7 @@ COPY openapi-overlay/ openapi-overlay/
 COPY plenum-js-runtime/ plenum-js-runtime/
 COPY plenum-sandbox/ plenum-sandbox/
 
-RUN cargo build --release -p plenum-core
+RUN cargo build --release --locked -p plenum-core
 
 FROM node:22-bookworm-slim
 

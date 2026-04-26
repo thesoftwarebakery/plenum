@@ -42,7 +42,7 @@ fn start_gateway(upstream_host: &str, upstream_port: u16) -> String {
     });
 
     let config = Config::from_value(doc).unwrap();
-    let gateway = build_gateway(&config, ".").unwrap();
+    let build_result = build_gateway(&config, ".").unwrap();
 
     let conf = ServerConf {
         threads: 1,
@@ -54,7 +54,7 @@ fn start_gateway(upstream_host: &str, upstream_port: u16) -> String {
     std::thread::spawn(move || {
         let mut server = Server::new_with_opt_and_conf(Opt::default(), conf);
         server.bootstrap();
-        let mut proxy = http_proxy_service(&server.configuration, gateway);
+        let mut proxy = http_proxy_service(&server.configuration, build_result.gateway);
         proxy.add_tcp(&listen_addr);
         server.add_service(proxy);
         server.run_forever();

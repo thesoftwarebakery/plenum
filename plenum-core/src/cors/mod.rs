@@ -126,11 +126,7 @@ pub fn add_cors_headers_to_response(
 }
 
 /// Add all CORS headers to a response.
-fn add_cors_headers(
-    resp: &mut ResponseHeader,
-    config: &CorsConfig,
-    request_origin: &str,
-) {
+fn add_cors_headers(resp: &mut ResponseHeader, config: &CorsConfig, request_origin: &str) {
     // Access-Control-Allow-Origin: exact origin (never "*" when credentials)
     if let Ok(val) = HeaderValue::from_str(request_origin) {
         let _ = resp.insert_header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, val);
