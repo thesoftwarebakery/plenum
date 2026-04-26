@@ -337,12 +337,10 @@ impl ProxyHttp for Plenum {
         Self::CTX: Send + Sync,
     {
         // Report failure to load balancer pool for passive health tracking.
-        if let Some(addr) = &ctx.selected_backend_addr {
-            if let Some(route) = &ctx.matched_route {
-                if let Upstream::HttpPool(pool) = &route.upstream {
-                    pool.report_failure(addr);
-                }
-            }
+        if let (Some(addr), Some(route)) = (&ctx.selected_backend_addr, &ctx.matched_route)
+            && let Upstream::HttpPool(pool) = &route.upstream
+        {
+            pool.report_failure(addr);
         }
 
         if ctx.request_start.is_some() && request_timeout::is_timeout_error(e) {

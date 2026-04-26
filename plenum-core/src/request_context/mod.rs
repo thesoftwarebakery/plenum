@@ -175,11 +175,9 @@ impl ContextRef {
             }
             Source::ClientIp => {
                 // Prefer X-Forwarded-For if present, otherwise fall back to peer address.
-                if let Some(xff) = req.headers.get("x-forwarded-for") {
-                    if let Ok(s) = xff.to_str() {
-                        // X-Forwarded-For may contain a comma-separated list; take the first.
-                        return Some(s.split(',').next().unwrap_or(s).trim().to_string());
-                    }
+                if let Some(Ok(s)) = req.headers.get("x-forwarded-for").map(|v| v.to_str()) {
+                    // X-Forwarded-For may contain a comma-separated list; take the first.
+                    return Some(s.split(',').next().unwrap_or(s).trim().to_string());
                 }
                 // Peer address is not available on RequestHeader; callers that need true
                 // peer-addr should populate X-Forwarded-For upstream or use a different token.
