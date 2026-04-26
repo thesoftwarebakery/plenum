@@ -1,0 +1,30 @@
+overlay: 1.1.0
+info:
+  title: Multi-upstream load balancing with weighted selection
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-upstreams:
+        pool:
+          kind: "HTTP"
+          selection: "weighted"
+          health-check:
+            path: "/__admin/health"
+            interval-seconds: 2
+            consecutive-failure: 2
+            consecutive-success: 1
+          backends:
+            - address: "upstream-1"
+              port: 8080
+              weight: 5
+            - address: "upstream-2"
+              port: 8080
+              weight: 3
+            - address: "upstream-3"
+              port: 8080
+              weight: 2
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/x-plenum-upstreams/pool"

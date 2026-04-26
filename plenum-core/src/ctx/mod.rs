@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -33,4 +34,8 @@ pub struct GatewayCtx {
     /// every interceptor and plugin call. Interceptors and plugins can read and write
     /// arbitrary keys; the gateway populates reserved keys under `ctx.gateway.*`.
     pub(crate) user_ctx: serde_json::Map<String, serde_json::Value>,
+    /// The socket address of the selected backend peer (for multi-upstream routes).
+    /// Set during upstream_peer resolution, read during fail_to_proxy to report
+    /// the failure back to the load balancer pool.
+    pub(crate) selected_backend_addr: Option<SocketAddr>,
 }

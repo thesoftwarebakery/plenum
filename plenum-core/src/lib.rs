@@ -15,10 +15,12 @@ use tokio_util::sync::CancellationToken;
 pub mod config;
 mod ctx;
 pub mod gateway_error;
+pub mod load_balancing;
 mod headers;
 pub mod interceptor;
 mod openapi;
 pub mod path_match;
+pub mod request_context;
 mod phases;
 mod proxy_utils;
 pub mod request_timeout;
@@ -69,6 +71,7 @@ impl ProxyHttp for Plenum {
             cancellation: CancellationToken::new(),
             request_body_bytes_received: 0,
             user_ctx: serde_json::Map::new(),
+            selected_backend_addr: None,
         }
     }
 
@@ -318,10 +321,10 @@ impl ProxyHttp for Plenum {
 
     async fn upstream_peer(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
-        phases::upstream_peer::resolve(ctx)
+        phases::upstream_peer::resolve(ctx, session)
     }
 
     async fn fail_to_proxy(
@@ -333,6 +336,15 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
+        // Report failure to load balancer pool for passive health tracking.
+        if let Some(addr) = &ctx.selected_backend_addr {
+            if let Some(route) = &ctx.matched_route {
+                if let Upstream::HttpPool(pool) = &route.upstream {
+                    pool.report_failure(addr);
+                }
+            }
+        }
+
         if ctx.request_start.is_some() && request_timeout::is_timeout_error(e) {
             session
                 .respond_error_with_body(
@@ -355,9 +367,18 @@ impl ProxyHttp for Plenum {
     }
 }
 
-pub fn build_gateway(config: &Config, config_path: &str) -> Result<Plenum, Box<dyn Error>> {
+/// Result of building the gateway, including background services.
+pub struct GatewayBuildResult {
+    pub gateway: Plenum,
+    pub background_services: Vec<load_balancing::builder::BackgroundHealthService>,
+}
+
+pub fn build_gateway(config: &Config, config_path: &str) -> Result<GatewayBuildResult, Box<dyn Error>> {
     let empty = BTreeMap::new();
     let paths = config.spec.paths.as_ref().unwrap_or(&empty);
-    let router = build_router(config, paths, std::path::Path::new(config_path))?;
-    Ok(Plenum { router })
+    let result = build_router(config, paths, std::path::Path::new(config_path))?;
+    Ok(GatewayBuildResult {
+        gateway: Plenum { router: result.router },
+        background_services: result.background_services,
+    })
 }
