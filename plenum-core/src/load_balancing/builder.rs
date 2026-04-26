@@ -53,7 +53,10 @@ pub fn build_pool(
                 .map_err(|e| format!("backend '{}': DNS resolution failed: {}", addr_str, e))?
                 .next()
                 .ok_or_else(|| {
-                    format!("backend '{}': DNS resolution returned no addresses", addr_str)
+                    format!(
+                        "backend '{}': DNS resolution returned no addresses",
+                        addr_str
+                    )
                 })?;
             sni_map.insert(sock_addr, b.address.clone());
             Backend::new_with_weight(&sock_addr.to_string(), b.weight)
@@ -75,10 +78,13 @@ pub fn build_pool(
         hc.consecutive_failure = hc_config.consecutive_failure;
 
         // Set the health check request path.
-        hc.req
-            .set_uri(hc_config.path.as_str().try_into().map_err(|e| {
-                format!("invalid health check path '{}': {}", hc_config.path, e)
-            })?);
+        hc.req.set_uri(
+            hc_config
+                .path
+                .as_str()
+                .try_into()
+                .map_err(|e| format!("invalid health check path '{}': {}", hc_config.path, e))?,
+        );
 
         // Set the expected status validator.
         let expected = hc_config.expected_status;
@@ -107,8 +113,7 @@ pub fn build_pool(
 
     let (inner, bg_service) = match selection {
         SelectionAlgorithm::RoundRobin | SelectionAlgorithm::Weighted => {
-            let mut lb =
-                LoadBalancer::<selection::RoundRobin>::from_backends(lb_backends);
+            let mut lb = LoadBalancer::<selection::RoundRobin>::from_backends(lb_backends);
             lb.health_check_frequency = frequency;
             lb.parallel_health_check = true;
             let lb = Arc::new(lb);
@@ -122,8 +127,7 @@ pub fn build_pool(
             (PoolInner::RoundRobin(lb), bg)
         }
         SelectionAlgorithm::Consistent => {
-            let mut lb =
-                LoadBalancer::<selection::Consistent>::from_backends(lb_backends);
+            let mut lb = LoadBalancer::<selection::Consistent>::from_backends(lb_backends);
             lb.health_check_frequency = frequency;
             lb.parallel_health_check = true;
             let lb = Arc::new(lb);

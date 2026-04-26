@@ -52,9 +52,7 @@ impl ContextRef {
             .strip_prefix("${{")
             .and_then(|s| s.strip_suffix("}}"))
             .ok_or_else(|| {
-                format!(
-                    "invalid context token '{token}': must be wrapped in ${{{{...}}}}"
-                )
+                format!("invalid context token '{token}': must be wrapped in ${{{{...}}}}")
             })?;
 
         let inner = inner.trim();
@@ -91,7 +89,7 @@ impl ContextRef {
                 let k = key.ok_or("${{path-param.name}} requires a parameter name")?;
                 if k.is_empty() {
                     return Err(
-                        "${{path-param.name}} requires a non-empty parameter name".to_string(),
+                        "${{path-param.name}} requires a non-empty parameter name".to_string()
                     );
                 }
                 Ok(Self {
@@ -202,19 +200,13 @@ mod tests {
     #[test]
     fn parses_header_token() {
         let ctx = ContextRef::parse("${{header.x-api-key}}").unwrap();
-        assert_eq!(
-            ctx.source,
-            Source::Header("x-api-key".to_string())
-        );
+        assert_eq!(ctx.source, Source::Header("x-api-key".to_string()));
     }
 
     #[test]
     fn header_name_lowercased() {
         let ctx = ContextRef::parse("${{header.X-Api-Key}}").unwrap();
-        assert_eq!(
-            ctx.source,
-            Source::Header("x-api-key".to_string())
-        );
+        assert_eq!(ctx.source, Source::Header("x-api-key".to_string()));
     }
 
     #[test]
@@ -297,7 +289,11 @@ mod tests {
 
     // --- extract tests ---
 
-    fn make_request(method: &str, uri: &str, headers: Vec<(&str, &str)>) -> pingora_http::RequestHeader {
+    fn make_request(
+        method: &str,
+        uri: &str,
+        headers: Vec<(&str, &str)>,
+    ) -> pingora_http::RequestHeader {
         let mut req = pingora_http::RequestHeader::build(method, uri.as_bytes(), None).unwrap();
         for (name, value) in headers {
             req.insert_header(name.to_string(), value).unwrap();
@@ -309,7 +305,10 @@ mod tests {
     fn extracts_header_value() {
         let req = make_request("GET", "/test", vec![("x-api-key", "secret123")]);
         let ctx = ContextRef::parse("${{header.x-api-key}}").unwrap();
-        assert_eq!(ctx.extract(&req, &HashMap::new()), Some("secret123".to_string()));
+        assert_eq!(
+            ctx.extract(&req, &HashMap::new()),
+            Some("secret123".to_string())
+        );
     }
 
     #[test]
@@ -351,9 +350,16 @@ mod tests {
 
     #[test]
     fn extracts_cookie_value() {
-        let req = make_request("GET", "/test", vec![("cookie", "session=abc123; theme=dark")]);
+        let req = make_request(
+            "GET",
+            "/test",
+            vec![("cookie", "session=abc123; theme=dark")],
+        );
         let ctx = ContextRef::parse("${{cookie.session}}").unwrap();
-        assert_eq!(ctx.extract(&req, &HashMap::new()), Some("abc123".to_string()));
+        assert_eq!(
+            ctx.extract(&req, &HashMap::new()),
+            Some("abc123".to_string())
+        );
     }
 
     #[test]
@@ -365,9 +371,16 @@ mod tests {
 
     #[test]
     fn extracts_client_ip_from_xff() {
-        let req = make_request("GET", "/test", vec![("x-forwarded-for", "1.2.3.4, 5.6.7.8")]);
+        let req = make_request(
+            "GET",
+            "/test",
+            vec![("x-forwarded-for", "1.2.3.4, 5.6.7.8")],
+        );
         let ctx = ContextRef::parse("${{client-ip}}").unwrap();
-        assert_eq!(ctx.extract(&req, &HashMap::new()), Some("1.2.3.4".to_string()));
+        assert_eq!(
+            ctx.extract(&req, &HashMap::new()),
+            Some("1.2.3.4".to_string())
+        );
     }
 
     #[test]
@@ -381,7 +394,10 @@ mod tests {
     fn extracts_path() {
         let req = make_request("GET", "/users/42?q=1", vec![]);
         let ctx = ContextRef::parse("${{path}}").unwrap();
-        assert_eq!(ctx.extract(&req, &HashMap::new()), Some("/users/42".to_string()));
+        assert_eq!(
+            ctx.extract(&req, &HashMap::new()),
+            Some("/users/42".to_string())
+        );
     }
 
     #[test]

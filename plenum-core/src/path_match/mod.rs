@@ -675,7 +675,9 @@ mod tests {
         // interceptors).
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         assert!(matched.value.operations.contains_key(&Method::POST));
         assert!(matched.value.operations.contains_key(&Method::GET));
@@ -685,7 +687,9 @@ mod tests {
     fn operations_without_interceptor_have_empty_vecs() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert!(get.interceptors.on_request.is_empty());
@@ -1048,7 +1052,9 @@ mod tests {
     fn http_upstream_still_creates_upstream_http_variant() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         assert!(matches!(matched.value.upstream, Upstream::Http(_)));
     }
@@ -1074,7 +1080,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         let backend = get.backend_config.as_ref().unwrap();
@@ -1086,7 +1094,9 @@ mod tests {
     fn backend_config_is_none_when_extension_absent() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert!(get.backend_config.is_none());
@@ -1533,7 +1543,9 @@ mod tests {
     fn request_timeout_defaults_to_global() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(30_000));
@@ -1560,7 +1572,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(5000));
@@ -1588,7 +1602,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(2000));
@@ -1616,7 +1632,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.request_timeout, Duration::from_millis(1000));
@@ -1626,7 +1644,9 @@ mod tests {
     fn body_limit_defaults_to_global() {
         let config = config_with_schema();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 10_485_760);
@@ -1653,7 +1673,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 1024);
@@ -1681,7 +1703,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 512);
@@ -1709,7 +1733,9 @@ mod tests {
         });
         let config = Config::from_value(doc).unwrap();
         let paths = config.spec.paths.as_ref().unwrap();
-        let router = build_router(&config, paths, &dummy_config_base()).unwrap().router;
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.max_request_body_bytes, 256);

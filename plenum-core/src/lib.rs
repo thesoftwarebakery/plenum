@@ -15,14 +15,14 @@ use tokio_util::sync::CancellationToken;
 pub mod config;
 mod ctx;
 pub mod gateway_error;
-pub mod load_balancing;
 mod headers;
 pub mod interceptor;
+pub mod load_balancing;
 mod openapi;
 pub mod path_match;
-pub mod request_context;
 mod phases;
 mod proxy_utils;
+pub mod request_context;
 pub mod request_timeout;
 pub mod upstream_peer;
 pub mod upstream_plugin;
@@ -373,12 +373,17 @@ pub struct GatewayBuildResult {
     pub background_services: Vec<load_balancing::builder::BackgroundHealthService>,
 }
 
-pub fn build_gateway(config: &Config, config_path: &str) -> Result<GatewayBuildResult, Box<dyn Error>> {
+pub fn build_gateway(
+    config: &Config,
+    config_path: &str,
+) -> Result<GatewayBuildResult, Box<dyn Error>> {
     let empty = BTreeMap::new();
     let paths = config.spec.paths.as_ref().unwrap_or(&empty);
     let result = build_router(config, paths, std::path::Path::new(config_path))?;
     Ok(GatewayBuildResult {
-        gateway: Plenum { router: result.router },
+        gateway: Plenum {
+            router: result.router,
+        },
         background_services: result.background_services,
     })
 }

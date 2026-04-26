@@ -255,8 +255,9 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
                         ));
                     }
                     let selection = match &fields.selection {
-                        Some(s) => SelectionAlgorithm::from_str(s)
-                            .map_err(serde::de::Error::custom)?,
+                        Some(s) => {
+                            SelectionAlgorithm::from_str(s).map_err(serde::de::Error::custom)?
+                        }
                         None => SelectionAlgorithm::default(),
                     };
                     // Validate hash-key: only allowed with consistent hashing
@@ -267,10 +268,7 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
                                     "`hash-key` is only valid when `selection: consistent`",
                                 ));
                             }
-                            Some(
-                                ContextRef::parse(token)
-                                    .map_err(serde::de::Error::custom)?,
-                            )
+                            Some(ContextRef::parse(token).map_err(serde::de::Error::custom)?)
                         }
                         None => None,
                     };
@@ -968,10 +966,7 @@ mod tests {
         });
         let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
         let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("unknown selection algorithm"),
-            "got: {err}"
-        );
+        assert!(err.contains("unknown selection algorithm"), "got: {err}");
     }
 
     #[test]
@@ -1004,9 +999,7 @@ mod tests {
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
         match config {
             UpstreamConfig::HTTPPool {
-                tls,
-                tls_verify,
-                ..
+                tls, tls_verify, ..
             } => {
                 assert!(tls);
                 assert_eq!(tls_verify, Some(false));

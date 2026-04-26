@@ -7,8 +7,8 @@ use std::time::Instant;
 
 use parking_lot::RwLock;
 use pingora_core::upstreams::peer::HttpPeer;
-use pingora_load_balancing::selection;
 use pingora_load_balancing::LoadBalancer;
+use pingora_load_balancing::selection;
 
 use crate::request_context::ContextRef;
 
@@ -130,10 +130,7 @@ impl UpstreamPool {
 
     /// Select a backend, filtering out passively-failed backends that haven't
     /// recovered yet.
-    fn select_with_passive_filter(
-        &self,
-        key: &[u8],
-    ) -> Option<pingora_load_balancing::Backend> {
+    fn select_with_passive_filter(&self, key: &[u8]) -> Option<pingora_load_balancing::Backend> {
         let now = Instant::now();
         let recovery = std::time::Duration::from_secs(self.passive_recovery_seconds);
 
