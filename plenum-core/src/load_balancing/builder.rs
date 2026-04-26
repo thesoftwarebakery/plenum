@@ -7,7 +7,6 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pingora_core::services::background::GenBackgroundService;
-use pingora_load_balancing::health_check::HttpHealthCheck;
 use pingora_load_balancing::selection;
 use pingora_load_balancing::{Backend, Backends, LoadBalancer};
 
@@ -73,39 +72,8 @@ pub fn build_pool(
             .first()
             .map(|b| b.address.as_str())
             .unwrap_or("localhost");
-        let mut hc = HttpHealthCheck::new(host, tls);
-        hc.consecutive_success = hc_config.consecutive_success;
-        hc.consecutive_failure = hc_config.consecutive_failure;
-
-        // Set the health check request path.
-        hc.req.set_uri(
-            hc_config
-                .path
-                .as_str()
-                .try_into()
-                .map_err(|e| format!("invalid health check path '{}': {}", hc_config.path, e))?,
-        );
-
-        // Set the expected status validator.
-        let expected = hc_config.expected_status;
-        hc.validator = Some(Box::new(
-            move |resp: &pingora_http::ResponseHeader| -> pingora_core::Result<()> {
-                if resp.status.as_u16() == expected {
-                    Ok(())
-                } else {
-                    Err(pingora_core::Error::explain(
-                        pingora_core::ErrorType::InternalError,
-                        format!(
-                            "health check returned status {} (expected {})",
-                            resp.status.as_u16(),
-                            expected
-                        ),
-                    ))
-                }
-            },
-        ));
-
-        lb_backends.set_health_check(Box::new(hc));
+        let hc = crate::health_check::build_http_health_check(hc_config, host, tls)?;
+        lb_backends.set_health_check(hc);
     }
 
     let frequency = health_check.map(|hc| Duration::from_secs(hc.interval_seconds));

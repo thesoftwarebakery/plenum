@@ -16,6 +16,7 @@ pub mod config;
 mod ctx;
 pub mod gateway_error;
 mod headers;
+pub mod health_check;
 pub mod interceptor;
 pub mod load_balancing;
 mod openapi;

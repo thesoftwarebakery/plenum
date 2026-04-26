@@ -3,13 +3,12 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
 
-use parking_lot::RwLock;
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_load_balancing::LoadBalancer;
 use pingora_load_balancing::selection;
 
+use crate::health_check::PassiveHealthTracker;
 use crate::request_context::ContextRef;
 
 /// Maps a resolved `SocketAddr` back to the original hostname configured for that
@@ -25,9 +24,6 @@ pub(super) enum PoolInner {
 /// Default number of iterations before giving up on finding a healthy backend.
 const MAX_SELECT_ITERATIONS: usize = 256;
 
-/// Default passive recovery window in seconds.
-const DEFAULT_PASSIVE_RECOVERY_SECONDS: u64 = 30;
-
 /// A pool of HTTP backends with load-balanced selection and health tracking.
 ///
 /// Wraps `pingora-load-balancing` and adds:
@@ -41,11 +37,7 @@ pub struct UpstreamPool {
     pub(super) hash_key_source: Option<ContextRef>,
     /// Maps resolved socket addresses back to original hostnames for TLS SNI.
     pub(super) sni_map: SniMap,
-    /// Passive failure tracking: maps backend addr → most recent failure timestamp.
-    /// Used when no active health check is configured to temporarily remove failing
-    /// backends from rotation.
-    passive_failures: RwLock<HashMap<SocketAddr, Instant>>,
-    passive_recovery_seconds: u64,
+    passive: PassiveHealthTracker,
 }
 
 impl std::fmt::Debug for UpstreamPool {
@@ -77,8 +69,7 @@ impl UpstreamPool {
             tls_verify,
             hash_key_source,
             sni_map,
-            passive_failures: RwLock::new(HashMap::new()),
-            passive_recovery_seconds: DEFAULT_PASSIVE_RECOVERY_SECONDS,
+            passive: PassiveHealthTracker::new(),
         }
     }
 
@@ -132,39 +123,27 @@ impl UpstreamPool {
     /// recovered yet.
     fn select_with_passive_filter(&self, key: &[u8]) -> Option<pingora_load_balancing::Backend> {
         // Fast path (common case): no passive failures recorded — read lock only.
-        {
-            let failures = self.passive_failures.read();
-            if failures.is_empty() {
-                drop(failures);
-                return match &self.inner {
-                    PoolInner::RoundRobin(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
-                    PoolInner::Consistent(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
-                };
-            }
+        if self.passive.is_empty() {
+            return match &self.inner {
+                PoolInner::RoundRobin(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
+                PoolInner::Consistent(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
+            };
         }
 
-        // There are passive failures — take a write lock to clean up expired entries,
-        // then downgrade to a read lock for selection.
-        let now = Instant::now();
-        let recovery = std::time::Duration::from_secs(self.passive_recovery_seconds);
-        {
-            let mut failures = self.passive_failures.write();
-            failures.retain(|_, ts| now.duration_since(*ts) < recovery);
-            if failures.is_empty() {
-                drop(failures);
-                return match &self.inner {
-                    PoolInner::RoundRobin(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
-                    PoolInner::Consistent(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
-                };
-            }
+        // There are passive failures — clean up expired entries first.
+        if self.passive.cleanup() {
+            // All entries expired — back to the fast path.
+            return match &self.inner {
+                PoolInner::RoundRobin(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
+                PoolInner::Consistent(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
+            };
         }
 
         // Slow path: filter out passively-failed backends.
-        let failures = self.passive_failures.read();
         let accept = |backend: &pingora_load_balancing::Backend, healthy: bool| -> bool {
             let std_addr = backend.addr.as_inet().copied();
             match std_addr {
-                Some(addr) => healthy && !failures.contains_key(&addr),
+                Some(addr) => healthy && self.passive.is_healthy(&addr),
                 None => healthy,
             }
         };
@@ -178,7 +157,6 @@ impl UpstreamPool {
     ///
     /// The backend is temporarily removed from rotation for the passive recovery window.
     pub fn report_failure(&self, addr: &SocketAddr) {
-        let mut failures = self.passive_failures.write();
-        failures.insert(*addr, Instant::now());
+        self.passive.report_failure(addr);
     }
 }
