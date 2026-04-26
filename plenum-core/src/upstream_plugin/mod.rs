@@ -10,7 +10,6 @@ use crate::path_match::{OperationSchemas, PluginHandle};
 use crate::proxy_utils::{
     call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_ctx, merge_options,
 };
-use bytes::{BufMut, BytesMut};
 use pingora_proxy::Session;
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
@@ -93,26 +92,14 @@ pub(crate) async fn dispatch(
         .to_string();
     let method = session.req_header().method.to_string();
 
-    // Read the full request body from the downstream connection.
-    let mut body_bytes = BytesMut::new();
-    loop {
-        match session.downstream_session.read_request_body().await {
-            Ok(Some(chunk)) => body_bytes.put(chunk.as_ref()),
-            Ok(None) => break,
-            Err(e) => {
-                log::error!("error reading request body: {}", e);
-                session
-                    .respond_error_with_body(
-                        500,
-                        GatewayError::internal(format!("error reading request body: {}", e)).body(),
-                    )
-                    .await
-                    .ok();
-                return Ok(true);
-            }
-        }
-    }
-    let buf = body_bytes.freeze();
+    // Read the full request body, enforcing the per-operation size limit.
+    let buf =
+        match crate::proxy_utils::read_request_body(session, op.max_request_body_bytes as usize)
+            .await?
+        {
+            Some(b) => b,
+            None => return Ok(true),
+        };
 
     // Phase 2 of on_request with body access.
     let final_buf = if !op.interceptors.on_request.is_empty() && !buf.is_empty() {
