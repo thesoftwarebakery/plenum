@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777226834493,
+  "lastUpdate": 1777236601776,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -648,6 +648,78 @@ window.BENCHMARK_DATA = {
             "value": 6.497,
             "unit": "ms",
             "extra": "n=5928"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "442616032e94ac259faa97611fd620606384a4a8",
+          "message": "Merge pull request #106 from thesoftwarebakery/worktree-issue-70-load-balancing\n\nfeat: load balancing and health checks for HTTP upstreams",
+          "timestamp": "2026-04-26T21:37:28+01:00",
+          "tree_id": "591f8ecb97d672374fe66cf48bc9bf611b8bb3cd",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/442616032e94ac259faa97611fd620606384a4a8"
+        },
+        "date": 1777236601138,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 1.31,
+            "unit": "ms",
+            "extra": "n=7636"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 6.974,
+            "unit": "ms",
+            "extra": "n=7636"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 1.349,
+            "unit": "ms",
+            "extra": "n=7414"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 6.23,
+            "unit": "ms",
+            "extra": "n=7414"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.552,
+            "unit": "ms",
+            "extra": "n=6442"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 6.011,
+            "unit": "ms",
+            "extra": "n=6442"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.657,
+            "unit": "ms",
+            "extra": "n=6034"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 5.875,
+            "unit": "ms",
+            "extra": "n=6034"
           }
         ]
       }
