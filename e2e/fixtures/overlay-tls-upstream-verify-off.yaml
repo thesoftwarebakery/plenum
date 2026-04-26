@@ -1,0 +1,13 @@
+overlay: 1.1.0
+info:
+  title: TLS test — HTTPS upstream with verification disabled (dev-only)
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        kind: "HTTP"
+        address: "upstream-tls"
+        port: 443
+        tls: true
+        tls-verify: false

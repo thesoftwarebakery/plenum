@@ -1,0 +1,9 @@
+overlay: 1.1.0
+info:
+  title: TLS test — configure CA bundle for upstream verification
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        ca_file: "/certs/ca.crt"

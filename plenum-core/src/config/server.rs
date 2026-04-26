@@ -6,11 +6,29 @@ fn default_threads() -> usize {
 fn default_listen() -> String {
     "0.0.0.0:6188".to_string()
 }
+fn default_tls_listen() -> String {
+    "0.0.0.0:6189".to_string()
+}
 fn default_timeout_ms() -> u64 {
     30_000
 }
 fn default_max_body_bytes() -> u64 {
     10_485_760
+}
+
+/// TLS termination configuration for the inbound listener.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TlsListenerConfig {
+    /// Path to the PEM-encoded certificate file. Relative paths are resolved
+    /// against the config directory. Supports `${VAR}` env var substitution.
+    pub cert_path: String,
+    /// Path to the PEM-encoded private key file. Relative paths are resolved
+    /// against the config directory. Supports `${VAR}` env var substitution.
+    pub key_path: String,
+    /// Address and port for the TLS listener. Defaults to `"0.0.0.0:6189"`.
+    #[serde(default = "default_tls_listen")]
+    pub listen: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +48,17 @@ pub struct ServerConfig {
     pub request_timeout_ms: u64,
     #[serde(default = "default_max_body_bytes")]
     pub max_request_body_bytes: u64,
+    /// Inbound TLS listener configuration. When present, the gateway also
+    /// listens for HTTPS connections in addition to the plain TCP listener.
+    #[serde(default)]
+    pub tls: Option<TlsListenerConfig>,
+    /// Path to a PEM CA bundle used to verify outbound HTTPS upstream
+    /// connections. When absent, the system trust store is used. All upstreams
+    /// share this CA store — per-route CA scoping is not yet supported.
+    /// Relative paths are resolved against the config directory.
+    /// Supports `${VAR}` env var substitution.
+    #[serde(default)]
+    pub ca_file: Option<String>,
 }
 
 impl Default for ServerConfig {
@@ -42,8 +71,53 @@ impl Default for ServerConfig {
             plugin_default_timeout_ms: default_timeout_ms(),
             request_timeout_ms: default_timeout_ms(),
             max_request_body_bytes: default_max_body_bytes(),
+            tls: None,
+            ca_file: None,
         }
     }
+}
+
+impl ServerConfig {
+    /// Expand env vars, resolve relative paths against `config_base`, and
+    /// validate that all configured cert/key/CA files exist on disk.
+    ///
+    /// Call this once after deserialization, before using any path fields.
+    pub fn resolve_paths(&mut self, config_base: &str) -> Result<(), String> {
+        if let Some(tls) = self.tls.as_mut() {
+            tls.cert_path = resolve_path_field(&tls.cert_path, config_base, "tls.cert_path")?;
+            tls.key_path = resolve_path_field(&tls.key_path, config_base, "tls.key_path")?;
+        }
+        if let Some(ca_file) = self.ca_file.as_mut() {
+            *ca_file = resolve_path_field(ca_file, config_base, "ca_file")?;
+        }
+        Ok(())
+    }
+}
+
+/// Expand env vars in `s`, resolve it relative to `config_base` if not absolute,
+/// then verify the resulting path exists. Returns the final absolute path.
+fn resolve_path_field(s: &str, config_base: &str, field: &str) -> Result<String, String> {
+    // Env var expansion: reuse the same logic as upstream config paths.
+    let expanded = super::resolve_env_vars(serde_json::Value::String(s.to_string()))
+        .map_err(|e| format!("{field}: {e}"))?;
+    let expanded = expanded.as_str().unwrap_or_default();
+
+    // Resolve relative paths against the config directory.
+    let path = if std::path::Path::new(expanded).is_absolute() {
+        expanded.to_string()
+    } else {
+        std::path::Path::new(config_base)
+            .join(expanded)
+            .to_string_lossy()
+            .into_owned()
+    };
+
+    // Fail loudly before pingora gets a chance to panic on a missing file.
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("{field} not found: {path}"));
+    }
+
+    Ok(path)
 }
 
 #[cfg(test)]
@@ -152,5 +226,93 @@ mod tests {
             result.is_err(),
             "expected error for unknown field unknown_key"
         );
+    }
+
+    #[test]
+    fn tls_defaults_to_none() {
+        let json = serde_json::json!({});
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert!(config.tls.is_none());
+    }
+
+    #[test]
+    fn ca_file_defaults_to_none() {
+        let json = serde_json::json!({});
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert!(config.ca_file.is_none());
+    }
+
+    #[test]
+    fn deserializes_tls_config() {
+        let json = serde_json::json!({
+            "tls": {
+                "cert_path": "/etc/ssl/cert.pem",
+                "key_path": "/etc/ssl/key.pem"
+            }
+        });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        let tls = config.tls.unwrap();
+        assert_eq!(tls.cert_path, "/etc/ssl/cert.pem");
+        assert_eq!(tls.key_path, "/etc/ssl/key.pem");
+        assert_eq!(tls.listen, "0.0.0.0:6189");
+    }
+
+    #[test]
+    fn deserializes_tls_config_with_custom_listen() {
+        let json = serde_json::json!({
+            "tls": {
+                "cert_path": "/etc/ssl/cert.pem",
+                "key_path": "/etc/ssl/key.pem",
+                "listen": "0.0.0.0:8443"
+            }
+        });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        let tls = config.tls.unwrap();
+        assert_eq!(tls.listen, "0.0.0.0:8443");
+    }
+
+    #[test]
+    fn rejects_unknown_field_in_tls_config() {
+        let json = serde_json::json!({
+            "tls": {
+                "cert_path": "/etc/ssl/cert.pem",
+                "key_path": "/etc/ssl/key.pem",
+                "unknown": true
+            }
+        });
+        let result: Result<ServerConfig, _> = serde_json::from_value(json);
+        assert!(result.is_err(), "expected error for unknown field in tls");
+    }
+
+    #[test]
+    fn rejects_tls_config_missing_cert_path() {
+        let json = serde_json::json!({
+            "tls": { "key_path": "/etc/ssl/key.pem" }
+        });
+        let result: Result<ServerConfig, _> = serde_json::from_value(json);
+        assert!(result.is_err(), "expected error for missing cert_path");
+    }
+
+    #[test]
+    fn rejects_tls_config_missing_key_path() {
+        let json = serde_json::json!({
+            "tls": { "cert_path": "/etc/ssl/cert.pem" }
+        });
+        let result: Result<ServerConfig, _> = serde_json::from_value(json);
+        assert!(result.is_err(), "expected error for missing key_path");
+    }
+
+    #[test]
+    fn deserializes_ca_file() {
+        let json = serde_json::json!({ "ca_file": "/etc/ssl/ca.pem" });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.ca_file.unwrap(), "/etc/ssl/ca.pem");
+    }
+
+    #[test]
+    fn default_trait_includes_tls_none_and_ca_file_none() {
+        let config = ServerConfig::default();
+        assert!(config.tls.is_none());
+        assert!(config.ca_file.is_none());
     }
 }

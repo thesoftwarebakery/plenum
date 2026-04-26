@@ -3,6 +3,7 @@ use plenum_core::config::{Config, ServerConfig};
 
 use clap::Parser;
 
+use pingora_core::listeners::tls::TlsSettings;
 use pingora_core::server::Server;
 use pingora_core::server::configuration::{Opt, ServerConf};
 use pingora_proxy::http_proxy_service;
@@ -46,9 +47,16 @@ fn main() {
         std::process::exit(1);
     });
 
-    let server_config: ServerConfig = config
+    let mut server_config: ServerConfig = config
         .extension(&config.spec.extensions, "plenum-config")
         .unwrap_or_else(|_| ServerConfig::default());
+
+    server_config
+        .resolve_paths(&args.config_path)
+        .unwrap_or_else(|err| {
+            eprintln!("Error in x-plenum-config: {}", err);
+            std::process::exit(1);
+        });
 
     let gateway = build_gateway(&config, &args.config_path).unwrap_or_else(|err| {
         eprintln!("Error building gateway: {}", err);
@@ -58,6 +66,7 @@ fn main() {
     let conf = ServerConf {
         threads: server_config.threads,
         daemon: server_config.daemon,
+        ca_file: server_config.ca_file.clone(),
         ..ServerConf::default()
     };
 
@@ -66,6 +75,21 @@ fn main() {
 
     let mut proxy = http_proxy_service(&my_server.configuration, gateway);
     proxy.add_tcp(&server_config.listen);
+
+    if let Some(tls_config) = &server_config.tls {
+        match TlsSettings::intermediate(&tls_config.cert_path, &tls_config.key_path) {
+            Ok(mut settings) => {
+                settings.enable_h2();
+                proxy.add_tls_with_settings(&tls_config.listen, None, settings);
+                log::info!("TLS listener on {}", tls_config.listen);
+            }
+            Err(e) => {
+                eprintln!("Error configuring TLS listener: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     my_server.add_service(proxy);
     my_server.run_forever();
 }

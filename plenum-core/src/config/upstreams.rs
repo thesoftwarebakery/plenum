@@ -10,6 +10,10 @@ struct HttpUpstreamFields {
     port: u16,
     #[serde(default, rename = "buffer-response")]
     buffer_response: bool,
+    #[serde(default)]
+    tls: bool,
+    #[serde(default, rename = "tls-verify")]
+    tls_verify: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -40,6 +44,9 @@ pub enum UpstreamConfig {
         address: String,
         port: u16,
         buffer_response: bool,
+        tls: bool,
+        /// `None` means "use default" (true). Only takes effect when `tls` is true.
+        tls_verify: Option<bool>,
     },
     Plugin {
         plugin: String,
@@ -52,6 +59,28 @@ pub enum UpstreamConfig {
         headers: Option<HashMap<String, String>>,
         body: Option<String>,
     },
+}
+
+impl UpstreamConfig {
+    /// Emit any security-relevant warnings for this upstream configuration.
+    /// Call once per route at startup after the config has been parsed.
+    pub fn emit_security_warnings(&self, path: &str) {
+        if let UpstreamConfig::HTTP {
+            tls_verify: Some(false),
+            address,
+            port,
+            ..
+        } = self
+        {
+            log::warn!(
+                "path '{}': TLS VERIFICATION DISABLED for upstream \
+                 {}:{} — DO NOT USE IN PRODUCTION",
+                path,
+                address,
+                port
+            );
+        }
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for UpstreamConfig {
@@ -75,10 +104,18 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
             "HTTP" => {
                 let fields: HttpUpstreamFields =
                     serde_json::from_value(remaining).map_err(serde::de::Error::custom)?;
+                if fields.tls_verify.is_some() && !fields.tls {
+                    return Err(serde::de::Error::custom(
+                        "`tls-verify` is set but `tls` is false — \
+                         `tls-verify` only applies when `tls: true`",
+                    ));
+                }
                 Ok(UpstreamConfig::HTTP {
                     address: fields.address,
                     port: fields.port,
                     buffer_response: fields.buffer_response,
+                    tls: fields.tls,
+                    tls_verify: fields.tls_verify,
                 })
             }
             "plugin" => {
@@ -183,13 +220,90 @@ mod tests {
                 address,
                 port,
                 buffer_response,
+                tls,
+                tls_verify,
             } => {
                 assert_eq!(address, "127.0.0.1");
                 assert_eq!(port, 8080);
                 assert!(!buffer_response);
+                assert!(!tls);
+                assert!(tls_verify.is_none());
             }
             _ => panic!("expected HTTP variant"),
         }
+    }
+
+    #[test]
+    fn deserializes_http_variant_with_tls() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "address": "api.example.com",
+            "port": 443,
+            "tls": true
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::HTTP {
+                tls, tls_verify, ..
+            } => {
+                assert!(tls);
+                assert!(tls_verify.is_none());
+            }
+            _ => panic!("expected HTTP variant"),
+        }
+    }
+
+    #[test]
+    fn deserializes_http_variant_with_tls_verify_false() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "address": "api.example.com",
+            "port": 443,
+            "tls": true,
+            "tls-verify": false
+        });
+        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
+        match config {
+            UpstreamConfig::HTTP {
+                tls, tls_verify, ..
+            } => {
+                assert!(tls);
+                assert_eq!(tls_verify, Some(false));
+            }
+            _ => panic!("expected HTTP variant"),
+        }
+    }
+
+    #[test]
+    fn rejects_tls_verify_unknown_field() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "address": "x",
+            "port": 80,
+            "tls-verfy": true
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(result.is_err(), "expected error for misspelled tls-verfy");
+    }
+
+    #[test]
+    fn rejects_tls_verify_without_tls() {
+        let json = serde_json::json!({
+            "kind": "HTTP",
+            "address": "127.0.0.1",
+            "port": 80,
+            "tls-verify": false
+        });
+        let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
+        assert!(
+            result.is_err(),
+            "expected error when tls-verify is set without tls: true"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("tls-verify"),
+            "error should mention tls-verify, got: {err}"
+        );
     }
 
     #[test]

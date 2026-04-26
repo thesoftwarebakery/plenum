@@ -1,0 +1,12 @@
+overlay: 1.1.0
+info:
+  title: TLS test — add inbound TLS listener
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        tls:
+          cert_path: "/certs/gateway.crt"
+          key_path: "/certs/gateway.key"
+          listen: "0.0.0.0:6189"

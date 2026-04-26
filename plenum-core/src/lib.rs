@@ -22,7 +22,7 @@ pub mod path_match;
 mod phases;
 mod proxy_utils;
 pub mod request_timeout;
-pub mod upstream_http;
+pub mod upstream_peer;
 pub mod upstream_plugin;
 
 pub use ctx::GatewayCtx;
