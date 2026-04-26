@@ -131,26 +131,36 @@ impl UpstreamPool {
     /// Select a backend, filtering out passively-failed backends that haven't
     /// recovered yet.
     fn select_with_passive_filter(&self, key: &[u8]) -> Option<pingora_load_balancing::Backend> {
+        // Fast path (common case): no passive failures recorded — read lock only.
+        {
+            let failures = self.passive_failures.read();
+            if failures.is_empty() {
+                drop(failures);
+                return match &self.inner {
+                    PoolInner::RoundRobin(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
+                    PoolInner::Consistent(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
+                };
+            }
+        }
+
+        // There are passive failures — take a write lock to clean up expired entries,
+        // then downgrade to a read lock for selection.
         let now = Instant::now();
         let recovery = std::time::Duration::from_secs(self.passive_recovery_seconds);
-
-        // Clean up expired passive failures before selection.
         {
             let mut failures = self.passive_failures.write();
             failures.retain(|_, ts| now.duration_since(*ts) < recovery);
-        }
-
-        let failures = self.passive_failures.read();
-        if failures.is_empty() {
-            // Fast path: no passive failures, use standard selection.
-            drop(failures);
-            return match &self.inner {
-                PoolInner::RoundRobin(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
-                PoolInner::Consistent(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
-            };
+            if failures.is_empty() {
+                drop(failures);
+                return match &self.inner {
+                    PoolInner::RoundRobin(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
+                    PoolInner::Consistent(lb) => lb.select(key, MAX_SELECT_ITERATIONS),
+                };
+            }
         }
 
         // Slow path: filter out passively-failed backends.
+        let failures = self.passive_failures.read();
         let accept = |backend: &pingora_load_balancing::Backend, healthy: bool| -> bool {
             let std_addr = backend.addr.as_inet().copied();
             match std_addr {
