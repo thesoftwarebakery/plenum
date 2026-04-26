@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777216419383,
+  "lastUpdate": 1777226834493,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -576,6 +576,78 @@ window.BENCHMARK_DATA = {
             "value": 5.78,
             "unit": "ms",
             "extra": "n=5883"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "05c1023ba346c14f17b8e722f6339d8c90c06dcc",
+          "message": "Merge pull request #104 from thesoftwarebakery/worktree-fix-plugin-body-limit\n\nfix: enforce request body size limit on plugin upstream routes",
+          "timestamp": "2026-04-26T19:02:54+01:00",
+          "tree_id": "60544c234250c9135a3f3225d1c77b38d58a1e21",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/05c1023ba346c14f17b8e722f6339d8c90c06dcc"
+        },
+        "date": 1777226833128,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 1.346,
+            "unit": "ms",
+            "extra": "n=7430"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 7.227,
+            "unit": "ms",
+            "extra": "n=7430"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 1.318,
+            "unit": "ms",
+            "extra": "n=7590"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 6.23,
+            "unit": "ms",
+            "extra": "n=7590"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.488,
+            "unit": "ms",
+            "extra": "n=6721"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 5.996,
+            "unit": "ms",
+            "extra": "n=6721"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.687,
+            "unit": "ms",
+            "extra": "n=5928"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 6.497,
+            "unit": "ms",
+            "extra": "n=5928"
           }
         ]
       }
