@@ -156,6 +156,7 @@ impl PluginRuntimeKey {
 fn build_operation_interceptors(
     operation: &Operation,
     path: &str,
+    config: &Config,
     config_base: &Path,
     runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<dyn PluginRuntime>>,
     default_timeout: Duration,
@@ -165,9 +166,9 @@ fn build_operation_interceptors(
         None => return Ok(OperationInterceptors::default()),
     };
 
-    let interceptor_configs: Vec<InterceptorConfig> =
-        serde_json::from_value(interceptor_value.clone())
-            .map_err(|e| format!("path '{}': x-plenum-interceptor: {}", path, e))?;
+    let interceptor_configs: Vec<InterceptorConfig> = config
+        .resolve(interceptor_value)
+        .map_err(|e| format!("path '{}': x-plenum-interceptor: {}", path, e))?;
 
     let mut interceptors = OperationInterceptors::default();
     for config in &interceptor_configs {
@@ -464,7 +465,7 @@ pub fn build_router(
             let request_timeout = operation
                 .extensions
                 .get("plenum-timeout")
-                .and_then(|v| v.as_u64())
+                .and_then(|v| config.resolve::<u64>(v).ok())
                 .map(Duration::from_millis)
                 .or(path_request_timeout)
                 .unwrap_or(default_request_timeout);
@@ -473,7 +474,7 @@ pub fn build_router(
             let max_request_body_bytes = operation
                 .extensions
                 .get("plenum-body-limit")
-                .and_then(|v| v.as_u64())
+                .and_then(|v| config.resolve::<u64>(v).ok())
                 .or(path_max_body_bytes)
                 .unwrap_or(default_max_body_bytes);
 
@@ -481,6 +482,7 @@ pub fn build_router(
             let interceptors = build_operation_interceptors(
                 operation,
                 path,
+                config,
                 config_base,
                 &mut interceptor_runtime_cache,
                 default_interceptor_timeout,
