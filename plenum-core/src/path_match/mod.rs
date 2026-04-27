@@ -110,6 +110,8 @@ pub type PlenumRouter = Router<Arc<RouteEntry>>;
 pub struct RouterBuildResult {
     pub router: PlenumRouter,
     pub background_services: Vec<load_balancing::builder::BackgroundHealthService>,
+    /// Global `on_gateway_error` interceptor hook, resolved at boot time.
+    pub error_hook: Option<HookHandle>,
 }
 
 /// Cache key for plugin runtimes. Incorporates both the module identity and
@@ -282,6 +284,86 @@ fn build_operation_interceptors(
     }
 
     Ok(interceptors)
+}
+
+/// Resolve the global `on_gateway_error` interceptor from ServerConfig.
+fn resolve_global_error_hook(
+    server_config: &ServerConfig,
+    config_base: &Path,
+    runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<dyn PluginRuntime>>,
+    default_timeout: Duration,
+) -> Result<Option<HookHandle>, Box<dyn Error>> {
+    let cfg = match &server_config.on_gateway_error {
+        Some(c) => c,
+        None => return Ok(None),
+    };
+
+    let resolved = module_resolver::resolve_module(&cfg.module, config_base)
+        .map_err(|e| format!("on_gateway_error interceptor '{}': {}", cfg.module, e))?;
+    let cache_key = resolved.cache_key();
+
+    let runtime = match runtime_cache.entry(cache_key) {
+        std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
+        std::collections::hash_map::Entry::Vacant(e) => {
+            let permissions = cfg
+                .permissions
+                .clone()
+                .map(|p| p.into_runtime_permissions())
+                .unwrap_or_default();
+
+            let module_path = match &resolved {
+                module_resolver::ResolvedModule::File(p) => p.to_string_lossy().into_owned(),
+                module_resolver::ResolvedModule::Internal { path: p, .. } => {
+                    p.to_string_lossy().into_owned()
+                }
+            };
+
+            let h: Arc<dyn PluginRuntime> = Arc::new(
+                plenum_js_runtime::external::spawn_sync(
+                    &module_path,
+                    serde_json::json!({}),
+                    permissions,
+                )
+                .map_err(|e| {
+                    format!(
+                        "on_gateway_error interceptor '{}': failed to spawn Node.js runtime: {}",
+                        cfg.module, e
+                    )
+                })?,
+            );
+            e.insert(h).clone()
+        }
+    };
+
+    let timeout = cfg
+        .timeout_ms
+        .map(Duration::from_millis)
+        .unwrap_or(default_timeout);
+
+    // Call validate() if exported.
+    let validate_arg = serde_json::json!({
+        "module": &cfg.module,
+        "hook": "on_gateway_error",
+        "function": &cfg.function,
+    });
+    match runtime.call_blocking("validate", validate_arg, None, timeout) {
+        Ok(_) => {}
+        Err(plenum_js_runtime::JsError::FunctionNotFound(_)) => {}
+        Err(e) => {
+            return Err(format!(
+                "on_gateway_error interceptor '{}': validate() failed: {}",
+                cfg.module, e
+            )
+            .into());
+        }
+    }
+
+    Ok(Some(HookHandle {
+        runtime,
+        function: cfg.function.clone(),
+        timeout,
+        options: cfg.options.clone(),
+    }))
 }
 
 pub fn build_router(
@@ -580,9 +662,18 @@ pub fn build_router(
             .insert(path, entry)
             .map_err(|e| format!("path '{}': {}", path, e))?;
     }
+    // Resolve the global on_gateway_error interceptor if configured.
+    let error_hook = resolve_global_error_hook(
+        &server_config,
+        config_base,
+        &mut interceptor_runtime_cache,
+        default_interceptor_timeout,
+    )?;
+
     Ok(RouterBuildResult {
         router,
         background_services,
+        error_hook,
     })
 }
 

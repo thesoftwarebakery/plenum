@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Instant;
 
-use crate::path_match::RouteEntry;
+use crate::path_match::{HookHandle, RouteEntry};
 use bytes::BytesMut;
 use http::Method;
 use tokio_util::sync::CancellationToken;
@@ -38,4 +38,6 @@ pub struct GatewayCtx {
     /// Set during upstream_peer resolution, read during fail_to_proxy to report
     /// the failure back to the load balancer pool.
     pub(crate) selected_backend_addr: Option<SocketAddr>,
+    /// Global `on_gateway_error` interceptor hook, cloned from `Plenum` at request start.
+    pub(crate) error_hook: Option<Arc<HookHandle>>,
 }

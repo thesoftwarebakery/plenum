@@ -6,7 +6,10 @@
 /// This is invoked automatically by `e2e/package.json`'s `pretest` script.
 use plenum_core::{
     config::PermissionsConfig,
-    interceptor::{InterceptorOutput, JsInterceptorOutput, JsRequestInput, JsResponseInput},
+    interceptor::{
+        ErrorContext, GatewayErrorInput, InterceptorOutput, JsInterceptorOutput, JsRequestInput,
+        JsResponseInput,
+    },
     upstream_plugin::{JsPluginInput, PluginOutput, PluginRequest},
 };
 use std::fmt::Write as _;
@@ -39,6 +42,8 @@ fn main() {
         PluginRequest::decl(),
         JsPluginInput::decl(),
         PluginOutput::decl(),
+        ErrorContext::decl(),
+        GatewayErrorInput::decl(),
     ] {
         writeln!(buf, "export {decl}").unwrap();
         writeln!(buf).unwrap();

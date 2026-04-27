@@ -44,6 +44,22 @@ pub struct InterceptorConfig {
     pub permissions: Option<PermissionsConfig>,
 }
 
+/// Configuration for a global interceptor hook (e.g. `on_gateway_error`).
+/// Unlike [`InterceptorConfig`], the hook name is implied by the config key,
+/// so only module, function, timeout, options, and permissions are needed.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GlobalInterceptorConfig {
+    pub module: String,
+    pub function: String,
+    #[serde(rename = "timeout-ms")]
+    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub options: Option<serde_json::Value>,
+    #[serde(default)]
+    pub permissions: Option<PermissionsConfig>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

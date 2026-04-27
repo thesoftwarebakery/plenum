@@ -160,6 +160,61 @@ pub struct JsResponseInput {
     body_encoding: Option<String>,
 }
 
+/// Machine-readable error context passed to `on_gateway_error` interceptors.
+#[derive(Debug, Serialize, TS)]
+pub struct ErrorContext {
+    /// Machine-readable error code (e.g. `"gateway_timeout"`, `"interceptor_error"`).
+    pub code: String,
+    /// Human-readable error message.
+    pub message: String,
+}
+
+/// Input passed to the global `on_gateway_error` interceptor.
+#[derive(Debug, Serialize, TS)]
+pub struct GatewayErrorInput {
+    /// HTTP status code of the error response.
+    pub status: u16,
+    /// HTTP method of the original request.
+    pub method: String,
+    /// The matched OpenAPI path template (empty for pre-route errors like 404).
+    pub route: String,
+    /// The actual request path.
+    pub path: String,
+    /// Request headers from the original request.
+    pub headers: HashMap<String, String>,
+    /// Error context with machine-readable code and human-readable message.
+    pub error: ErrorContext,
+    /// Request-scoped context bag accumulated so far (may be empty for early errors).
+    #[ts(type = "Ctx")]
+    pub ctx: serde_json::Value,
+}
+
+/// Build a `GatewayErrorInput` from request metadata and error details.
+#[allow(clippy::too_many_arguments)]
+pub fn gateway_error_input_from_parts(
+    method: &str,
+    path: &str,
+    route: &str,
+    headers: &http::HeaderMap,
+    error_code: &str,
+    error_message: &str,
+    status: u16,
+    ctx: serde_json::Value,
+) -> GatewayErrorInput {
+    GatewayErrorInput {
+        status,
+        method: method.to_string(),
+        route: route.to_string(),
+        path: path.to_string(),
+        headers: header_map_to_hash_map(headers),
+        error: ErrorContext {
+            code: error_code.to_string(),
+            message: error_message.to_string(),
+        },
+        ctx,
+    }
+}
+
 /// Build a `RequestInput` from an HTTP request's components.
 pub fn request_input_from_parts(
     method: &http::Method,

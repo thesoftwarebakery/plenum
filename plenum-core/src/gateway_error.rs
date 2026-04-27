@@ -48,6 +48,68 @@ impl GatewayError {
     }
 }
 
+/// A structured gateway error ready to flow through the `on_gateway_error`
+/// interceptor before being written to the downstream session.
+///
+/// Created at each error site, then passed to the central error response
+/// codepath which optionally runs the interceptor and writes the response.
+pub struct GatewayErrorResponse {
+    /// HTTP status code for the error response.
+    pub status: u16,
+    /// JSON error body bytes.
+    pub body: Bytes,
+    /// Machine-readable error code (e.g. `"gateway_timeout"`, `"interceptor_error"`).
+    pub error_code: &'static str,
+    /// Human-readable error message.
+    pub error_message: String,
+}
+
+impl GatewayErrorResponse {
+    /// 500 Internal Server Error — the gateway encountered an unexpected condition.
+    pub fn internal(message: impl std::fmt::Display) -> Self {
+        let msg = message.to_string();
+        Self {
+            status: 500,
+            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
+            error_code: "internal_error",
+            error_message: msg,
+        }
+    }
+
+    /// 502 Bad Gateway — the upstream returned an invalid or unrecognized response.
+    pub fn bad_gateway(message: impl std::fmt::Display) -> Self {
+        let msg = message.to_string();
+        Self {
+            status: 502,
+            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
+            error_code: "bad_gateway",
+            error_message: msg,
+        }
+    }
+
+    /// 504 Gateway Timeout — the upstream did not respond in time.
+    pub fn gateway_timeout(message: impl std::fmt::Display) -> Self {
+        let msg = message.to_string();
+        Self {
+            status: 504,
+            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
+            error_code: "gateway_timeout",
+            error_message: msg,
+        }
+    }
+
+    /// 413 Payload Too Large — the inbound request body exceeded the configured limit.
+    pub fn payload_too_large(message: impl std::fmt::Display) -> Self {
+        let msg = message.to_string();
+        Self {
+            status: 413,
+            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
+            error_code: "payload_too_large",
+            error_message: msg,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use config::Config;
-use gateway_error::GatewayError;
+use gateway_error::GatewayErrorResponse;
 use path_match::{HookHandle, OperationSchemas, Upstream, build_router};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
@@ -33,6 +34,8 @@ pub use ctx::GatewayCtx;
 
 pub struct Plenum {
     router: path_match::PlenumRouter,
+    /// Global `on_gateway_error` interceptor hook, shared across all requests.
+    error_hook: Option<Arc<HookHandle>>,
 }
 
 /// Compute effective interceptor timeout from remaining request budget.
@@ -74,6 +77,7 @@ impl ProxyHttp for Plenum {
             request_body_bytes_received: 0,
             user_ctx: serde_json::Map::new(),
             selected_backend_addr: None,
+            error_hook: self.error_hook.clone(),
         }
     }
 
@@ -147,13 +151,13 @@ impl ProxyHttp for Plenum {
                 Err(_elapsed) => {
                     ctx.cancellation.cancel();
                     log::warn!("request timeout exceeded for plugin route");
-                    session
-                        .respond_error_with_body(
-                            504,
-                            GatewayError::gateway_timeout("request timeout exceeded").body(),
-                        )
-                        .await
-                        .ok();
+                    phases::gateway_error::respond(
+                        session,
+                        ctx,
+                        GatewayErrorResponse::gateway_timeout("request timeout exceeded"),
+                        ctx.error_hook.clone().as_deref(),
+                    )
+                    .await;
                     Ok(true)
                 }
             };
@@ -366,20 +370,26 @@ impl ProxyHttp for Plenum {
         }
 
         if ctx.request_start.is_some() && request_timeout::is_timeout_error(e) {
-            session
-                .respond_error_with_body(
-                    504,
-                    GatewayError::gateway_timeout("request timeout exceeded").body(),
-                )
-                .await
-                .ok();
+            phases::gateway_error::respond(
+                session,
+                ctx,
+                GatewayErrorResponse::gateway_timeout("request timeout exceeded"),
+                ctx.error_hook.clone().as_deref(),
+            )
+            .await;
             return FailToProxy {
                 error_code: 504,
                 can_reuse_downstream: false,
             };
         }
 
-        session.respond_error(502).await.ok();
+        phases::gateway_error::respond(
+            session,
+            ctx,
+            GatewayErrorResponse::bad_gateway("upstream connection failed"),
+            ctx.error_hook.clone().as_deref(),
+        )
+        .await;
         FailToProxy {
             error_code: 502,
             can_reuse_downstream: false,
@@ -403,6 +413,7 @@ pub fn build_gateway(
     Ok(GatewayBuildResult {
         gateway: Plenum {
             router: result.router,
+            error_hook: result.error_hook.map(Arc::new),
         },
         background_services: result.background_services,
     })
