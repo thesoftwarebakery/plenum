@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.10.0](https://github.com/thesoftwarebakery/plenum/compare/v0.9.0...v0.10.0) (2026-04-27)
+
+
+### Features
+
+* add on_gateway_error global interceptor hook ([819383e](https://github.com/thesoftwarebakery/plenum/commit/819383e719d84d5cdae75d74f768ea38c2a9ddd8))
+* add on_gateway_error global interceptor hook ([a642204](https://github.com/thesoftwarebakery/plenum/commit/a64220402db525ed951a6886d07593e38505c57a)), closes [#77](https://github.com/thesoftwarebakery/plenum/issues/77)
+
 ## [0.9.0](https://github.com/thesoftwarebakery/plenum/compare/v0.8.1...v0.9.0) (2026-04-27)
 
 
