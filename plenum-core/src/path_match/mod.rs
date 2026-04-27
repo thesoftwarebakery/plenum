@@ -808,7 +808,7 @@ mod tests {
                             "module": &noop_path,
                             "hook": "on_request",
                             "function": "onRequest",
-                            "timeout_ms": 5000
+                            "timeout-ms": 5000
                         }],
                         "responses": { "200": { "description": "ok" } }
                     },
@@ -907,7 +907,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "interceptor_default_timeout_ms": 15000 },
+            "x-plenum-config": { "interceptor-default-timeout-ms": 15000 },
             "paths": {
                 "/test": {
                     "get": {
@@ -1281,7 +1281,7 @@ mod tests {
                     "x-plenum-upstream": {
                         "kind": "plugin",
                         "plugin": &plugin_path,
-                        "timeout_ms": 12345
+                        "timeout-ms": 12345
                     }
                 }
             }
@@ -1541,7 +1541,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "request_timeout_ms": 5000 },
+            "x-plenum-config": { "request-timeout-ms": 5000 },
             "paths": {
                 "/test": {
                     "get": {
@@ -1570,7 +1570,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "request_timeout_ms": 5000 },
+            "x-plenum-config": { "request-timeout-ms": 5000 },
             "paths": {
                 "/test": {
                     "x-plenum-timeout": 2000,
@@ -1642,7 +1642,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "max_request_body_bytes": 1024 },
+            "x-plenum-config": { "max-request-body-bytes": 1024 },
             "paths": {
                 "/test": {
                     "get": {
@@ -1671,7 +1671,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "max_request_body_bytes": 1024 },
+            "x-plenum-config": { "max-request-body-bytes": 1024 },
             "paths": {
                 "/test": {
                     "x-plenum-body-limit": 512,

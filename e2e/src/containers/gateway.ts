@@ -37,7 +37,7 @@ export async function startGateway(opts: {
   tls?: GatewayTlsOptions;
   /**
    * Path to a PEM CA bundle copied into the container at /certs/ca.crt.
-   * Referenced by x-plenum-config.ca_file in overlay fixtures.
+   * Referenced by x-plenum-config.ca-file in overlay fixtures.
    * Independent of the TLS listener — used for outbound upstream verification.
    */
   caPath?: string;

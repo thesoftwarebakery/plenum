@@ -36,6 +36,7 @@ pub struct InterceptorConfig {
     pub module: String,
     pub hook: String,
     pub function: String,
+    #[serde(rename = "timeout-ms")]
     pub timeout_ms: Option<u64>,
     #[serde(default)]
     pub options: Option<serde_json::Value>,
@@ -53,7 +54,7 @@ mod tests {
             "module": "./interceptors/auth.js",
             "hook": "on_request",
             "function": "checkAuth",
-            "timeout_ms": 2000
+            "timeout-ms": 2000
         });
         let config: InterceptorConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.module, "./interceptors/auth.js");
@@ -69,7 +70,7 @@ mod tests {
             "module": "./interceptors/auth.js",
             "hook": "on_request",
             "function": "checkAuth",
-            "timeout_ms": 2000,
+            "timeout-ms": 2000,
             "options": {
                 "role": "admin",
                 "allowed_methods": ["GET", "POST"]
