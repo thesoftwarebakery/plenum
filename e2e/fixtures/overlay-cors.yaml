@@ -3,6 +3,10 @@ info:
   title: Add CORS config
   version: 1.0.0
 actions:
+  - target: $
+    update:
+      x-plenum-config:
+        listen: "0.0.0.0:6188"
   - target: $.paths['/products'].get
     update:
       x-plenum-cors:
@@ -29,19 +33,19 @@ actions:
           - GET
         allow_credentials: false
         max_age: 7200
-  - target: $.paths['/no-cors'].get
+  - target: $.paths['/no-cors']
     update:
       x-plenum-upstream:
         kind: HTTP
         address: wiremock
         port: 8080
-  - target: $.paths['/products'].get
+  - target: $.paths['/products']
     update:
       x-plenum-upstream:
         kind: HTTP
         address: wiremock
         port: 8080
-  - target: $.paths['/products/{id}'].get
+  - target: $.paths['/products/{id}']
     update:
       x-plenum-upstream:
         kind: HTTP
