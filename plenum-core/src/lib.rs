@@ -111,20 +111,26 @@ impl ProxyHttp for Plenum {
         let Some(method) = ctx.matched_method.clone() else {
             return Ok(false);
         };
-        let Some(op) = route_arc.operations.get(&method) else {
-            return Ok(false);
-        };
 
-        ctx.request_start = Some(Instant::now());
-
-        // CORS preflight: short-circuit OPTIONS with 204 + CORS headers.
-        if let Some(ref cors_config) = op.cors
-            && method == http::Method::OPTIONS
+        // CORS preflight: OPTIONS requests won't have a matching operation in the
+        // OpenAPI spec, so check before the method-based lookup. Find the first
+        // CORS config from any operation on the matched path.
+        if method == http::Method::OPTIONS
+            && let Some(cors_config) = route_arc
+                .operations
+                .values()
+                .find_map(|op| op.cors.as_ref())
             && let cors::PreflightResult::Handled =
                 cors::handle_preflight(session, cors_config).await?
         {
             return Ok(true);
         }
+
+        let Some(op) = route_arc.operations.get(&method) else {
+            return Ok(false);
+        };
+
+        ctx.request_start = Some(Instant::now());
 
         // Plugin routes: wrap on_request phase 1 + dispatch in a single timeout.
         if let Upstream::Plugin(plugin) = &route_arc.upstream {
