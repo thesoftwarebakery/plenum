@@ -1,3 +1,4 @@
+use super::interceptor::GlobalInterceptorConfig;
 use serde::Deserialize;
 
 fn default_threads() -> usize {
@@ -64,6 +65,10 @@ pub struct ServerConfig {
     /// Supports `${VAR}` env var substitution.
     #[serde(default, rename = "ca-file")]
     pub ca_file: Option<String>,
+    /// Global `on_gateway_error` interceptor. When present, all gateway-originated
+    /// error responses pass through this interceptor before being written to the client.
+    #[serde(default, rename = "on-gateway-error")]
+    pub on_gateway_error: Option<GlobalInterceptorConfig>,
 }
 
 impl Default for ServerConfig {
@@ -78,6 +83,7 @@ impl Default for ServerConfig {
             max_request_body_bytes: default_max_body_bytes(),
             tls: None,
             ca_file: None,
+            on_gateway_error: None,
         }
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ctx::GatewayCtx;
-use crate::gateway_error::GatewayError;
+use crate::gateway_error::GatewayErrorResponse;
 use crate::headers::{apply_header_modifications, headers_hashmap_to_http_headermap};
 use crate::interceptor::{
     InterceptorOutput, header_map_to_hash_map, request_input_from_parts, response_input_from_parts,
@@ -93,13 +93,16 @@ pub(crate) async fn dispatch(
     let method = session.req_header().method.to_string();
 
     // Read the full request body, enforcing the per-operation size limit.
-    let buf =
-        match crate::proxy_utils::read_request_body(session, op.max_request_body_bytes as usize)
-            .await?
-        {
-            Some(b) => b,
-            None => return Ok(true),
-        };
+    let buf = match crate::proxy_utils::read_request_body(
+        session,
+        ctx,
+        op.max_request_body_bytes as usize,
+    )
+    .await?
+    {
+        Some(b) => b,
+        None => return Ok(true),
+    };
 
     // Phase 2 of on_request with body access.
     let final_buf = if !op.interceptors.on_request.is_empty() && !buf.is_empty() {
@@ -159,13 +162,13 @@ pub(crate) async fn dispatch(
                 }
                 Err(e) => {
                     log::error!("on_request interceptor error: {}", e);
-                    session
-                        .respond_error_with_body(
-                            500,
-                            GatewayError::internal(format!("interceptor error: {}", e)).body(),
-                        )
-                        .await
-                        .ok();
+                    crate::phases::gateway_error::respond(
+                        session,
+                        ctx,
+                        GatewayErrorResponse::internal(format!("interceptor error: {}", e)),
+                        ctx.error_hook.clone().as_deref(),
+                    )
+                    .await;
                     return Ok(true);
                 }
             }
@@ -229,13 +232,13 @@ pub(crate) async fn dispatch(
             }
             Err(e) => {
                 log::error!("before_upstream interceptor error: {}", e);
-                session
-                    .respond_error_with_body(
-                        500,
-                        GatewayError::internal(format!("interceptor error: {}", e)).body(),
-                    )
-                    .await
-                    .ok();
+                crate::phases::gateway_error::respond(
+                    session,
+                    ctx,
+                    GatewayErrorResponse::internal(format!("interceptor error: {}", e)),
+                    ctx.error_hook.clone().as_deref(),
+                )
+                .await;
                 return Ok(true);
             }
         }
@@ -285,13 +288,13 @@ pub(crate) async fn dispatch(
         }
         Err(e) => {
             log::error!("plugin handle() error: {}", e);
-            session
-                .respond_error_with_body(
-                    500,
-                    GatewayError::internal(format!("plugin error: {}", e)).body(),
-                )
-                .await
-                .ok();
+            crate::phases::gateway_error::respond(
+                session,
+                ctx,
+                GatewayErrorResponse::internal(format!("plugin error: {}", e)),
+                ctx.error_hook.clone().as_deref(),
+            )
+            .await;
             return Ok(true);
         }
     };
@@ -436,39 +439,17 @@ pub(crate) async fn dispatch(
     }
 
     // Step E: write response
-    let mut resp_header =
-        pingora_http::ResponseHeader::build(plugin_status, None).map_err(|e| {
-            pingora_core::Error::because(
-                pingora_core::ErrorType::InternalError,
-                "build response header",
-                e,
-            )
-        })?;
-    for (name, value) in &plugin_headers {
-        if let Some(v) = value {
-            resp_header.insert_header(name.clone(), v.as_str()).ok();
-        }
-    }
-    session
-        .write_response_header(Box::new(resp_header), false)
-        .await
-        .map_err(|e| {
-            pingora_core::Error::because(
-                pingora_core::ErrorType::InternalError,
-                "write response header",
-                e,
-            )
-        })?;
-    session
-        .write_response_body(Some(response_body_bytes), true)
-        .await
-        .map_err(|e| {
-            pingora_core::Error::because(
-                pingora_core::ErrorType::InternalError,
-                "write response body",
-                e,
-            )
-        })?;
+    let response_headers: Vec<(String, String)> = plugin_headers
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|val| (k, val)))
+        .collect();
+    crate::proxy_utils::write_response(
+        session,
+        plugin_status,
+        &response_headers,
+        response_body_bytes,
+    )
+    .await?;
 
     Ok(true)
 }

@@ -4,7 +4,7 @@ use tracing::Instrument;
 
 use crate::ctx::GatewayCtx;
 use crate::effective_timeout;
-use crate::gateway_error::GatewayError;
+use crate::gateway_error::GatewayErrorResponse;
 use crate::headers::apply_header_modifications;
 use crate::interceptor::{InterceptorOutput, request_input_from_parts};
 use crate::path_match::OperationSchemas;
@@ -36,13 +36,13 @@ pub(crate) async fn run_phase1(
         let timeout = if budget_cap {
             let t = effective_timeout(ctx, op, hook);
             if ctx.cancellation.is_cancelled() {
-                session
-                    .respond_error_with_body(
-                        504,
-                        GatewayError::gateway_timeout("request timeout exceeded").body(),
-                    )
-                    .await
-                    .ok();
+                super::gateway_error::respond(
+                    session,
+                    ctx,
+                    GatewayErrorResponse::gateway_timeout("request timeout exceeded"),
+                    ctx.error_hook.clone().as_deref(),
+                )
+                .await;
                 return Ok(true);
             }
             t
@@ -90,6 +90,7 @@ pub(crate) async fn run_phase1(
                 }
                 merge_ctx(&mut ctx.user_ctx, returned_ctx);
             }
+            // User-initiated short-circuit — NOT a gateway error.
             Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
                 session
                     .respond_error_with_body(
@@ -106,22 +107,22 @@ pub(crate) async fn run_phase1(
                     request_timeout::remaining_budget(start, op.request_timeout).is_none()
                 }) {
                     ctx.cancellation.cancel();
-                    session
-                        .respond_error_with_body(
-                            504,
-                            GatewayError::gateway_timeout("request timeout exceeded").body(),
-                        )
-                        .await
-                        .ok();
+                    super::gateway_error::respond(
+                        session,
+                        ctx,
+                        GatewayErrorResponse::gateway_timeout("request timeout exceeded"),
+                        ctx.error_hook.clone().as_deref(),
+                    )
+                    .await;
                 } else {
                     log::error!("on_request interceptor error: {}", e);
-                    session
-                        .respond_error_with_body(
-                            500,
-                            GatewayError::internal(format!("interceptor error: {}", e)).body(),
-                        )
-                        .await
-                        .ok();
+                    super::gateway_error::respond(
+                        session,
+                        ctx,
+                        GatewayErrorResponse::internal(format!("interceptor error: {}", e)),
+                        ctx.error_hook.clone().as_deref(),
+                    )
+                    .await;
                 }
                 return Ok(true);
             }
@@ -160,13 +161,13 @@ pub(crate) async fn run_phase2_body(
     for hook in &op.interceptors.on_request {
         let timeout = effective_timeout(ctx, op, hook);
         if ctx.cancellation.is_cancelled() {
-            session
-                .respond_error_with_body(
-                    504,
-                    GatewayError::gateway_timeout("request timeout exceeded").body(),
-                )
-                .await
-                .ok();
+            super::gateway_error::respond(
+                session,
+                ctx,
+                GatewayErrorResponse::gateway_timeout("request timeout exceeded"),
+                ctx.error_hook.clone().as_deref(),
+            )
+            .await;
             ctx.filter_responded = true;
             return Ok(None);
         }
@@ -207,6 +208,7 @@ pub(crate) async fn run_phase2_body(
                 current_buf = body_out.map(js_body_to_bytes).unwrap_or(current_buf);
                 merge_ctx(&mut ctx.user_ctx, returned_ctx);
             }
+            // User-initiated short-circuit — NOT a gateway error.
             Ok((InterceptorOutput::Respond { status, .. }, body_out)) => {
                 session
                     .respond_error_with_body(
@@ -223,22 +225,22 @@ pub(crate) async fn run_phase2_body(
                     request_timeout::remaining_budget(start, op.request_timeout).is_none()
                 }) {
                     ctx.cancellation.cancel();
-                    session
-                        .respond_error_with_body(
-                            504,
-                            GatewayError::gateway_timeout("request timeout exceeded").body(),
-                        )
-                        .await
-                        .ok();
+                    super::gateway_error::respond(
+                        session,
+                        ctx,
+                        GatewayErrorResponse::gateway_timeout("request timeout exceeded"),
+                        ctx.error_hook.clone().as_deref(),
+                    )
+                    .await;
                 } else {
                     log::error!("on_request interceptor error: {}", e);
-                    session
-                        .respond_error_with_body(
-                            500,
-                            GatewayError::internal(format!("interceptor error: {}", e)).body(),
-                        )
-                        .await
-                        .ok();
+                    super::gateway_error::respond(
+                        session,
+                        ctx,
+                        GatewayErrorResponse::internal(format!("interceptor error: {}", e)),
+                        ctx.error_hook.clone().as_deref(),
+                    )
+                    .await;
                 }
                 ctx.filter_responded = true;
                 return Ok(None);
@@ -266,13 +268,13 @@ pub(crate) async fn run_body_filter(
         let new_total = ctx.request_body_bytes_received + b.len();
         if new_total > op.max_request_body_bytes as usize {
             b.clear();
-            session
-                .respond_error_with_body(
-                    413,
-                    GatewayError::payload_too_large("request body too large").body(),
-                )
-                .await
-                .ok();
+            super::gateway_error::respond(
+                session,
+                ctx,
+                GatewayErrorResponse::payload_too_large("request body too large"),
+                ctx.error_hook.clone().as_deref(),
+            )
+            .await;
             ctx.filter_responded = true;
             return Ok(true);
         }

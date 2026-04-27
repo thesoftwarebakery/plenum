@@ -5,6 +5,7 @@
   "scripts": {
     "build:types": "cargo run -p plenum-core --bin export_types --manifest-path ../Cargo.toml",
     "build:fixtures": "tsc -p tsconfig.fixtures.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "pretest": "pnpm run build:types && pnpm run build:fixtures",
     "test": "vitest run --reporter=verbose",
     "prebench": "pnpm run build:types && pnpm run build:fixtures",

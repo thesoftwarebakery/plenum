@@ -1,4 +1,4 @@
-mod module_resolver;
+pub(crate) mod module_resolver;
 
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
@@ -110,6 +110,8 @@ pub type PlenumRouter = Router<Arc<RouteEntry>>;
 pub struct RouterBuildResult {
     pub router: PlenumRouter,
     pub background_services: Vec<load_balancing::builder::BackgroundHealthService>,
+    /// Global `on_gateway_error` interceptor hook, resolved at boot time.
+    pub error_hook: Option<HookHandle>,
 }
 
 /// Cache key for plugin runtimes. Incorporates both the module identity and
@@ -180,6 +182,7 @@ fn build_operation_interceptors(
         let resolved = module_resolver::resolve_module(&config.module, config_base)
             .map_err(|e| format!("path '{}': interceptor '{}': {}", path, config.module, e))?;
         let cache_key = resolved.cache_key();
+        let context = format!("path '{}': interceptor '{}'", path, config.module);
 
         // Deduplicate: reuse handle if this module was already spawned.
         let runtime = match runtime_cache.entry(cache_key) {
@@ -204,43 +207,11 @@ fn build_operation_interceptors(
                     .clone()
                     .map(|p| p.into_runtime_permissions())
                     .unwrap_or_default();
-
-                let h: Arc<dyn PluginRuntime> = match &resolved {
-                    module_resolver::ResolvedModule::File(file_path) => {
-                        // File-based interceptors run in a sandboxed Node.js child process.
-                        Arc::new(
-                            plenum_js_runtime::external::spawn_sync(
-                                file_path.to_string_lossy().as_ref(),
-                                serde_json::json!({}),
-                                permissions.clone(),
-                            )
-                            .map_err(|e| {
-                                format!(
-                                    "path '{}': interceptor '{}': failed to spawn Node.js runtime: {}",
-                                    path, config.module, e
-                                )
-                            })?,
-                        )
-                    }
-                    module_resolver::ResolvedModule::Internal {
-                        path: module_path, ..
-                    } => {
-                        // Built-in interceptors run in Node.js via the node-runtime.
-                        Arc::new(
-                            plenum_js_runtime::external::spawn_sync(
-                                module_path.to_string_lossy().as_ref(),
-                                serde_json::json!({}),
-                                permissions.clone(),
-                            )
-                            .map_err(|e| {
-                                format!(
-                                    "path '{}': interceptor '{}': failed to spawn Node.js runtime: {}",
-                                    path, config.module, e
-                                )
-                            })?,
-                        )
-                    }
-                };
+                let h = crate::runtime_builder::spawn_interceptor_runtime(
+                    &resolved,
+                    permissions,
+                    &context,
+                )?;
                 e.insert(h).clone()
             }
         };
@@ -251,17 +222,7 @@ fn build_operation_interceptors(
             .unwrap_or(default_timeout);
 
         let validate_arg = serde_json::to_value(config).unwrap();
-        match runtime.call_blocking("validate", validate_arg, None, timeout) {
-            Ok(_) => {}
-            Err(plenum_js_runtime::JsError::FunctionNotFound(_)) => {}
-            Err(e) => {
-                return Err(format!(
-                    "path '{}': interceptor '{}': validate() failed: {}",
-                    path, config.module, e
-                )
-                .into());
-            }
-        }
+        crate::runtime_builder::validate_hook(runtime.as_ref(), validate_arg, timeout, &context)?;
 
         let hook_handle = HookHandle {
             runtime,
@@ -580,9 +541,18 @@ pub fn build_router(
             .insert(path, entry)
             .map_err(|e| format!("path '{}': {}", path, e))?;
     }
+    // Resolve the global on_gateway_error interceptor if configured.
+    let error_hook = crate::runtime_builder::resolve_global_error_hook(
+        &server_config,
+        config_base,
+        &mut interceptor_runtime_cache,
+        default_interceptor_timeout,
+    )?;
+
     Ok(RouterBuildResult {
         router,
         background_services,
+        error_hook,
     })
 }
 

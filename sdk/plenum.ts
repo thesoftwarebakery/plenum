@@ -51,4 +51,6 @@ export type {
   PluginRequest,
   PluginInput,
   PluginOutput,
+  ErrorContext,
+  GatewayErrorInput,
 } from "./plenum-generated";

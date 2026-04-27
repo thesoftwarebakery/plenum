@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::time::Duration;
 
-use crate::gateway_error::GatewayError;
+use crate::ctx::GatewayCtx;
+use crate::gateway_error::GatewayErrorResponse;
 use crate::interceptor::InterceptorOutput;
 use bytes::{BufMut, Bytes, BytesMut};
 use pingora_proxy::Session;
@@ -83,10 +84,11 @@ pub(crate) fn js_body_from_content_type(content_type: Option<&str>, buf: &[u8]) 
 }
 
 /// Read the full request body from the downstream session, enforcing a size limit.
-/// Returns `Ok(Some(bytes))` on success, or `Ok(None)` after responding with 413
-/// if the body exceeds `max_bytes`.
+/// Returns `Ok(Some(bytes))` on success, or `Ok(None)` after responding with an
+/// error (413 or 500) if the body exceeds `max_bytes` or a read error occurs.
 pub(crate) async fn read_request_body(
     session: &mut Session,
+    ctx: &mut GatewayCtx,
     max_bytes: usize,
 ) -> pingora_core::Result<Option<Bytes>> {
     let mut body_bytes = BytesMut::new();
@@ -94,13 +96,13 @@ pub(crate) async fn read_request_body(
         match session.downstream_session.read_request_body().await {
             Ok(Some(chunk)) => {
                 if body_bytes.len() + chunk.len() > max_bytes {
-                    session
-                        .respond_error_with_body(
-                            413,
-                            GatewayError::payload_too_large("request body too large").body(),
-                        )
-                        .await
-                        .ok();
+                    crate::phases::gateway_error::respond(
+                        session,
+                        ctx,
+                        GatewayErrorResponse::payload_too_large("request body too large"),
+                        ctx.error_hook.clone().as_deref(),
+                    )
+                    .await;
                     return Ok(None);
                 }
                 body_bytes.put(chunk.as_ref());
@@ -108,18 +110,65 @@ pub(crate) async fn read_request_body(
             Ok(None) => break,
             Err(e) => {
                 log::error!("error reading request body: {}", e);
-                session
-                    .respond_error_with_body(
-                        500,
-                        GatewayError::internal(format!("error reading request body: {e}")).body(),
-                    )
-                    .await
-                    .ok();
+                crate::phases::gateway_error::respond(
+                    session,
+                    ctx,
+                    GatewayErrorResponse::internal(format!("error reading request body: {e}")),
+                    ctx.error_hook.clone().as_deref(),
+                )
+                .await;
                 return Ok(None);
             }
         }
     }
     Ok(Some(body_bytes.freeze()))
+}
+
+/// Write a complete synthesised response (status + headers + body) to the downstream session.
+///
+/// Shared by plugin dispatch and gateway error responses so the
+/// `ResponseHeader::build` / `write_response_header` / `write_response_body` sequence
+/// is not duplicated across modules. Callers that propagate errors should use `?`;
+/// callers in fire-and-forget positions can call `.ok()`.
+pub(crate) async fn write_response(
+    session: &mut Session,
+    status: u16,
+    headers: &[(String, String)],
+    body: Bytes,
+) -> pingora_core::Result<()> {
+    let mut resp_header = pingora_http::ResponseHeader::build(status, None).map_err(|e| {
+        pingora_core::Error::because(
+            pingora_core::ErrorType::InternalError,
+            "build response header",
+            e,
+        )
+    })?;
+    for (name, value) in headers {
+        resp_header
+            .insert_header(name.clone(), value.as_bytes())
+            .ok();
+    }
+    session
+        .write_response_header(Box::new(resp_header), false)
+        .await
+        .map_err(|e| {
+            pingora_core::Error::because(
+                pingora_core::ErrorType::InternalError,
+                "write response header",
+                e,
+            )
+        })?;
+    session
+        .write_response_body(Some(body), true)
+        .await
+        .map_err(|e| {
+            pingora_core::Error::because(
+                pingora_core::ErrorType::InternalError,
+                "write response body",
+                e,
+            )
+        })?;
+    Ok(())
 }
 
 /// Convert a JsBody back to raw bytes for forwarding.
