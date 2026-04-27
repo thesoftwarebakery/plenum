@@ -121,14 +121,14 @@ mod tests {
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
             "paths": {},
-            "x-plenum-upstreams": {
+            "components": { "x-upstreams": {
                 "my-api": {
                     "address": "api.example.com",
                     "port": 8080
                 }
-            },
+            }},
             "x-plenum-upstream": {
-                "$ref": "#/x-plenum-upstreams/my-api"
+                "$ref": "#/components/x-upstreams/my-api"
             }
         });
         let config = make_config(doc);
@@ -168,7 +168,7 @@ mod tests {
             "info": { "title": "Test", "version": "1.0" },
             "paths": {},
             "x-plenum-upstream": {
-                "$ref": "#/x-plenum-upstreams/does-not-exist"
+                "$ref": "#/components/x-upstreams/does-not-exist"
             }
         });
         let config = make_config(doc);
@@ -185,16 +185,16 @@ mod tests {
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
             "paths": {},
-            "x-plenum-upstreams": {
+            "components": { "x-upstreams": {
                 "my-api": {
                     "address": "api.example.com",
                     "port": 8080
                 }
-            }
+            }}
         });
         let config = make_config(doc);
 
-        let ref_value = json!({ "$ref": "#/x-plenum-upstreams/my-api" });
+        let ref_value = json!({ "$ref": "#/components/x-upstreams/my-api" });
         let upstream: TestUpstream = config.resolve(&ref_value).unwrap();
 
         assert_eq!(

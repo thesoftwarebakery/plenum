@@ -7,12 +7,13 @@ actions:
     update:
       x-plenum-config:
         listen: "0.0.0.0:6188"
-      x-plenum-upstreams:
-        default:
-          kind: "HTTP"
-          address: "wiremock"
-          port: 8080
+      components:
+        x-upstreams:
+          default:
+            kind: "HTTP"
+            address: "wiremock"
+            port: 8080
   - target: $.paths[*]
     update:
       x-plenum-upstream:
-        $ref: "#/x-plenum-upstreams/default"
+        $ref: "#/components/x-upstreams/default"

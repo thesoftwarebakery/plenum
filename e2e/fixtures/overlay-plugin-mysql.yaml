@@ -9,23 +9,24 @@ actions:
         threads: 1
         daemon: false
         listen: "0.0.0.0:6188"
-      x-plenum-upstreams:
-        db:
-          kind: "plugin"
-          plugin: "internal:mysql"
-          options:
-            host: "${DB_HOST}"
-            port: "${DB_PORT:-3306}"
-            database: "${DB_NAME}"
-            user: "${DB_USER}"
-            password: "${DB_PASSWORD}"
-          permissions:
-            net:
-              - "${DB_HOST}"
+      components:
+        x-upstreams:
+          db:
+            kind: "plugin"
+            plugin: "internal:mysql"
+            options:
+              host: "${DB_HOST}"
+              port: "${DB_PORT:-3306}"
+              database: "${DB_NAME}"
+              user: "${DB_USER}"
+              password: "${DB_PASSWORD}"
+            permissions:
+              net:
+                - "${DB_HOST}"
   - target: $.paths[*]
     update:
       x-plenum-upstream:
-        $ref: "#/x-plenum-upstreams/db"
+        $ref: "#/components/x-upstreams/db"
   - target: $.paths['/users'].get
     update:
       x-plenum-backend:

@@ -8,12 +8,13 @@ actions:
       x-plenum-config:
         threads: 2
         daemon: false
-      x-plenum-upstreams:
-        default:
-          kind: "HTTP"
-          address: 0.0.0.0
-          port: 8000
+      components:
+        x-upstreams:
+          default:
+            kind: "HTTP"
+            address: 0.0.0.0
+            port: 8000
   - target: $.paths[*]
     update:
       x-plenum-upstream:
-        $ref: "#/x-plenum-upstreams/default"
+        $ref: "#/components/x-upstreams/default"
