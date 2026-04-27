@@ -124,6 +124,53 @@ pub(crate) async fn read_request_body(
     Ok(Some(body_bytes.freeze()))
 }
 
+/// Write a complete synthesised response (status + headers + body) to the downstream session.
+///
+/// Shared by plugin dispatch and gateway error responses so the
+/// `ResponseHeader::build` / `write_response_header` / `write_response_body` sequence
+/// is not duplicated across modules. Callers that propagate errors should use `?`;
+/// callers in fire-and-forget positions can call `.ok()`.
+pub(crate) async fn write_response(
+    session: &mut Session,
+    status: u16,
+    headers: &[(String, String)],
+    body: Bytes,
+) -> pingora_core::Result<()> {
+    let mut resp_header = pingora_http::ResponseHeader::build(status, None).map_err(|e| {
+        pingora_core::Error::because(
+            pingora_core::ErrorType::InternalError,
+            "build response header",
+            e,
+        )
+    })?;
+    for (name, value) in headers {
+        resp_header
+            .insert_header(name.clone(), value.as_bytes())
+            .ok();
+    }
+    session
+        .write_response_header(Box::new(resp_header), false)
+        .await
+        .map_err(|e| {
+            pingora_core::Error::because(
+                pingora_core::ErrorType::InternalError,
+                "write response header",
+                e,
+            )
+        })?;
+    session
+        .write_response_body(Some(body), true)
+        .await
+        .map_err(|e| {
+            pingora_core::Error::because(
+                pingora_core::ErrorType::InternalError,
+                "write response body",
+                e,
+            )
+        })?;
+    Ok(())
+}
+
 /// Convert a JsBody back to raw bytes for forwarding.
 pub(crate) fn js_body_to_bytes(body: JsBody) -> Bytes {
     match body {

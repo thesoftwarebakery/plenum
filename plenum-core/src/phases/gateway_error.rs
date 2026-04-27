@@ -6,7 +6,7 @@ use crate::ctx::GatewayCtx;
 use crate::gateway_error::GatewayErrorResponse;
 use crate::interceptor::{InterceptorOutput, gateway_error_input_from_parts};
 use crate::path_match::HookHandle;
-use crate::proxy_utils::{call_interceptor, merge_options};
+use crate::proxy_utils::{call_interceptor, merge_options, write_response};
 
 /// Central gateway error response codepath.
 ///
@@ -79,8 +79,7 @@ pub(crate) async fn respond(
                         }
                     }
                     if !header_pairs.is_empty() {
-                        // Write custom response with headers.
-                        write_error_with_headers(
+                        write_response(
                             session,
                             error.status,
                             &header_pairs,
@@ -88,7 +87,8 @@ pub(crate) async fn respond(
                                 .map(crate::proxy_utils::js_body_to_bytes)
                                 .unwrap_or(error.body),
                         )
-                        .await;
+                        .await
+                        .ok();
                         return;
                     }
                 }
@@ -127,34 +127,4 @@ pub(crate) async fn respond(
         .respond_error_with_body(error.status, error.body)
         .await
         .ok();
-}
-
-/// Write an error response with custom headers. Used when the on_gateway_error
-/// interceptor adds headers to the error response.
-async fn write_error_with_headers(
-    session: &mut Session,
-    status: u16,
-    headers: &[(String, String)],
-    body: Bytes,
-) {
-    let mut resp_header = match pingora_http::ResponseHeader::build(status, None) {
-        Ok(h) => h,
-        Err(_) => {
-            session.respond_error(500).await.ok();
-            return;
-        }
-    };
-    for (name, value) in headers {
-        resp_header
-            .insert_header(name.clone(), value.as_bytes())
-            .ok();
-    }
-    if session
-        .write_response_header(Box::new(resp_header), false)
-        .await
-        .is_err()
-    {
-        return;
-    }
-    session.write_response_body(Some(body), true).await.ok();
 }

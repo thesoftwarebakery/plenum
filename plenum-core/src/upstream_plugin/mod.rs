@@ -439,39 +439,17 @@ pub(crate) async fn dispatch(
     }
 
     // Step E: write response
-    let mut resp_header =
-        pingora_http::ResponseHeader::build(plugin_status, None).map_err(|e| {
-            pingora_core::Error::because(
-                pingora_core::ErrorType::InternalError,
-                "build response header",
-                e,
-            )
-        })?;
-    for (name, value) in &plugin_headers {
-        if let Some(v) = value {
-            resp_header.insert_header(name.clone(), v.as_str()).ok();
-        }
-    }
-    session
-        .write_response_header(Box::new(resp_header), false)
-        .await
-        .map_err(|e| {
-            pingora_core::Error::because(
-                pingora_core::ErrorType::InternalError,
-                "write response header",
-                e,
-            )
-        })?;
-    session
-        .write_response_body(Some(response_body_bytes), true)
-        .await
-        .map_err(|e| {
-            pingora_core::Error::because(
-                pingora_core::ErrorType::InternalError,
-                "write response body",
-                e,
-            )
-        })?;
+    let response_headers: Vec<(String, String)> = plugin_headers
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|val| (k, val)))
+        .collect();
+    crate::proxy_utils::write_response(
+        session,
+        plugin_status,
+        &response_headers,
+        response_body_bytes,
+    )
+    .await?;
 
     Ok(true)
 }
