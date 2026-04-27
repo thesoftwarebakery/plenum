@@ -6,4 +6,4 @@ actions:
   - target: $
     update:
       x-plenum-config:
-        ca_file: "/certs/ca.crt"
+        ca-file: "/certs/ca.crt"

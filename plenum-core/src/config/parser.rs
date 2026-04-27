@@ -28,13 +28,15 @@ impl Config {
         let value = extensions
             .get(key)
             .ok_or_else(|| format!("extension '{}' not found", key))?;
-        self.resolve_value(value)
+        self.resolve(value)
     }
 
-    fn resolve_value<T: DeserializeOwned>(&self, value: &Value) -> Result<T, Box<dyn Error>> {
+    /// Deserialize a raw extension `Value` with `$ref` resolution.
+    /// Use this for operation-level reads where the value is already in hand.
+    pub fn resolve<T: DeserializeOwned>(&self, value: &Value) -> Result<T, Box<dyn Error>> {
         if let Ok(ext_ref) = serde_json::from_value::<ExtensionRef>(value.clone()) {
             let resolved = self.follow_ref(&ext_ref.path)?;
-            return self.resolve_value(resolved);
+            return self.resolve(resolved);
         }
         Ok(serde_json::from_value(value.clone())?)
     }
@@ -119,14 +121,14 @@ mod tests {
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
             "paths": {},
-            "x-plenum-upstreams": {
+            "components": { "x-upstreams": {
                 "my-api": {
                     "address": "api.example.com",
                     "port": 8080
                 }
-            },
+            }},
             "x-plenum-upstream": {
-                "$ref": "#/x-plenum-upstreams/my-api"
+                "$ref": "#/components/x-upstreams/my-api"
             }
         });
         let config = make_config(doc);
@@ -166,7 +168,7 @@ mod tests {
             "info": { "title": "Test", "version": "1.0" },
             "paths": {},
             "x-plenum-upstream": {
-                "$ref": "#/x-plenum-upstreams/does-not-exist"
+                "$ref": "#/components/x-upstreams/does-not-exist"
             }
         });
         let config = make_config(doc);
@@ -175,5 +177,67 @@ mod tests {
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("not found"));
+    }
+
+    #[test]
+    fn resolve_follows_ref_on_raw_value() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {},
+            "components": { "x-upstreams": {
+                "my-api": {
+                    "address": "api.example.com",
+                    "port": 8080
+                }
+            }}
+        });
+        let config = make_config(doc);
+
+        let ref_value = json!({ "$ref": "#/components/x-upstreams/my-api" });
+        let upstream: TestUpstream = config.resolve(&ref_value).unwrap();
+
+        assert_eq!(
+            upstream,
+            TestUpstream {
+                address: "api.example.com".into(),
+                port: 8080,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_deserializes_inline_value() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        });
+        let config = make_config(doc);
+
+        let inline = json!({ "address": "localhost", "port": 3000 });
+        let upstream: TestUpstream = config.resolve(&inline).unwrap();
+
+        assert_eq!(
+            upstream,
+            TestUpstream {
+                address: "localhost".into(),
+                port: 3000,
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_scalar_value() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        });
+        let config = make_config(doc);
+
+        let val = json!(5000);
+        let timeout: u64 = config.resolve(&val).unwrap();
+        assert_eq!(timeout, 5000);
     }
 }

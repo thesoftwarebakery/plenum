@@ -13,9 +13,7 @@ use oas3::spec::{Operation, PathItem};
 use pingora_core::upstreams::peer::HttpPeer;
 use plenum_js_runtime::PluginRuntime;
 
-use crate::config::{
-    Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
-};
+use crate::config::{Config, InterceptorConfig, ServerConfig, UpstreamConfig, resolve_env_vars};
 use crate::load_balancing::{self, UpstreamPool};
 use crate::openapi::operation::build_operation_meta;
 use crate::upstream_peer::make_peer;
@@ -72,7 +70,6 @@ pub struct OperationInterceptors {
 
 /// Per-operation metadata resolved at boot time.
 pub struct OperationSchemas {
-    pub validation_override: Option<ValidationOverride>,
     pub interceptors: OperationInterceptors,
     /// Raw `x-plenum-backend` extension value from the operation, passed opaquely to the
     /// plugin's `handle()` function. Never interpreted by the gateway itself.
@@ -96,7 +93,6 @@ pub struct RouteEntry {
     /// validation for `on_response_body` interceptors on HTTP routes.
     pub buffer_response: bool,
     pub operations: HashMap<Method, OperationSchemas>,
-    pub validation_override: Option<ValidationOverride>,
     /// The OpenAPI path template for this route (e.g. `/users/{id}`).
     /// Populated in `ctx.gateway.route` for each interceptor/plugin call.
     pub path: String,
@@ -160,6 +156,7 @@ impl PluginRuntimeKey {
 fn build_operation_interceptors(
     operation: &Operation,
     path: &str,
+    config: &Config,
     config_base: &Path,
     runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<dyn PluginRuntime>>,
     default_timeout: Duration,
@@ -169,9 +166,9 @@ fn build_operation_interceptors(
         None => return Ok(OperationInterceptors::default()),
     };
 
-    let interceptor_configs: Vec<InterceptorConfig> =
-        serde_json::from_value(interceptor_value.clone())
-            .map_err(|e| format!("path '{}': x-plenum-interceptor: {}", path, e))?;
+    let interceptor_configs: Vec<InterceptorConfig> = config
+        .resolve(interceptor_value)
+        .map_err(|e| format!("path '{}': x-plenum-interceptor: {}", path, e))?;
 
     let mut interceptors = OperationInterceptors::default();
     for config in &interceptor_configs {
@@ -450,11 +447,6 @@ pub fn build_router(
             }
         };
 
-        // Path-level validation override
-        let path_validation: Option<ValidationOverride> = config
-            .extension(&path_item.extensions, "plenum-validation")
-            .ok();
-
         // Path-level request timeout override
         let path_request_timeout: Option<Duration> = config
             .extension::<u64>(&path_item.extensions, "plenum-timeout")
@@ -469,17 +461,11 @@ pub fn build_router(
         // Build operation metadata for each method on this path
         let mut operations = HashMap::new();
         for (method, operation) in path_item.methods() {
-            // Operation-level validation override
-            let op_validation: Option<ValidationOverride> = operation
-                .extensions
-                .get("plenum-validation")
-                .and_then(|v| serde_json::from_value(v.clone()).ok());
-
             // Operation-level request timeout override (op > path > global)
             let request_timeout = operation
                 .extensions
                 .get("plenum-timeout")
-                .and_then(|v| v.as_u64())
+                .and_then(|v| config.resolve::<u64>(v).ok())
                 .map(Duration::from_millis)
                 .or(path_request_timeout)
                 .unwrap_or(default_request_timeout);
@@ -488,7 +474,7 @@ pub fn build_router(
             let max_request_body_bytes = operation
                 .extensions
                 .get("plenum-body-limit")
-                .and_then(|v| v.as_u64())
+                .and_then(|v| config.resolve::<u64>(v).ok())
                 .or(path_max_body_bytes)
                 .unwrap_or(default_max_body_bytes);
 
@@ -496,6 +482,7 @@ pub fn build_router(
             let interceptors = build_operation_interceptors(
                 operation,
                 path,
+                config,
                 config_base,
                 &mut interceptor_runtime_cache,
                 default_interceptor_timeout,
@@ -511,7 +498,6 @@ pub fn build_router(
             operations.insert(
                 method,
                 OperationSchemas {
-                    validation_override: op_validation,
                     interceptors,
                     backend_config,
                     operation_meta,
@@ -568,7 +554,6 @@ pub fn build_router(
             upstream,
             buffer_response: upstream_buffer_response,
             operations,
-            validation_override: path_validation,
             path: path.to_string(),
         });
         router
@@ -823,7 +808,7 @@ mod tests {
                             "module": &noop_path,
                             "hook": "on_request",
                             "function": "onRequest",
-                            "timeout_ms": 5000
+                            "timeout-ms": 5000
                         }],
                         "responses": { "200": { "description": "ok" } }
                     },
@@ -922,7 +907,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "interceptor_default_timeout_ms": 15000 },
+            "x-plenum-config": { "interceptor-default-timeout-ms": 15000 },
             "paths": {
                 "/test": {
                     "get": {
@@ -1296,7 +1281,7 @@ mod tests {
                     "x-plenum-upstream": {
                         "kind": "plugin",
                         "plugin": &plugin_path,
-                        "timeout_ms": 12345
+                        "timeout-ms": 12345
                     }
                 }
             }
@@ -1556,7 +1541,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "request_timeout_ms": 5000 },
+            "x-plenum-config": { "request-timeout-ms": 5000 },
             "paths": {
                 "/test": {
                     "get": {
@@ -1585,7 +1570,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "request_timeout_ms": 5000 },
+            "x-plenum-config": { "request-timeout-ms": 5000 },
             "paths": {
                 "/test": {
                     "x-plenum-timeout": 2000,
@@ -1657,7 +1642,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "max_request_body_bytes": 1024 },
+            "x-plenum-config": { "max-request-body-bytes": 1024 },
             "paths": {
                 "/test": {
                     "get": {
@@ -1686,7 +1671,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "max_request_body_bytes": 1024 },
+            "x-plenum-config": { "max-request-body-bytes": 1024 },
             "paths": {
                 "/test": {
                     "x-plenum-body-limit": 512,

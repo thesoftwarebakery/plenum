@@ -9,21 +9,22 @@ actions:
         threads: 1
         daemon: false
         listen: "0.0.0.0:6188"
-      x-plenum-upstreams:
-        db:
-          kind: "plugin"
-          plugin: "internal:mongodb"
-          options:
-            host: "${DB_HOST}"
-            port: "${DB_PORT:-27017}"
-            database: "${DB_NAME}"
-          permissions:
-            net:
-              - "${DB_HOST}"
+      components:
+        x-upstreams:
+          db:
+            kind: "plugin"
+            plugin: "internal:mongodb"
+            options:
+              host: "${DB_HOST}"
+              port: "${DB_PORT:-27017}"
+              database: "${DB_NAME}"
+            permissions:
+              net:
+                - "${DB_HOST}"
   - target: $.paths[*]
     update:
       x-plenum-upstream:
-        $ref: "#/x-plenum-upstreams/db"
+        $ref: "#/components/x-upstreams/db"
   - target: $.paths['/users'].get
     update:
       x-plenum-backend:

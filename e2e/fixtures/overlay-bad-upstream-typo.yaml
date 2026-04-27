@@ -5,13 +5,14 @@ info:
 actions:
   - target: $
     update:
-      x-plenum-upstreams:
-        default:
-          kind: "HTTP"
-          address: "wiremock"
-          port: 8080
-          buffer-responce: true
+      components:
+        x-upstreams:
+          default:
+            kind: "HTTP"
+            address: "wiremock"
+            port: 8080
+            buffer-responce: true
   - target: $.paths[*]
     update:
       x-plenum-upstream:
-        $ref: "#/x-plenum-upstreams/default"
+        $ref: "#/components/x-upstreams/default"
