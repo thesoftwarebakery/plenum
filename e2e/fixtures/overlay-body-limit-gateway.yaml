@@ -9,4 +9,4 @@ actions:
         threads: 1
         daemon: false
         listen: "0.0.0.0:6188"
-        max_request_body_bytes: 256
+        max-request-body-bytes: 256
