@@ -13,9 +13,7 @@ use oas3::spec::{Operation, PathItem};
 use pingora_core::upstreams::peer::HttpPeer;
 use plenum_js_runtime::PluginRuntime;
 
-use crate::config::{
-    Config, InterceptorConfig, ServerConfig, UpstreamConfig, ValidationOverride, resolve_env_vars,
-};
+use crate::config::{Config, InterceptorConfig, ServerConfig, UpstreamConfig, resolve_env_vars};
 use crate::load_balancing::{self, UpstreamPool};
 use crate::openapi::operation::build_operation_meta;
 use crate::upstream_peer::make_peer;
@@ -72,7 +70,6 @@ pub struct OperationInterceptors {
 
 /// Per-operation metadata resolved at boot time.
 pub struct OperationSchemas {
-    pub validation_override: Option<ValidationOverride>,
     pub interceptors: OperationInterceptors,
     /// Raw `x-plenum-backend` extension value from the operation, passed opaquely to the
     /// plugin's `handle()` function. Never interpreted by the gateway itself.
@@ -96,7 +93,6 @@ pub struct RouteEntry {
     /// validation for `on_response_body` interceptors on HTTP routes.
     pub buffer_response: bool,
     pub operations: HashMap<Method, OperationSchemas>,
-    pub validation_override: Option<ValidationOverride>,
     /// The OpenAPI path template for this route (e.g. `/users/{id}`).
     /// Populated in `ctx.gateway.route` for each interceptor/plugin call.
     pub path: String,
@@ -450,11 +446,6 @@ pub fn build_router(
             }
         };
 
-        // Path-level validation override
-        let path_validation: Option<ValidationOverride> = config
-            .extension(&path_item.extensions, "plenum-validation")
-            .ok();
-
         // Path-level request timeout override
         let path_request_timeout: Option<Duration> = config
             .extension::<u64>(&path_item.extensions, "plenum-timeout")
@@ -469,12 +460,6 @@ pub fn build_router(
         // Build operation metadata for each method on this path
         let mut operations = HashMap::new();
         for (method, operation) in path_item.methods() {
-            // Operation-level validation override
-            let op_validation: Option<ValidationOverride> = operation
-                .extensions
-                .get("plenum-validation")
-                .and_then(|v| serde_json::from_value(v.clone()).ok());
-
             // Operation-level request timeout override (op > path > global)
             let request_timeout = operation
                 .extensions
@@ -511,7 +496,6 @@ pub fn build_router(
             operations.insert(
                 method,
                 OperationSchemas {
-                    validation_override: op_validation,
                     interceptors,
                     backend_config,
                     operation_meta,
@@ -568,7 +552,6 @@ pub fn build_router(
             upstream,
             buffer_response: upstream_buffer_response,
             operations,
-            validation_override: path_validation,
             path: path.to_string(),
         });
         router
