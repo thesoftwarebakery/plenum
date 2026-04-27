@@ -1,24 +1,15 @@
 use serde::Deserialize;
 
-/// Origin matching strategy for CORS.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(untagged)]
-pub enum OriginMatch {
-    /// Allow any origin (translates to `Access-Control-Allow-Origin: *`).
-    /// Cannot be used when `allow_credentials` is true.
-    Any,
-    /// List of allowed origins. Each entry can be:
-    /// - An exact origin: `"https://example.com"`
-    /// - A glob pattern: `"*.example.com"`
-    List(Vec<String>),
-}
-
 /// Per-operation CORS configuration parsed from `x-plenum-cors`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CorsConfig {
     /// Allowed origins. Required — no CORS headers without this.
-    pub origins: OriginMatch,
+    /// Each entry can be:
+    /// - `"*"` to allow any origin (incompatible with `allow_credentials: true`)
+    /// - An exact origin: `"https://example.com"`
+    /// - A wildcard prefix: `"*.example.com"` (matches any subdomain)
+    pub origins: Vec<String>,
     /// Allowed HTTP methods. Defaults to GET, POST, HEAD.
     #[serde(default = "default_methods")]
     pub methods: Vec<String>,

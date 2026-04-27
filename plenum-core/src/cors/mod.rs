@@ -4,8 +4,7 @@
 //! Called from `request_filter` (preflight short-circuit) and `response_filter` (CORS headers
 //! on actual responses).
 
-use crate::config::{CorsConfig, OriginMatch};
-use globset::Glob;
+use crate::config::CorsConfig;
 use http::header::HeaderValue;
 use pingora_http::ResponseHeader;
 use pingora_proxy::Session;
@@ -20,30 +19,24 @@ pub enum PreflightResult {
 
 /// Check if the request origin matches the CORS config.
 ///
-/// Supports exact matches and glob patterns (e.g., `*.example.com`).
+/// Supports exact matches and wildcard prefix patterns (e.g., `*.example.com`).
 pub fn origin_matches(origin: &str, config: &CorsConfig) -> bool {
-    match &config.origins {
-        OriginMatch::Any => true,
-        OriginMatch::List(allowed) => allowed.iter().any(|pattern| {
-            if pattern == "*" {
-                true
-            } else if pattern.contains('*') || pattern.contains('?') {
-                Glob::new(pattern)
-                    .ok()
-                    .map(|g| g.compile_matcher().is_match(origin))
-                    .unwrap_or(false)
-            } else {
-                pattern == origin
-            }
-        }),
-    }
+    config.origins.iter().any(|pattern| {
+        if pattern == "*" {
+            true
+        } else if let Some(suffix) = pattern.strip_prefix('*') {
+            origin.ends_with(suffix)
+        } else {
+            pattern == origin
+        }
+    })
 }
 
 /// Validate config at boot time. Returns error for invalid combinations.
 pub fn validate_cors_config(config: &CorsConfig) -> Result<(), String> {
-    if config.allow_credentials && matches!(&config.origins, OriginMatch::Any) {
+    if config.allow_credentials && config.origins.iter().any(|o| o == "*") {
         return Err(
-            "CORS: `allow_credentials: true` is incompatible with `origins: \"*\"`. \
+            "CORS: `allow_credentials: true` is incompatible with `origins: [\"*\"]`. \
              Use an explicit origin list instead."
                 .into(),
         );
@@ -132,6 +125,9 @@ fn add_cors_headers(resp: &mut ResponseHeader, config: &CorsConfig, request_orig
         let _ = resp.insert_header(http::header::ACCESS_CONTROL_ALLOW_ORIGIN, val);
     }
 
+    // Vary: Origin — required so caches don't serve one origin's CORS headers to another.
+    let _ = resp.append_header(http::header::VARY, HeaderValue::from_static("Origin"));
+
     // Access-Control-Allow-Credentials
     if config.allow_credentials {
         let _ = resp.insert_header(
@@ -178,7 +174,7 @@ mod tests {
 
     fn config_any() -> CorsConfig {
         CorsConfig {
-            origins: OriginMatch::Any,
+            origins: vec!["*".into()],
             methods: vec!["GET".into(), "POST".into()],
             headers: vec![],
             allow_credentials: false,
@@ -189,10 +185,10 @@ mod tests {
 
     fn config_list() -> CorsConfig {
         CorsConfig {
-            origins: OriginMatch::List(vec![
+            origins: vec![
                 "https://example.com".into(),
                 "https://app.example.com".into(),
-            ]),
+            ],
             methods: vec!["GET".into(), "POST".into(), "PUT".into()],
             headers: vec!["Content-Type".into(), "Authorization".into()],
             allow_credentials: true,
@@ -203,7 +199,7 @@ mod tests {
 
     fn config_glob() -> CorsConfig {
         CorsConfig {
-            origins: OriginMatch::List(vec!["*.example.com".into()]),
+            origins: vec!["*.example.com".into()],
             methods: vec!["GET".into()],
             headers: vec![],
             allow_credentials: false,
@@ -229,7 +225,7 @@ mod tests {
     }
 
     #[test]
-    fn origin_matches_glob_pattern() {
+    fn origin_matches_wildcard_pattern() {
         let config = config_glob();
         assert!(origin_matches("https://foo.example.com", &config));
         assert!(origin_matches("https://bar.example.com", &config));
@@ -238,9 +234,9 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_credentials_with_any() {
+    fn validate_rejects_credentials_with_wildcard() {
         let config = CorsConfig {
-            origins: OriginMatch::Any,
+            origins: vec!["*".into()],
             methods: vec![],
             headers: vec![],
             allow_credentials: true,
@@ -259,7 +255,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_accepts_any_without_credentials() {
+    fn validate_accepts_wildcard_without_credentials() {
         let config = config_any();
         assert!(validate_cors_config(&config).is_ok());
     }
