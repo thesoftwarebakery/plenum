@@ -10,14 +10,14 @@ use std::time::Duration;
 
 use plenum_js_runtime::PluginRuntime;
 
-use super::{HookHandle, module_resolver};
 use crate::config::ServerConfig;
+use crate::path_match::{HookHandle, module_resolver};
 
 /// Spawn a Node.js interceptor runtime for the given resolved module with the given permissions.
 ///
 /// `context` is a human-readable prefix used in error messages
 /// (e.g. `"path '/foo': interceptor 'bar.js'"`).
-pub(super) fn spawn_interceptor_runtime(
+pub(crate) fn spawn_interceptor_runtime(
     resolved: &module_resolver::ResolvedModule,
     permissions: plenum_js_runtime::InterceptorPermissions,
     context: &str,
@@ -41,7 +41,7 @@ pub(super) fn spawn_interceptor_runtime(
 ///
 /// `FunctionNotFound` is silently ignored — it just means the module doesn't validate.
 /// Any other error is returned with `context` prepended to the message.
-pub(super) fn validate_hook(
+pub(crate) fn validate_hook(
     runtime: &dyn PluginRuntime,
     validate_arg: serde_json::Value,
     timeout: Duration,
@@ -58,7 +58,7 @@ pub(super) fn validate_hook(
 ///
 /// The runtime is deduplicated via `runtime_cache` — if the same module is already
 /// used by a per-operation interceptor, the same process is reused.
-pub(super) fn resolve_global_error_hook(
+pub(crate) fn resolve_global_error_hook(
     server_config: &ServerConfig,
     config_base: &std::path::Path,
     runtime_cache: &mut HashMap<module_resolver::ModuleCacheKey, Arc<dyn PluginRuntime>>,

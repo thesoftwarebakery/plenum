@@ -1,5 +1,4 @@
-mod module_resolver;
-mod runtime_builder;
+pub(crate) mod module_resolver;
 
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
@@ -208,8 +207,11 @@ fn build_operation_interceptors(
                     .clone()
                     .map(|p| p.into_runtime_permissions())
                     .unwrap_or_default();
-                let h =
-                    runtime_builder::spawn_interceptor_runtime(&resolved, permissions, &context)?;
+                let h = crate::runtime_builder::spawn_interceptor_runtime(
+                    &resolved,
+                    permissions,
+                    &context,
+                )?;
                 e.insert(h).clone()
             }
         };
@@ -220,7 +222,7 @@ fn build_operation_interceptors(
             .unwrap_or(default_timeout);
 
         let validate_arg = serde_json::to_value(config).unwrap();
-        runtime_builder::validate_hook(runtime.as_ref(), validate_arg, timeout, &context)?;
+        crate::runtime_builder::validate_hook(runtime.as_ref(), validate_arg, timeout, &context)?;
 
         let hook_handle = HookHandle {
             runtime,
@@ -540,7 +542,7 @@ pub fn build_router(
             .map_err(|e| format!("path '{}': {}", path, e))?;
     }
     // Resolve the global on_gateway_error interceptor if configured.
-    let error_hook = runtime_builder::resolve_global_error_hook(
+    let error_hook = crate::runtime_builder::resolve_global_error_hook(
         &server_config,
         config_base,
         &mut interceptor_runtime_cache,
