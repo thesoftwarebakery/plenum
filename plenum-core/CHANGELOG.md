@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/thesoftwarebakery/plenum/compare/v0.8.0...v0.8.1) (2026-04-27)
+
+
+### Bug Fixes
+
+* enable $ref resolution for operation-level extensions ([e0ecef6](https://github.com/thesoftwarebakery/plenum/commit/e0ecef651bf5d0e1cb4753b89f54673cb76eeb57))
+
 ## [0.8.0](https://github.com/thesoftwarebakery/plenum/compare/v0.7.0...v0.8.0) (2026-04-26)
 
 
