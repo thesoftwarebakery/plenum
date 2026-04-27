@@ -122,7 +122,7 @@ struct PluginUpstreamFields {
     options: Option<Value>,
     #[serde(default)]
     permissions: Option<super::PermissionsConfig>,
-    #[serde(default)]
+    #[serde(default, rename = "timeout-ms")]
     timeout_ms: Option<u64>,
 }
 
@@ -540,7 +540,7 @@ mod tests {
         let json = serde_json::json!({
             "kind": "plugin",
             "plugin": "my-plugin",
-            "timeout_ms": 7500
+            "timeout-ms": 7500
         });
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
         match config {

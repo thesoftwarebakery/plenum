@@ -5,23 +5,24 @@ info:
 actions:
   - target: $
     update:
-      x-plenum-upstreams:
-        pool:
-          kind: "HTTP"
-          selection: "round-robin"
-          health-check:
-            path: "/__admin/health"
-            interval-seconds: 2
-            consecutive-failure: 2
-            consecutive-success: 1
-          backends:
-            - address: "upstream-1"
-              port: 8080
-            - address: "upstream-2"
-              port: 8080
-            - address: "upstream-3"
-              port: 8080
+      components:
+        x-upstreams:
+          pool:
+            kind: "HTTP"
+            selection: "round-robin"
+            health-check:
+              path: "/__admin/health"
+              interval-seconds: 2
+              consecutive-failure: 2
+              consecutive-success: 1
+            backends:
+              - address: "upstream-1"
+                port: 8080
+              - address: "upstream-2"
+                port: 8080
+              - address: "upstream-3"
+                port: 8080
   - target: $.paths[*]
     update:
       x-plenum-upstream:
-        $ref: "#/x-plenum-upstreams/pool"
+        $ref: "#/components/x-upstreams/pool"

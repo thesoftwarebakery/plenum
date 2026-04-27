@@ -25,20 +25,20 @@ fn start_gateway(upstream_host: &str, upstream_port: u16) -> String {
         "paths": {
             "/products": {
                 "get": { "responses": { "200": { "description": "ok" } } },
-                "x-plenum-upstream": { "$ref": "#/x-plenum-upstreams/default" }
+                "x-plenum-upstream": { "$ref": "#/components/x-upstreams/default" }
             },
             "/products/{id}": {
                 "get": { "responses": { "200": { "description": "ok" } } },
-                "x-plenum-upstream": { "$ref": "#/x-plenum-upstreams/default" }
+                "x-plenum-upstream": { "$ref": "#/components/x-upstreams/default" }
             }
         },
-        "x-plenum-upstreams": {
+        "components": { "x-upstreams": {
             "default": {
                 "kind": "HTTP",
                 "address": upstream_host,
                 "port": upstream_port
             }
-        }
+        }}
     });
 
     let config = Config::from_value(doc).unwrap();
