@@ -17,13 +17,13 @@ pub struct CorsConfig {
     #[serde(default)]
     pub headers: Vec<String>,
     /// Whether credentials (cookies, auth headers) are allowed.
-    #[serde(default)]
+    #[serde(default, rename = "allow-credentials")]
     pub allow_credentials: bool,
     /// Preflight cache max-age in seconds. Defaults to 86400 (24h).
-    #[serde(default = "default_max_age")]
+    #[serde(default = "default_max_age", rename = "max-age")]
     pub max_age: u32,
     /// Response headers exposed to the browser.
-    #[serde(default)]
+    #[serde(default, rename = "expose-headers")]
     pub expose_headers: Vec<String>,
 }
 

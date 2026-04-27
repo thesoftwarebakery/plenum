@@ -501,7 +501,7 @@ pub fn build_router(
             let cors: Option<CorsConfig> = operation
                 .extensions
                 .get("plenum-cors")
-                .map(|v| serde_json::from_value::<CorsConfig>(v.clone()))
+                .map(|v| config.resolve::<CorsConfig>(v))
                 .transpose()
                 .map_err(|e| format!("path '{}' method {}: x-plenum-cors: {}", path, method, e))?;
 

@@ -20,9 +20,9 @@ actions:
         headers:
           - Content-Type
           - Authorization
-        allow_credentials: true
-        max_age: 3600
-        expose_headers:
+        allow-credentials: true
+        max-age: 3600
+        expose-headers:
           - X-Request-Id
   - target: $.paths['/products/{id}'].get
     update:
@@ -31,8 +31,8 @@ actions:
           - "*.example.com"
         methods:
           - GET
-        allow_credentials: false
-        max_age: 7200
+        allow-credentials: false
+        max-age: 7200
   - target: $.paths['/no-cors']
     update:
       x-plenum-upstream:
