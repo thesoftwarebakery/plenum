@@ -13,6 +13,7 @@ use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use tokio_util::sync::CancellationToken;
 
 pub mod config;
+mod cors;
 mod ctx;
 pub mod gateway_error;
 mod headers;
@@ -110,6 +111,21 @@ impl ProxyHttp for Plenum {
         let Some(method) = ctx.matched_method.clone() else {
             return Ok(false);
         };
+
+        // CORS preflight: OPTIONS requests won't have a matching operation in the
+        // OpenAPI spec, so check before the method-based lookup. Find the first
+        // CORS config from any operation on the matched path.
+        if method == http::Method::OPTIONS
+            && let Some(cors_config) = route_arc
+                .operations
+                .values()
+                .find_map(|op| op.cors.as_ref())
+            && let cors::PreflightResult::Handled =
+                cors::handle_preflight(session, cors_config).await?
+        {
+            return Ok(true);
+        }
+
         let Some(op) = route_arc.operations.get(&method) else {
             return Ok(false);
         };
@@ -259,6 +275,11 @@ impl ProxyHttp for Plenum {
         };
 
         phases::on_response::run(upstream_response, ctx, op).await?;
+
+        // Add CORS headers for actual (non-preflight) responses.
+        if let Some(ref cors_config) = op.cors {
+            cors::add_cors_headers_to_response(upstream_response, cors_config, _session);
+        }
 
         // When on_response_body is configured, strip Content-Length (body size may change)
         // and store metadata in ctx for use in upstream_response_body_filter.

@@ -1,0 +1,53 @@
+overlay: 1.1.0
+info:
+  title: Add CORS config
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        listen: "0.0.0.0:6188"
+  - target: $.paths['/products'].get
+    update:
+      x-plenum-cors:
+        origins:
+          - "https://example.com"
+          - "https://app.example.com"
+        methods:
+          - GET
+          - POST
+          - PUT
+        headers:
+          - Content-Type
+          - Authorization
+        allow-credentials: true
+        max-age: 3600
+        expose-headers:
+          - X-Request-Id
+  - target: $.paths['/products/{id}'].get
+    update:
+      x-plenum-cors:
+        origins:
+          - "*.example.com"
+        methods:
+          - GET
+        allow-credentials: false
+        max-age: 7200
+  - target: $.paths['/no-cors']
+    update:
+      x-plenum-upstream:
+        kind: HTTP
+        address: wiremock
+        port: 8080
+  - target: $.paths['/products']
+    update:
+      x-plenum-upstream:
+        kind: HTTP
+        address: wiremock
+        port: 8080
+  - target: $.paths['/products/{id}']
+    update:
+      x-plenum-upstream:
+        kind: HTTP
+        address: wiremock
+        port: 8080
