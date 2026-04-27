@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777282310406,
+  "lastUpdate": 1777285417595,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -792,6 +792,78 @@ window.BENCHMARK_DATA = {
             "value": 5.956,
             "unit": "ms",
             "extra": "n=5919"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "deed7926af85db04a6c21f2607866354df232eec",
+          "message": "Merge pull request #107 from thesoftwarebakery/worktree-issue-69-cors\n\nfeat: add CORS support via x-plenum-cors overlay extension",
+          "timestamp": "2026-04-27T11:17:05+01:00",
+          "tree_id": "d1d0d85390ce53634b68ab937db370b4eee137a8",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/deed7926af85db04a6c21f2607866354df232eec"
+        },
+        "date": 1777285416832,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 1.313,
+            "unit": "ms",
+            "extra": "n=7614"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 5.615,
+            "unit": "ms",
+            "extra": "n=7614"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 1.214,
+            "unit": "ms",
+            "extra": "n=8238"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 3.672,
+            "unit": "ms",
+            "extra": "n=8238"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.435,
+            "unit": "ms",
+            "extra": "n=6967"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 3.319,
+            "unit": "ms",
+            "extra": "n=6967"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.722,
+            "unit": "ms",
+            "extra": "n=5809"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 5.46,
+            "unit": "ms",
+            "extra": "n=5809"
           }
         ]
       }
