@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/thesoftwarebakery/plenum/compare/v0.8.1...v0.9.0) (2026-04-27)
+
+
+### Features
+
+* add CORS support via x-plenum-cors overlay extension ([deed792](https://github.com/thesoftwarebakery/plenum/commit/deed7926af85db04a6c21f2607866354df232eec))
+
 ## [0.8.1](https://github.com/thesoftwarebakery/plenum/compare/v0.8.0...v0.8.1) (2026-04-27)
 
 
