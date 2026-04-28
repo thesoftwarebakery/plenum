@@ -72,6 +72,7 @@ const BUILTIN_INTERCEPTOR_NAMES: &[&str] = &[
     "validate-request",
     "auth-apikey",
     "validate-response",
+    "rate-limit-rejector",
 ];
 
 const BUILTIN_PLUGIN_NAMES: &[&str] = &["postgres", "mysql", "mongodb"];

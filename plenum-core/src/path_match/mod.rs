@@ -1,6 +1,6 @@
 pub(crate) mod module_resolver;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
@@ -14,7 +14,8 @@ use pingora_core::upstreams::peer::HttpPeer;
 use plenum_js_runtime::PluginRuntime;
 
 use crate::config::{
-    Config, CorsConfig, InterceptorConfig, ServerConfig, UpstreamConfig, resolve_env_vars,
+    Config, CorsConfig, InterceptorConfig, RateLimitConfig, ServerConfig, UpstreamConfig,
+    resolve_env_vars, validate_rate_limit_config,
 };
 use crate::cors;
 use crate::load_balancing::{self, UpstreamPool};
@@ -88,6 +89,8 @@ pub struct OperationSchemas {
     pub max_request_body_bytes: u64,
     /// CORS configuration for this operation, if `x-plenum-cors` is present.
     pub cors: Option<CorsConfig>,
+    /// Rate limit configuration for this operation, if `x-plenum-rate-limit` is present.
+    pub rate_limit: Option<RateLimitConfig>,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -113,6 +116,9 @@ pub struct RouterBuildResult {
     pub background_services: Vec<load_balancing::builder::BackgroundHealthService>,
     /// Global `on_gateway_error` interceptor hook, resolved at boot time.
     pub error_hook: Option<HookHandle>,
+    /// Distinct rate limit window durations (in seconds) collected from all operations at
+    /// boot time. Used by `build_gateway` to construct one `Rate` instance per window.
+    pub rate_limit_windows: HashSet<u64>,
 }
 
 /// Cache key for plugin runtimes. Incorporates both the module identity and
@@ -263,6 +269,7 @@ pub fn build_router(
 
     let mut router = Router::new();
     let mut background_services = Vec::new();
+    let mut rate_limit_windows: HashSet<u64> = HashSet::new();
     let mut interceptor_runtime_cache: HashMap<
         module_resolver::ModuleCacheKey,
         Arc<dyn PluginRuntime>,
@@ -426,6 +433,20 @@ pub fn build_router(
             .extension::<u64>(&path_item.extensions, "plenum-body-limit")
             .ok();
 
+        // Path-level rate limit config (can be overridden per operation)
+        let path_rate_limit: Option<RateLimitConfig> = path_item
+            .extensions
+            .get("plenum-rate-limit")
+            .map(|v| {
+                config
+                    .resolve::<RateLimitConfig>(v)
+                    .map_err(|e| format!("path '{}': x-plenum-rate-limit: {}", path, e))
+            })
+            .transpose()?;
+        if let Some(ref rl) = path_rate_limit {
+            validate_rate_limit_config(rl, path).map_err(|e| -> Box<dyn Error> { e.into() })?;
+        }
+
         // Build operation metadata for each method on this path
         let mut operations = HashMap::new();
         for (method, operation) in path_item.methods() {
@@ -474,6 +495,27 @@ pub fn build_router(
                     .map_err(|e| format!("path '{}' method {}: {}", path, method, e))?;
             }
 
+            // Operation-level rate limit config (op > path, absent = None)
+            let rate_limit: Option<RateLimitConfig> = operation
+                .extensions
+                .get("plenum-rate-limit")
+                .map(|v| {
+                    config.resolve::<RateLimitConfig>(v).map_err(|e| {
+                        format!(
+                            "path '{}' method {}: x-plenum-rate-limit: {}",
+                            path, method, e
+                        )
+                    })
+                })
+                .transpose()?
+                .or_else(|| path_rate_limit.clone());
+            if let Some(ref rl) = rate_limit {
+                validate_rate_limit_config(rl, path).map_err(|e| -> Box<dyn Error> { e.into() })?;
+                let window =
+                    crate::config::parse_window_duration(&rl.window).expect("validated above");
+                rate_limit_windows.insert(window.as_secs());
+            }
+
             // Curated operation metadata for runtime use by plugins/interceptors
             let operation_meta = build_operation_meta(operation, &config.spec);
 
@@ -486,6 +528,7 @@ pub fn build_router(
                     request_timeout,
                     max_request_body_bytes,
                     cors,
+                    rate_limit,
                 },
             );
         }
@@ -555,6 +598,7 @@ pub fn build_router(
         router,
         background_services,
         error_hook,
+        rate_limit_windows,
     })
 }
 

@@ -10,6 +10,7 @@ use gateway_error::GatewayErrorResponse;
 use path_match::{HookHandle, OperationSchemas, Upstream, build_router};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
+use pingora_limits::rate::Rate;
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use tokio_util::sync::CancellationToken;
 
@@ -25,6 +26,7 @@ mod openapi;
 pub mod path_match;
 mod phases;
 mod proxy_utils;
+pub mod rate_limit;
 pub mod request_context;
 pub mod request_timeout;
 mod runtime_builder;
@@ -37,6 +39,10 @@ pub struct Plenum {
     router: path_match::PlenumRouter,
     /// Global `on_gateway_error` interceptor hook, shared across all requests.
     error_hook: Option<Arc<HookHandle>>,
+    /// Per-window-duration rate limiters, keyed by window in seconds.
+    /// Populated at boot time from all `x-plenum-rate-limit` configs found across
+    /// all routes. One `Rate` per distinct window duration.
+    rate_limiters: HashMap<u64, pingora_limits::rate::Rate>,
 }
 
 /// Compute effective interceptor timeout from remaining request budget.
@@ -79,6 +85,7 @@ impl ProxyHttp for Plenum {
             user_ctx: serde_json::Map::new(),
             selected_backend_addr: None,
             error_hook: self.error_hook.clone(),
+            rate_limit_state: None,
         }
     }
 
@@ -144,6 +151,20 @@ impl ProxyHttp for Plenum {
                 if phases::on_request_headers::run(session, ctx, op, false).await? {
                     return Ok(true);
                 }
+                // Rate limit evaluation: runs after on_request_headers (which populates
+                // auth identity in ctx), before on_request (which can read rateLimits).
+                if let Some(ref rl) = op.rate_limit
+                    && rate_limit::evaluate(session, ctx, rl, &self.rate_limiters)
+                {
+                    phases::gateway_error::respond(
+                        session,
+                        ctx,
+                        GatewayErrorResponse::too_many_requests("rate limit exceeded"),
+                        ctx.error_hook.clone().as_deref(),
+                    )
+                    .await;
+                    return Ok(true);
+                }
                 if phases::on_request::run_phase1(session, ctx, op, false).await? {
                     return Ok(true);
                 }
@@ -167,10 +188,28 @@ impl ProxyHttp for Plenum {
             };
         }
 
-        // HTTP/Static routes: budget-capped on_request_headers, then on_request phase 1.
+        // HTTP/Static routes: budget-capped on_request_headers, then rate limit, then on_request.
         if phases::on_request_headers::run(session, ctx, op, true).await? {
             return Ok(true);
         }
+
+        // Rate limit evaluation: runs after on_request_headers (which populates
+        // auth identity in ctx), before on_request (which can read rateLimits).
+        // Not applied to static routes.
+        if !matches!(route_arc.upstream, Upstream::Static(_))
+            && let Some(ref rl) = op.rate_limit
+            && rate_limit::evaluate(session, ctx, rl, &self.rate_limiters)
+        {
+            phases::gateway_error::respond(
+                session,
+                ctx,
+                GatewayErrorResponse::too_many_requests("rate limit exceeded"),
+                ctx.error_hook.clone().as_deref(),
+            )
+            .await;
+            return Ok(true);
+        }
+
         if phases::on_request::run_phase1(session, ctx, op, true).await? {
             return Ok(true);
         }
@@ -417,10 +456,16 @@ pub fn build_gateway(
     let empty = BTreeMap::new();
     let paths = config.spec.paths.as_ref().unwrap_or(&empty);
     let result = build_router(config, paths, std::path::Path::new(config_path))?;
+    let rate_limiters: HashMap<u64, Rate> = result
+        .rate_limit_windows
+        .iter()
+        .map(|&secs| (secs, Rate::new(std::time::Duration::from_secs(secs))))
+        .collect();
     Ok(GatewayBuildResult {
         gateway: Plenum {
             router: result.router,
             error_hook: result.error_hook.map(Arc::new),
+            rate_limiters,
         },
         background_services: result.background_services,
     })

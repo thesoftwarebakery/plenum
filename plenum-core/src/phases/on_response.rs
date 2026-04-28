@@ -43,6 +43,7 @@ pub(crate) async fn run(
             route,
             &upstream_response.headers,
             op.operation_meta.clone(),
+            ctx.rate_limit_state.clone(),
             serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
@@ -133,6 +134,7 @@ pub(crate) fn run_body(
             &route,
             &http::HeaderMap::new(),
             op.operation_meta.clone(),
+            ctx.rate_limit_state.clone(),
             serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();

@@ -108,6 +108,17 @@ impl GatewayErrorResponse {
             error_message: msg,
         }
     }
+
+    /// 429 Too Many Requests — the request has been rate limited.
+    pub fn too_many_requests(message: impl std::fmt::Display) -> Self {
+        let msg = message.to_string();
+        Self {
+            status: 429,
+            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
+            error_code: "too_many_requests",
+            error_message: msg,
+        }
+    }
 }
 
 #[cfg(test)]

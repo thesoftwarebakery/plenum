@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::rate_limit::RateLimitState;
+
 /// Input passed to on_request and before_upstream interceptors.
 #[derive(Debug, Serialize, TS)]
 pub struct RequestInput {
@@ -15,6 +17,10 @@ pub struct RequestInput {
     pub params: HashMap<String, String>,
     #[ts(type = "unknown")]
     pub operation: serde_json::Value,
+    /// Gateway-populated rate limit state. Read-only for interceptors.
+    #[serde(rename = "rateLimits")]
+    #[ts(rename = "rateLimits", optional)]
+    pub rate_limits: Option<RateLimitState>,
     /// Request-scoped context bag for passing data between interceptors and plugins.
     #[ts(type = "Ctx")]
     pub ctx: serde_json::Value,
@@ -30,6 +36,10 @@ pub struct ResponseInput {
     pub headers: HashMap<String, String>,
     #[ts(type = "unknown")]
     pub operation: serde_json::Value,
+    /// Gateway-populated rate limit state. Read-only for interceptors.
+    #[serde(rename = "rateLimits")]
+    #[ts(rename = "rateLimits", optional)]
+    pub rate_limits: Option<RateLimitState>,
     /// Request-scoped context bag for passing data between interceptors and plugins.
     #[ts(type = "Ctx")]
     pub ctx: serde_json::Value,
@@ -216,6 +226,7 @@ pub fn gateway_error_input_from_parts(
 }
 
 /// Build a `RequestInput` from an HTTP request's components.
+#[allow(clippy::too_many_arguments)]
 pub fn request_input_from_parts(
     method: &http::Method,
     uri: &http::Uri,
@@ -223,6 +234,7 @@ pub fn request_input_from_parts(
     params: HashMap<String, String>,
     operation: serde_json::Value,
     route: &str,
+    rate_limits: Option<RateLimitState>,
     ctx: serde_json::Value,
 ) -> RequestInput {
     RequestInput {
@@ -233,6 +245,7 @@ pub fn request_input_from_parts(
         query: uri.query().unwrap_or("").to_string(),
         params,
         operation,
+        rate_limits,
         ctx,
     }
 }
@@ -244,6 +257,7 @@ pub fn response_input_from_parts(
     route: &str,
     headers: &http::HeaderMap,
     operation: serde_json::Value,
+    rate_limits: Option<RateLimitState>,
     ctx: serde_json::Value,
 ) -> ResponseInput {
     ResponseInput {
@@ -252,6 +266,7 @@ pub fn response_input_from_parts(
         route: route.to_string(),
         headers: header_map_to_hash_map(headers),
         operation,
+        rate_limits,
         ctx,
     }
 }
@@ -449,6 +464,7 @@ mod tests {
             query: "page=1".into(),
             params: HashMap::from([("id".into(), "123".into())]),
             operation: serde_json::Value::Null,
+            rate_limits: None,
             ctx: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&input).unwrap();
@@ -469,6 +485,7 @@ mod tests {
             route: "/items".into(),
             headers: HashMap::from([("x-request-id".into(), "abc".into())]),
             operation: serde_json::Value::Null,
+            rate_limits: None,
             ctx: serde_json::Value::Null,
         };
         let json = serde_json::to_value(&input).unwrap();
@@ -492,6 +509,7 @@ mod tests {
             HashMap::new(),
             serde_json::Value::Null,
             "/items",
+            None,
             serde_json::Value::Null,
         );
         assert_eq!(input.method, "GET");
@@ -516,6 +534,7 @@ mod tests {
             params,
             serde_json::Value::Null,
             "/items/{id}",
+            None,
             serde_json::Value::Null,
         );
         assert_eq!(input.params.get("id").unwrap(), "42");
@@ -533,6 +552,7 @@ mod tests {
             "/items/{id}",
             &headers,
             serde_json::Value::Null,
+            None,
             serde_json::Value::Null,
         );
         assert_eq!(input.status, 404);
