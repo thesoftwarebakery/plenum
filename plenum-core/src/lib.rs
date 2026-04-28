@@ -151,10 +151,8 @@ impl ProxyHttp for Plenum {
                 if phases::on_request_headers::run(session, ctx, op, false).await? {
                     return Ok(true);
                 }
-                if phases::on_request::run_phase1(session, ctx, op, false).await? {
-                    return Ok(true);
-                }
-                // Rate limit evaluation: runs after identity-populating on_request interceptors.
+                // Rate limit evaluation: runs after on_request_headers (which populates
+                // auth identity in ctx), before on_request (which can read rateLimits).
                 if let Some(ref rl) = op.rate_limit
                     && rate_limit::evaluate(session, ctx, rl, &self.rate_limiters)
                 {
@@ -165,6 +163,9 @@ impl ProxyHttp for Plenum {
                         ctx.error_hook.clone().as_deref(),
                     )
                     .await;
+                    return Ok(true);
+                }
+                if phases::on_request::run_phase1(session, ctx, op, false).await? {
                     return Ok(true);
                 }
                 upstream_plugin::dispatch(session, ctx, op, plugin, backend_config).await
@@ -187,17 +188,14 @@ impl ProxyHttp for Plenum {
             };
         }
 
-        // HTTP/Static routes: budget-capped on_request_headers, then on_request phase 1.
+        // HTTP/Static routes: budget-capped on_request_headers, then rate limit, then on_request.
         if phases::on_request_headers::run(session, ctx, op, true).await? {
             return Ok(true);
         }
-        if phases::on_request::run_phase1(session, ctx, op, true).await? {
-            return Ok(true);
-        }
 
-        // Rate limit evaluation: runs after identity-populating on_request interceptors,
-        // before the request is handed off to the upstream. Not applied to static routes
-        // (which are handled below and return immediately).
+        // Rate limit evaluation: runs after on_request_headers (which populates
+        // auth identity in ctx), before on_request (which can read rateLimits).
+        // Not applied to static routes.
         if !matches!(route_arc.upstream, Upstream::Static(_))
             && let Some(ref rl) = op.rate_limit
             && rate_limit::evaluate(session, ctx, rl, &self.rate_limiters)
@@ -209,6 +207,10 @@ impl ProxyHttp for Plenum {
                 ctx.error_hook.clone().as_deref(),
             )
             .await;
+            return Ok(true);
+        }
+
+        if phases::on_request::run_phase1(session, ctx, op, true).await? {
             return Ok(true);
         }
 

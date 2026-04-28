@@ -29,5 +29,5 @@ actions:
     update:
       x-plenum-interceptor:
         - module: "./interceptors/set-cost.js"
-          hook: on_request
+          hook: on_request_headers
           function: setCost
