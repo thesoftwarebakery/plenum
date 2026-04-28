@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/thesoftwarebakery/plenum/compare/v0.10.0...v0.11.0) (2026-04-28)
+
+
+### Features
+
+* add on_request_headers interceptor hook ([0d15f56](https://github.com/thesoftwarebakery/plenum/commit/0d15f56baec90f9807f5cc7bb4198db82743312d))
+* add on_request_headers interceptor hook ([f192dd8](https://github.com/thesoftwarebakery/plenum/commit/f192dd86e0a7429e665d9627ba26439041d40d48)), closes [#116](https://github.com/thesoftwarebakery/plenum/issues/116)
+
 ## [0.10.0](https://github.com/thesoftwarebakery/plenum/compare/v0.9.0...v0.10.0) (2026-04-27)
 
 
