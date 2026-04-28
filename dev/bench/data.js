@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777409447201,
+  "lastUpdate": 1777413736163,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -1224,6 +1224,78 @@ window.BENCHMARK_DATA = {
             "value": 2.835,
             "unit": "ms",
             "extra": "n=11250"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a9cb407b65ba3871460ff3759b7d5fe37f1d2900",
+          "message": "Merge pull request #114 from thesoftwarebakery/worktree-rate-limiting\n\nfeat: add per-identity rate limiting",
+          "timestamp": "2026-04-28T22:54:10+01:00",
+          "tree_id": "bed83dccaf5a41e90ad92c36aece8c26b9324623",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/a9cb407b65ba3871460ff3759b7d5fe37f1d2900"
+        },
+        "date": 1777413735838,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.833,
+            "unit": "ms",
+            "extra": "n=11999"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 2.248,
+            "unit": "ms",
+            "extra": "n=11999"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.919,
+            "unit": "ms",
+            "extra": "n=10884"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.408,
+            "unit": "ms",
+            "extra": "n=10884"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.341,
+            "unit": "ms",
+            "extra": "n=7458"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 1.7,
+            "unit": "ms",
+            "extra": "n=7458"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.211,
+            "unit": "ms",
+            "extra": "n=8259"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 2.926,
+            "unit": "ms",
+            "extra": "n=8259"
           }
         ]
       }
