@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.0](https://github.com/thesoftwarebakery/plenum/compare/v0.11.0...v0.12.0) (2026-04-28)
+
+
+### Features
+
+* add per-identity rate limiting ([a9cb407](https://github.com/thesoftwarebakery/plenum/commit/a9cb407b65ba3871460ff3759b7d5fe37f1d2900))
+* add per-identity rate limiting ([#78](https://github.com/thesoftwarebakery/plenum/issues/78)) ([6b3457b](https://github.com/thesoftwarebakery/plenum/commit/6b3457b8b5ff24db3e0703ca7ed560436023caac))
+
 ## [0.11.0](https://github.com/thesoftwarebakery/plenum/compare/v0.10.0...v0.11.0) (2026-04-28)
 
 
