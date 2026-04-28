@@ -7,6 +7,7 @@ use ts_rs::TS;
 
 use crate::config::RateLimitConfig;
 use crate::ctx::GatewayCtx;
+use crate::request_context::ExtractionCtx;
 
 /// Gateway-populated rate limit state for the current request.
 /// Serialized as `rateLimits` on interceptor/plugin input objects — read-only
@@ -37,15 +38,28 @@ pub struct RateLimitState {
 /// `ctx.rate_limit_state`. Returns `true` when the request is over the limit
 /// AND `config.enforce` is `true` — the caller should respond with 429.
 ///
-/// Returns `false` in all other cases (under limit, or enforce disabled, or
-/// identifier could not be resolved).
+/// Returns `false` in all other cases (under limit, enforce disabled, or
+/// identifier could not be resolved — e.g. the header referenced in the
+/// identifier template is absent).
 pub(crate) fn evaluate(
     session: &Session,
     ctx: &mut GatewayCtx,
     config: &RateLimitConfig,
     rate_limiters: &HashMap<u64, Rate>,
 ) -> bool {
-    let Some(identifier) = resolve_identifier(session, ctx, &config.identifier) else {
+    let peer_addr = session
+        .client_addr()
+        .and_then(|a| a.as_inet())
+        .map(|a| a.ip());
+
+    let cx = ExtractionCtx {
+        req: session.req_header(),
+        path_params: &ctx.path_params,
+        user_ctx: Some(&ctx.user_ctx),
+        peer_addr,
+    };
+
+    let Some(identifier) = config.identifier.resolve(&cx) else {
         log::debug!(
             "rate_limit: identifier template could not be resolved, skipping: {}",
             config.identifier
@@ -57,7 +71,7 @@ pub(crate) fn evaluate(
         crate::config::parse_window_duration(&config.window).expect("validated at boot time");
     let window_secs = window.as_secs();
 
-    let cost = extract_cost(ctx, config.cost_ctx_path.as_deref());
+    let cost = extract_cost(&ctx.user_ctx, config.cost_ctx_path.as_deref());
 
     let Some(rate) = rate_limiters.get(&window_secs) else {
         log::error!(
@@ -82,123 +96,31 @@ pub(crate) fn evaluate(
     over && config.enforce
 }
 
-/// Resolve a template string containing `${{ namespace.key }}` expressions.
+/// Extract the per-request event cost from the user ctx bag.
 ///
-/// Returns `None` if any expression fails to resolve (identifier cannot be
-/// formed — rate limiting is skipped for this request).
-fn resolve_identifier(session: &Session, ctx: &GatewayCtx, template: &str) -> Option<String> {
-    let mut result = String::with_capacity(template.len());
-    let mut rest = template;
-
-    loop {
-        match rest.find("${{") {
-            None => {
-                result.push_str(rest);
-                break;
-            }
-            Some(start) => {
-                result.push_str(&rest[..start]);
-                rest = &rest[start + 3..]; // skip "${{"
-
-                let end = rest.find("}}")?;
-                let expr = rest[..end].trim();
-                rest = &rest[end + 2..]; // skip "}}"
-
-                let resolved = resolve_expression(session, ctx, expr)?;
-                result.push_str(&resolved);
-            }
-        }
-    }
-
-    if result.is_empty() {
-        None
-    } else {
-        Some(result)
-    }
-}
-
-/// Resolve a single `namespace.key` or bare `namespace` expression.
-fn resolve_expression(session: &Session, ctx: &GatewayCtx, expr: &str) -> Option<String> {
-    // `ip` has no sub-key
-    if expr == "ip" {
-        return session
-            .client_addr()
-            .and_then(|addr| addr.as_inet())
-            .map(|addr| addr.ip().to_string());
-    }
-
-    let (namespace, key) = expr.split_once('.')?;
-
-    match namespace {
-        "header" => {
-            let headers = &session.req_header().headers;
-            headers
-                .get(key)
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        }
-        "query" => {
-            let query = session.req_header().uri.query().unwrap_or("");
-            form_urlencoded::parse(query.as_bytes())
-                .find(|(k, _)| k == key)
-                .map(|(_, v)| v.into_owned())
-        }
-        "cookie" => {
-            let headers = &session.req_header().headers;
-            let cookie_header = headers.get(http::header::COOKIE)?.to_str().ok()?;
-            cookie_header.split(';').map(str::trim).find_map(|pair| {
-                let (name, value) = pair.split_once('=')?;
-                if name.trim() == key {
-                    Some(value.trim().to_string())
-                } else {
-                    None
-                }
-            })
-        }
-        "ctx" => resolve_ctx_path(ctx, key).map(json_value_to_string),
-        _ => {
-            log::warn!("rate_limit: unknown identifier namespace '{namespace}' in template");
-            None
-        }
-    }
-}
-
-/// Walk a dot-separated path in `user_ctx`, e.g. `"auth.userId"` → `ctx["auth"]["userId"]`.
-pub(crate) fn resolve_ctx_path<'a>(
-    ctx: &'a GatewayCtx,
-    path: &str,
-) -> Option<&'a serde_json::Value> {
-    let mut segments = path.split('.');
-    let first = segments.next()?;
-    let mut current: Option<&serde_json::Value> = ctx.user_ctx.get(first);
-    for segment in segments {
-        current = current?.as_object()?.get(segment);
-    }
-    current
-}
-
-/// Convert a JSON value to a string for use as a rate limit identifier component.
-fn json_value_to_string(v: &serde_json::Value) -> String {
-    match v {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Number(n) => n.to_string(),
-        serde_json::Value::Bool(b) => b.to_string(),
-        other => other.to_string(),
-    }
-}
-
-/// Extract the per-request event cost from user_ctx.
-///
-/// Walks `cost_ctx_path` (dot-separated) in `user_ctx`. Returns 1 if the path
-/// is not set, doesn't resolve to a number, or is zero/negative.
-fn extract_cost(ctx: &GatewayCtx, cost_ctx_path: Option<&str>) -> u64 {
+/// Walks `cost_ctx_path` (dot-separated) in `user_ctx`. The resolved value
+/// must be a positive JSON number; non-numeric, zero, or absent values
+/// default to `1`.
+fn extract_cost(
+    user_ctx: &serde_json::Map<String, serde_json::Value>,
+    cost_ctx_path: Option<&str>,
+) -> u64 {
     let Some(path) = cost_ctx_path else {
         return 1;
     };
-    match resolve_ctx_path(ctx, path) {
-        Some(v) => v.as_u64().filter(|&n| n > 0).unwrap_or(1),
-        None => 1,
+    // Walk the dot-path through the ctx map.
+    let mut segments = path.split('.');
+    let first = segments.next().unwrap_or("");
+    let mut current: Option<&serde_json::Value> = user_ctx.get(first);
+    for segment in segments {
+        current = current
+            .and_then(|v| v.as_object())
+            .and_then(|m| m.get(segment));
     }
+    current
+        .and_then(|v| v.as_u64())
+        .filter(|&n| n > 0)
+        .unwrap_or(1)
 }
 
 #[cfg(test)]
@@ -229,64 +151,36 @@ mod tests {
         }
     }
 
-    // -- resolve_ctx_path --
-
-    #[test]
-    fn resolve_ctx_path_top_level() {
-        let ctx = make_ctx(json!({ "userId": "abc123" }));
-        let v = resolve_ctx_path(&ctx, "userId").unwrap();
-        assert_eq!(v.as_str().unwrap(), "abc123");
-    }
-
-    #[test]
-    fn resolve_ctx_path_nested() {
-        let ctx = make_ctx(json!({ "auth": { "userId": "abc123" } }));
-        let v = resolve_ctx_path(&ctx, "auth.userId").unwrap();
-        assert_eq!(v.as_str().unwrap(), "abc123");
-    }
-
-    #[test]
-    fn resolve_ctx_path_missing_returns_none() {
-        let ctx = make_ctx(json!({}));
-        assert!(resolve_ctx_path(&ctx, "userId").is_none());
-    }
-
-    #[test]
-    fn resolve_ctx_path_partial_missing() {
-        let ctx = make_ctx(json!({ "auth": {} }));
-        assert!(resolve_ctx_path(&ctx, "auth.userId").is_none());
-    }
-
     // -- extract_cost --
 
     #[test]
     fn extract_cost_defaults_to_one_when_no_path() {
         let ctx = make_ctx(json!({}));
-        assert_eq!(extract_cost(&ctx, None), 1);
+        assert_eq!(extract_cost(&ctx.user_ctx, None), 1);
     }
 
     #[test]
     fn extract_cost_reads_from_ctx() {
         let ctx = make_ctx(json!({ "tokenCost": 5 }));
-        assert_eq!(extract_cost(&ctx, Some("tokenCost")), 5);
+        assert_eq!(extract_cost(&ctx.user_ctx, Some("tokenCost")), 5);
     }
 
     #[test]
     fn extract_cost_defaults_to_one_when_missing() {
         let ctx = make_ctx(json!({}));
-        assert_eq!(extract_cost(&ctx, Some("tokenCost")), 1);
+        assert_eq!(extract_cost(&ctx.user_ctx, Some("tokenCost")), 1);
     }
 
     #[test]
     fn extract_cost_defaults_to_one_when_zero() {
         let ctx = make_ctx(json!({ "tokenCost": 0 }));
-        assert_eq!(extract_cost(&ctx, Some("tokenCost")), 1);
+        assert_eq!(extract_cost(&ctx.user_ctx, Some("tokenCost")), 1);
     }
 
     #[test]
     fn extract_cost_defaults_to_one_when_non_numeric() {
         let ctx = make_ctx(json!({ "tokenCost": "five" }));
-        assert_eq!(extract_cost(&ctx, Some("tokenCost")), 1);
+        assert_eq!(extract_cost(&ctx.user_ctx, Some("tokenCost")), 1);
     }
 
     // -- RateLimitState serialization --
