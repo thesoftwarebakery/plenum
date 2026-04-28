@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use crate::path_match::{HookHandle, RouteEntry};
+use crate::rate_limit::RateLimitState;
 use bytes::BytesMut;
 use http::Method;
 use tokio_util::sync::CancellationToken;
@@ -40,4 +41,8 @@ pub struct GatewayCtx {
     pub(crate) selected_backend_addr: Option<SocketAddr>,
     /// Global `on_gateway_error` interceptor hook, cloned from `Plenum` at request start.
     pub(crate) error_hook: Option<Arc<HookHandle>>,
+    /// Rate limit evaluation result for this request, populated after on_request
+    /// interceptors run. `None` when no `x-plenum-rate-limit` is configured on
+    /// the matched operation. Serialized as `rateLimits` on interceptor input objects.
+    pub(crate) rate_limit_state: Option<RateLimitState>,
 }

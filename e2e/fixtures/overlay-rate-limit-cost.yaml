@@ -1,0 +1,33 @@
+overlay: 1.1.0
+info:
+  title: Rate limit with cost-from-ctx test overlay
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        listen: "0.0.0.0:6188"
+        daemon: false
+        threads: 1
+      components:
+        x-upstreams:
+          default:
+            kind: "HTTP"
+            address: "wiremock"
+            port: 8080
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/default"
+      x-plenum-rate-limit:
+        identifier: "${{ header.x-api-key }}"
+        window: "60s"
+        limit: 10
+        cost_ctx_path: "tokenCost"
+        enforce: true
+  - target: $.paths['/items'].get
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/set-cost.js"
+          hook: on_request
+          function: setCost

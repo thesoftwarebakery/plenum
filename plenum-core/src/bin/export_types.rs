@@ -10,6 +10,7 @@ use plenum_core::{
         ErrorContext, GatewayErrorInput, InterceptorOutput, JsInterceptorOutput, JsRequestInput,
         JsResponseInput,
     },
+    rate_limit::RateLimitState,
     upstream_plugin::{JsPluginInput, PluginOutput, PluginRequest},
 };
 use std::fmt::Write as _;
@@ -35,6 +36,7 @@ fn main() {
 
     for decl in [
         PermissionsConfig::decl(),
+        RateLimitState::decl(),
         JsRequestInput::decl(),
         JsResponseInput::decl(),
         InterceptorOutput::decl(),

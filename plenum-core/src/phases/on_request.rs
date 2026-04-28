@@ -57,6 +57,7 @@ pub(crate) async fn run_phase1(
             ctx.path_params.clone(),
             op.operation_meta.clone(),
             &route,
+            ctx.rate_limit_state.clone(),
             serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
@@ -180,6 +181,7 @@ pub(crate) async fn run_phase2_body(
             ctx.path_params.clone(),
             op.operation_meta.clone(),
             &route,
+            ctx.rate_limit_state.clone(),
             serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();
