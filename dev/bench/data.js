@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777322426250,
+  "lastUpdate": 1777400406881,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -936,6 +936,78 @@ window.BENCHMARK_DATA = {
             "value": 6.208,
             "unit": "ms",
             "extra": "n=5788"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "3a2653667b3b0d02165025e9286427e4c159fc87",
+          "message": "Merge pull request #119 from thesoftwarebakery/worktree-multi-platform-docker\n\nci: multi-platform Docker builds and fix Cargo.lock on release",
+          "timestamp": "2026-04-28T19:15:34+01:00",
+          "tree_id": "5abb03980e2e10d73c109402afd37ee8e2bb49e7",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/3a2653667b3b0d02165025e9286427e4c159fc87"
+        },
+        "date": 1777400406339,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.687,
+            "unit": "ms",
+            "extra": "n=14558"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 2.616,
+            "unit": "ms",
+            "extra": "n=14558"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.808,
+            "unit": "ms",
+            "extra": "n=12381"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.49,
+            "unit": "ms",
+            "extra": "n=12381"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.019,
+            "unit": "ms",
+            "extra": "n=9815"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 1.545,
+            "unit": "ms",
+            "extra": "n=9815"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.081,
+            "unit": "ms",
+            "extra": "n=9251"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.545,
+            "unit": "ms",
+            "extra": "n=9251"
           }
         ]
       }
