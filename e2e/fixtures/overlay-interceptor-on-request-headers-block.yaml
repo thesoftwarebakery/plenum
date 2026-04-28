@@ -1,0 +1,11 @@
+overlay: 1.1.0
+info:
+  title: Block request in on_request_headers
+  version: 1.0.0
+actions:
+  - target: $.paths[*].get
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/block-request.js"
+          hook: on_request_headers
+          function: onRequest

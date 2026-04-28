@@ -120,6 +120,7 @@ test("on_request short-circuits with 403 based on body content", async () => {
   const wm = new WireMockClient(wiremock.adminUrl);
 
   try {
+    await wm.resetRequests();
     const resp = await fetch(`${gateway.baseUrl}/products`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

@@ -65,6 +65,7 @@ pub struct HookHandle {
 /// Each vec preserves the array order from the config, which is the execution order.
 #[derive(Default)]
 pub struct OperationInterceptors {
+    pub on_request_headers: Vec<HookHandle>,
     pub on_request: Vec<HookHandle>,
     pub before_upstream: Vec<HookHandle>,
     pub on_response: Vec<HookHandle>,
@@ -232,6 +233,7 @@ fn build_operation_interceptors(
         };
 
         match config.hook.as_str() {
+            "on_request_headers" => interceptors.on_request_headers.push(hook_handle),
             "on_request" => interceptors.on_request.push(hook_handle),
             "before_upstream" => interceptors.before_upstream.push(hook_handle),
             "on_response" => interceptors.on_response.push(hook_handle),
@@ -667,6 +669,7 @@ mod tests {
             .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert!(get.interceptors.on_request_headers.is_empty());
         assert!(get.interceptors.on_request.is_empty());
         assert!(get.interceptors.before_upstream.is_empty());
         assert!(get.interceptors.on_response.is_empty());
@@ -706,6 +709,48 @@ mod tests {
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(get.interceptors.on_request.len(), 1);
         assert_eq!(get.interceptors.on_request[0].function, "onRequest");
+        assert!(get.interceptors.on_request_headers.is_empty());
+        assert!(get.interceptors.before_upstream.is_empty());
+        assert!(get.interceptors.on_response.is_empty());
+    }
+
+    #[test]
+    fn parses_on_request_headers_hook() {
+        let noop_path = fixture_path("noop.js");
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/test": {
+                    "get": {
+                        "x-plenum-interceptor": [{
+                            "module": &noop_path,
+                            "hook": "on_request_headers",
+                            "function": "onRequestHeaders"
+                        }],
+                        "responses": {
+                            "200": { "description": "ok" }
+                        }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, Path::new("/")).unwrap().router;
+        let matched = router.at("/test").unwrap();
+        let get = matched.value.operations.get(&Method::GET).unwrap();
+        assert_eq!(get.interceptors.on_request_headers.len(), 1);
+        assert_eq!(
+            get.interceptors.on_request_headers[0].function,
+            "onRequestHeaders"
+        );
+        assert!(get.interceptors.on_request.is_empty());
         assert!(get.interceptors.before_upstream.is_empty());
         assert!(get.interceptors.on_response.is_empty());
     }

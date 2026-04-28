@@ -46,6 +46,18 @@ describe("interceptor hooks", () => {
     await network?.stop();
   });
 
+  test("on_request_headers adds header to upstream request", async () => {
+    await wm.resetRequests();
+    const resp = await fetch(`${gateway.baseUrl}/products`);
+    expect(resp.status).toEqual(200);
+    await resp.body?.cancel();
+
+    const requests = await wm.getRequests();
+    expect(requests.length > 0, "expected upstream to be called").toBe(true);
+    const header = findHeader(requests[0].request.headers, "x-on-request-headers");
+    expect(header).toEqual("fired");
+  });
+
   test("before_upstream adds header to upstream request", async () => {
     await wm.resetRequests();
     const resp = await fetch(`${gateway.baseUrl}/products`);
@@ -67,7 +79,7 @@ describe("interceptor hooks", () => {
     expect(resp.headers.get("x-on-response")).toEqual("fired");
   });
 
-  test("all three hooks fire on a single request", async () => {
+  test("all four hooks fire on a single request", async () => {
     await wm.resetRequests();
     const resp = await fetch(`${gateway.baseUrl}/products`);
     expect(resp.status).toEqual(200);
@@ -76,9 +88,23 @@ describe("interceptor hooks", () => {
     const requests = await wm.getRequests();
     expect(requests.length > 0, "expected upstream to be called").toBe(true);
     const upstreamHeaders = requests[0].request.headers;
+    expect(findHeader(upstreamHeaders, "x-on-request-headers")).toEqual("fired");
     expect(findHeader(upstreamHeaders, "x-on-request")).toEqual("fired");
     expect(findHeader(upstreamHeaders, "x-before-upstream")).toEqual("fired");
     expect(resp.headers.get("x-on-response")).toEqual("fired");
+  });
+
+  test("ctx set by on_request_headers is visible to on_request", async () => {
+    await wm.resetRequests();
+    const resp = await fetch(`${gateway.baseUrl}/products`);
+    expect(resp.status).toEqual(200);
+    await resp.body?.cancel();
+
+    const requests = await wm.getRequests();
+    expect(requests.length > 0, "expected upstream to be called").toBe(true);
+    // on_request reads ctx.onRequestHeadersFired set by on_request_headers
+    const ctxHeader = findHeader(requests[0].request.headers, "x-ctx-from-headers-hook");
+    expect(ctxHeader).toEqual("yes");
   });
 });
 
@@ -138,6 +164,50 @@ describe("on_response modifications", () => {
 
     expect(resp.headers.get("x-added-by-interceptor")).toEqual("yes");
     expect(resp.headers.get("x-remove-me")).toEqual(null);
+  });
+});
+
+describe("on_request_headers short-circuit", () => {
+  let network: StartedNetwork;
+  let wiremock: WiremockContainer;
+  let gateway: GatewayContainer;
+  let wm: WireMockClient;
+
+  beforeAll(async () => {
+    network = await new Network().start();
+    wiremock = await startWiremock({ network, alias: "wiremock" });
+    gateway = await startGateway({
+      network,
+      fixtures: {
+        openapi: INTERCEPTOR_OPENAPI,
+        overlays: [UPSTREAM_OVERLAY, "overlay-interceptor-on-request-headers-block.yaml"],
+        extraFiles: [
+          { source: "interceptors/block-request.js", target: "/config/interceptors/block-request.js" },
+        ],
+      },
+    });
+    wm = new WireMockClient(wiremock.adminUrl);
+
+    await wm.stubFor({
+      request: { method: "GET", urlPath: "/products" },
+      response: { status: 200, jsonBody: {}, headers: { "Content-Type": "application/json" } },
+    });
+  });
+
+  afterAll(async () => {
+    await gateway?.container.stop();
+    await wiremock?.container.stop();
+    await network?.stop();
+  });
+
+  test("respond action blocks request and returns status", async () => {
+    await wm.resetRequests();
+    const resp = await fetch(`${gateway.baseUrl}/products`);
+    expect(resp.status).toEqual(403);
+    await resp.body?.cancel();
+
+    const requests = await wm.getRequests();
+    expect(requests.length).toEqual(0);
   });
 });
 

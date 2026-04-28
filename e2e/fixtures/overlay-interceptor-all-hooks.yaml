@@ -7,6 +7,9 @@ actions:
     update:
       x-plenum-interceptor:
         - module: "./interceptors/all-hooks.js"
+          hook: on_request_headers
+          function: onRequestHeaders
+        - module: "./interceptors/all-hooks.js"
           hook: on_request
           function: onRequest
         - module: "./interceptors/all-hooks.js"

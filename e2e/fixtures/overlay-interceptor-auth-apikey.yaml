@@ -7,7 +7,7 @@ actions:
     update:
       x-plenum-interceptor:
         - module: "internal:auth-apikey"
-          hook: on_request
+          hook: on_request_headers
           function: checkApiKey
           options:
             envVar: "API_KEY"
