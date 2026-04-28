@@ -8,7 +8,7 @@
  * reference, then re-exports everything as the stable public surface.
  *
  * Pipeline ordering:
- *   on_request → [gateway stages, e.g. rate limiting] → before_upstream → upstream → on_response → on_response_body
+ *   on_request_headers → [gateway stages, e.g. rate limiting] → on_request → before_upstream → upstream → on_response → on_response_body
  *
  * Context bag:
  *   - `ctx` is a plain user-land object passed into every interceptor and plugin call

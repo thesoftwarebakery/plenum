@@ -137,10 +137,13 @@ impl ProxyHttp for Plenum {
 
         ctx.request_start = Some(Instant::now());
 
-        // Plugin routes: wrap on_request phase 1 + dispatch in a single timeout.
+        // Plugin routes: wrap on_request_headers + on_request phase 1 + dispatch in a single timeout.
         if let Upstream::Plugin(plugin) = &route_arc.upstream {
             let backend_config = op.backend_config.clone();
             return match pingora_timeout::timeout(op.request_timeout, async {
+                if phases::on_request_headers::run(session, ctx, op, false).await? {
+                    return Ok(true);
+                }
                 if phases::on_request::run_phase1(session, ctx, op, false).await? {
                     return Ok(true);
                 }
@@ -164,7 +167,10 @@ impl ProxyHttp for Plenum {
             };
         }
 
-        // HTTP/Static routes: budget-capped on_request phase 1.
+        // HTTP/Static routes: budget-capped on_request_headers, then on_request phase 1.
+        if phases::on_request_headers::run(session, ctx, op, true).await? {
+            return Ok(true);
+        }
         if phases::on_request::run_phase1(session, ctx, op, true).await? {
             return Ok(true);
         }
