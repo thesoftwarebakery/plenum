@@ -1,0 +1,22 @@
+overlay: 1.1.0
+info:
+  title: Attach validate-request with explicit schema that overrides spec
+  version: 1.0.0
+actions:
+  - target: $.paths["/items"].post
+    update:
+      x-plenum-interceptor:
+        - module: "internal:validate-request"
+          hook: "on_request"
+          function: "validateRequest"
+          options:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                quantity:
+                  type: integer
+              required:
+                - name
+                - quantity

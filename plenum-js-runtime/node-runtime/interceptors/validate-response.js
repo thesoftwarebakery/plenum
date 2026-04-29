@@ -21,8 +21,30 @@ function getValidator(schema) {
   return validate;
 }
 
+function extractResponseSchemas(operation) {
+  if (!operation || !operation.responses) {
+    return null;
+  }
+  const schemas = {};
+  let found = false;
+  for (const [status, resp] of Object.entries(operation.responses)) {
+    const schema =
+      resp &&
+      resp.content &&
+      resp.content["application/json"] &&
+      resp.content["application/json"].schema;
+    if (schema) {
+      schemas[status] = schema;
+      found = true;
+    }
+  }
+  return found ? schemas : null;
+}
+
 exports.validateResponse = function validateResponse(request) {
-  const schemas = request.options && request.options.schemas;
+  const schemas =
+    (request.options && request.options.schemas) ||
+    extractResponseSchemas(request.operation);
 
   if (!schemas) {
     return { action: "continue" };

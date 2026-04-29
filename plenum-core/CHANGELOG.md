@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.13.0](https://github.com/thesoftwarebakery/plenum/compare/v0.12.2...v0.13.0) (2026-04-29)
+
+
+### Features
+
+* implicit HEAD support and 405 for unmatched methods ([24b01d9](https://github.com/thesoftwarebakery/plenum/commit/24b01d9b76da816d9bf948f99cb977cdce3769dc))
+* implicitly support HEAD requests on GET routes (RFC 9110) ([9f0cf69](https://github.com/thesoftwarebakery/plenum/commit/9f0cf6962957fc1d8a85473117feb821a5ada344)), closes [#131](https://github.com/thesoftwarebakery/plenum/issues/131)
+* return 405 Method Not Allowed for unmatched methods ([f4d8edd](https://github.com/thesoftwarebakery/plenum/commit/f4d8edd19b2dedcd0e79fdd4ba492ba2c338e76a))
+
+## [0.12.2](https://github.com/thesoftwarebakery/plenum/compare/v0.12.1...v0.12.2) (2026-04-29)
+
+
+### Bug Fixes
+
+* return 404 for unmatched routes instead of 502 ([3bde6b2](https://github.com/thesoftwarebakery/plenum/commit/3bde6b2f77fba080f27db0215eb93458ced6afb7))
+* return 404 for unmatched routes instead of 502 ([8bb95d9](https://github.com/thesoftwarebakery/plenum/commit/8bb95d957585a5b2395e8d9a291424aaee1aa170)), closes [#127](https://github.com/thesoftwarebakery/plenum/issues/127)
+
 ## [0.12.1](https://github.com/thesoftwarebakery/plenum/compare/v0.12.0...v0.12.1) (2026-04-29)
 
 

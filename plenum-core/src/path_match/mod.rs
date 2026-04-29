@@ -107,6 +107,33 @@ pub struct RouteEntry {
     pub path: String,
 }
 
+impl RouteEntry {
+    /// Look up the operation for the given method.
+    /// For HEAD requests, falls back to GET when no explicit HEAD is defined (RFC 9110).
+    pub fn get_operation(&self, method: &Method) -> Option<&OperationSchemas> {
+        self.operations.get(method).or_else(|| {
+            if *method == Method::HEAD {
+                self.operations.get(&Method::GET)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Return the sorted list of HTTP methods this route accepts, including
+    /// implicit HEAD when GET is defined (RFC 9110).
+    pub fn allowed_methods(&self) -> Vec<&str> {
+        let mut methods: Vec<&str> = self.operations.keys().map(|m| m.as_str()).collect();
+        if self.operations.contains_key(&Method::GET)
+            && !self.operations.contains_key(&Method::HEAD)
+        {
+            methods.push("HEAD");
+        }
+        methods.sort();
+        methods
+    }
+}
+
 pub type PlenumRouter = Router<Arc<RouteEntry>>;
 
 /// Result of building the gateway router, including any background services
@@ -1859,5 +1886,86 @@ mod tests {
             "expected Ok for TLS upstream, got: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    fn head_falls_back_to_get() {
+        let config = config_with_schema();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
+        let matched = router.at("/items").unwrap();
+        // HEAD is not explicitly defined, but GET is — fallback should work.
+        assert!(matched.value.get_operation(&Method::HEAD).is_some());
+        // The returned operation should be the same as GET's.
+        let get_op = matched.value.get_operation(&Method::GET).unwrap() as *const _;
+        let head_op = matched.value.get_operation(&Method::HEAD).unwrap() as *const _;
+        assert_eq!(get_op, head_op);
+    }
+
+    #[test]
+    fn head_without_get_returns_none() {
+        // Build a spec with only POST on /items — HEAD should not fall back.
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/items": {
+                    "post": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
+        let matched = router.at("/items").unwrap();
+        assert!(matched.value.get_operation(&Method::HEAD).is_none());
+    }
+
+    #[test]
+    fn explicit_head_takes_precedence() {
+        // Build a spec with both GET and HEAD explicitly defined.
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/items": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "head": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
+        let matched = router.at("/items").unwrap();
+        // Both should exist as separate entries.
+        assert!(matched.value.operations.contains_key(&Method::HEAD));
+        assert!(matched.value.operations.contains_key(&Method::GET));
+        // get_operation(HEAD) should return HEAD's own entry, not GET's.
+        let head_direct = matched.value.operations.get(&Method::HEAD).unwrap() as *const _;
+        let head_via_helper = matched.value.get_operation(&Method::HEAD).unwrap() as *const _;
+        assert_eq!(head_direct, head_via_helper);
     }
 }

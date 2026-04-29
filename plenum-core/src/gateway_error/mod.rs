@@ -62,73 +62,58 @@ pub struct GatewayErrorResponse {
     pub error_code: &'static str,
     /// Human-readable error message.
     pub error_message: String,
+    /// Extra response headers (e.g. `Allow` for 405). Empty by default.
+    pub headers: Vec<(String, String)>,
 }
 
 impl GatewayErrorResponse {
-    /// 500 Internal Server Error — the gateway encountered an unexpected condition.
-    pub fn internal(message: impl std::fmt::Display) -> Self {
+    fn new(status: u16, error_code: &'static str, message: impl std::fmt::Display) -> Self {
         let msg = message.to_string();
         Self {
-            status: 500,
+            status,
             body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
-            error_code: "internal_error",
+            error_code,
             error_message: msg,
+            headers: vec![],
         }
+    }
+
+    /// 500 Internal Server Error — the gateway encountered an unexpected condition.
+    pub fn internal(message: impl std::fmt::Display) -> Self {
+        Self::new(500, "internal_error", message)
     }
 
     /// 502 Bad Gateway — the upstream returned an invalid or unrecognized response.
     pub fn bad_gateway(message: impl std::fmt::Display) -> Self {
-        let msg = message.to_string();
-        Self {
-            status: 502,
-            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
-            error_code: "bad_gateway",
-            error_message: msg,
-        }
+        Self::new(502, "bad_gateway", message)
     }
 
     /// 504 Gateway Timeout — the upstream did not respond in time.
     pub fn gateway_timeout(message: impl std::fmt::Display) -> Self {
-        let msg = message.to_string();
-        Self {
-            status: 504,
-            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
-            error_code: "gateway_timeout",
-            error_message: msg,
-        }
+        Self::new(504, "gateway_timeout", message)
     }
 
     /// 413 Payload Too Large — the inbound request body exceeded the configured limit.
     pub fn payload_too_large(message: impl std::fmt::Display) -> Self {
-        let msg = message.to_string();
-        Self {
-            status: 413,
-            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
-            error_code: "payload_too_large",
-            error_message: msg,
-        }
+        Self::new(413, "payload_too_large", message)
     }
 
     /// 404 Not Found — no matching route in the OpenAPI spec.
     pub fn not_found(message: impl std::fmt::Display) -> Self {
-        let msg = message.to_string();
-        Self {
-            status: 404,
-            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
-            error_code: "not_found",
-            error_message: msg,
-        }
+        Self::new(404, "not_found", message)
     }
 
     /// 429 Too Many Requests — the request has been rate limited.
     pub fn too_many_requests(message: impl std::fmt::Display) -> Self {
-        let msg = message.to_string();
-        Self {
-            status: 429,
-            body: Bytes::from(serde_json::json!({"error": &msg}).to_string()),
-            error_code: "too_many_requests",
-            error_message: msg,
-        }
+        Self::new(429, "too_many_requests", message)
+    }
+
+    /// 405 Method Not Allowed — the route exists but does not support this method.
+    pub fn method_not_allowed(allowed_methods: &[&str]) -> Self {
+        let allow_value = allowed_methods.join(", ");
+        let mut resp = Self::new(405, "method_not_allowed", "method not allowed");
+        resp.headers = vec![("Allow".to_string(), allow_value)];
+        resp
     }
 }
 

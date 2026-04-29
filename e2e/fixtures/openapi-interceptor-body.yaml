@@ -20,6 +20,11 @@ paths:
           application/json:
             schema:
               type: object
+              required:
+                - name
+              properties:
+                name:
+                  type: string
       responses:
         "200":
           description: Created product
