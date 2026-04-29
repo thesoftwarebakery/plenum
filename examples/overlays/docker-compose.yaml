@@ -1,0 +1,35 @@
+services:
+  # Development gateway — all routes including /internal/debug
+  gateway-dev:
+    image: ghcr.io/thesoftwarebakery/plenum
+    ports:
+      - "6188:6188"
+    volumes:
+      - ./:/config
+    command:
+      - --config-path=/config
+      - --openapi-schema=openapi.yaml
+      - --openapi-overlay=overlay-gateway.yaml,overlay-upstream.yaml
+    depends_on:
+      - backend
+
+  # Production gateway — /internal/debug removed by overlay-prod.yaml
+  gateway-prod:
+    image: ghcr.io/thesoftwarebakery/plenum
+    ports:
+      - "6189:6188"
+    volumes:
+      - ./:/config
+    command:
+      - --config-path=/config
+      - --openapi-schema=openapi.yaml
+      - --openapi-overlay=overlay-gateway.yaml,overlay-upstream.yaml,overlay-prod.yaml
+    depends_on:
+      - backend
+
+  backend:
+    image: wiremock/wiremock:3x
+    volumes:
+      - ./wiremock:/home/wiremock
+    command:
+      - --global-response-templating
