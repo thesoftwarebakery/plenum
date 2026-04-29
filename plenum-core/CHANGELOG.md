@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.2](https://github.com/thesoftwarebakery/plenum/compare/v0.12.1...v0.12.2) (2026-04-29)
+
+
+### Bug Fixes
+
+* return 404 for unmatched routes instead of 502 ([3bde6b2](https://github.com/thesoftwarebakery/plenum/commit/3bde6b2f77fba080f27db0215eb93458ced6afb7))
+* return 404 for unmatched routes instead of 502 ([8bb95d9](https://github.com/thesoftwarebakery/plenum/commit/8bb95d957585a5b2395e8d9a291424aaee1aa170)), closes [#127](https://github.com/thesoftwarebakery/plenum/issues/127)
+
 ## [0.12.1](https://github.com/thesoftwarebakery/plenum/compare/v0.12.0...v0.12.1) (2026-04-29)
 
 
