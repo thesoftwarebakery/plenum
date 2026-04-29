@@ -88,13 +88,26 @@ pub(crate) fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_
         }
     }
 
+    // Resolve $ref pointers inline using bundled schemas, then drop the components key.
+    // Circular refs are left as $ref pointers (AJV handles them natively).
     if !bundled_schemas.is_empty() {
-        let mut components_obj = serde_json::Map::new();
-        components_obj.insert("schemas".into(), serde_json::Value::Object(bundled_schemas));
-        result.insert(
-            "components".into(),
-            serde_json::Value::Object(components_obj),
-        );
+        let mut output_val = serde_json::Value::Object(result);
+        let mut has_circular = false;
+        resolve_schema_refs(&mut output_val, &bundled_schemas, &mut has_circular);
+        result = match output_val {
+            serde_json::Value::Object(m) => m,
+            _ => unreachable!(),
+        };
+
+        // Keep components.schemas only when circular refs remain.
+        if has_circular {
+            let mut components_obj = serde_json::Map::new();
+            components_obj.insert("schemas".into(), serde_json::Value::Object(bundled_schemas));
+            result.insert(
+                "components".into(),
+                serde_json::Value::Object(components_obj),
+            );
+        }
     }
 
     // Strip x-plenum-* from the whole result
@@ -119,6 +132,58 @@ fn collect_schema_refs(value: &serde_json::Value, refs: &mut HashSet<String>) {
         serde_json::Value::Array(arr) => {
             for v in arr {
                 collect_schema_refs(v, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Recursively resolve `#/components/schemas/*` `$ref` pointers by inlining the referenced
+/// schema from `schemas`. When a circular reference is detected (a `$ref` that is already
+/// being resolved in the current path), the `$ref` is left as-is and `has_circular` is set.
+fn resolve_schema_refs(
+    value: &mut serde_json::Value,
+    schemas: &serde_json::Map<String, serde_json::Value>,
+    has_circular: &mut bool,
+) {
+    resolve_schema_refs_inner(value, schemas, &mut HashSet::new(), has_circular);
+}
+
+fn resolve_schema_refs_inner(
+    value: &mut serde_json::Value,
+    schemas: &serde_json::Map<String, serde_json::Value>,
+    resolving: &mut HashSet<String>,
+    has_circular: &mut bool,
+) {
+    match value {
+        serde_json::Value::Object(map) => {
+            // Check if this object is a $ref.
+            if let Some(serde_json::Value::String(ref_str)) = map.get("$ref")
+                && let Some(name) = ref_str.strip_prefix("#/components/schemas/")
+            {
+                let name = name.to_owned();
+                if resolving.contains(&name) {
+                    // Circular — leave $ref in place.
+                    *has_circular = true;
+                    return;
+                }
+                if let Some(schema) = schemas.get(&name) {
+                    let mut inlined = schema.clone();
+                    resolving.insert(name.clone());
+                    resolve_schema_refs_inner(&mut inlined, schemas, resolving, has_circular);
+                    resolving.remove(&name);
+                    *value = inlined;
+                    return;
+                }
+            }
+            // Not a $ref — recurse into values.
+            for v in map.values_mut() {
+                resolve_schema_refs_inner(v, schemas, resolving, has_circular);
+            }
+        }
+        serde_json::Value::Array(arr) => {
+            for v in arr.iter_mut() {
+                resolve_schema_refs_inner(v, schemas, resolving, has_circular);
             }
         }
         _ => {}
@@ -220,7 +285,7 @@ mod tests {
     }
 
     #[test]
-    fn operation_meta_ref_bundling() {
+    fn operation_meta_ref_resolved_inline() {
         let spec = parse_spec(json!({
             "openapi": "3.1.0",
             "info": { "title": "T", "version": "0" },
@@ -252,15 +317,22 @@ mod tests {
         let op = get_op(&spec, "/items", "get");
         let meta = build_operation_meta(op, &spec);
         let schema = &meta["responses"]["200"]["content"]["application/json"]["schema"];
-        assert_eq!(schema["$ref"].as_str().unwrap(), "#/components/schemas/Foo");
+        // $ref should be resolved inline — no $ref pointer, schema inlined directly.
+        assert!(schema.get("$ref").is_none(), "$ref should be resolved");
+        assert_eq!(schema["type"].as_str().unwrap(), "object");
+        assert_eq!(
+            schema["properties"]["id"]["type"].as_str().unwrap(),
+            "string"
+        );
+        // No components key when all refs are resolved.
         assert!(
-            meta["components"]["schemas"]["Foo"].is_object(),
-            "Foo should be bundled under components.schemas"
+            meta.get("components").is_none(),
+            "components should be absent when all refs are resolved"
         );
     }
 
     #[test]
-    fn operation_meta_transitive_ref_bundling() {
+    fn operation_meta_transitive_ref_resolved_inline() {
         let spec = parse_spec(json!({
             "openapi": "3.1.0",
             "info": { "title": "T", "version": "0" },
@@ -295,18 +367,27 @@ mod tests {
         }));
         let op = get_op(&spec, "/items", "get");
         let meta = build_operation_meta(op, &spec);
-        assert!(
-            meta["components"]["schemas"]["Foo"].is_object(),
-            "Foo should be bundled"
+        let schema = &meta["responses"]["200"]["content"]["application/json"]["schema"];
+        // Both Foo and Bar should be resolved inline.
+        assert_eq!(schema["type"].as_str().unwrap(), "object");
+        assert_eq!(
+            schema["properties"]["bar"]["type"].as_str().unwrap(),
+            "object"
+        );
+        assert_eq!(
+            schema["properties"]["bar"]["properties"]["name"]["type"]
+                .as_str()
+                .unwrap(),
+            "string"
         );
         assert!(
-            meta["components"]["schemas"]["Bar"].is_object(),
-            "Bar should be transitively bundled"
+            meta.get("components").is_none(),
+            "components should be absent when all refs are resolved"
         );
     }
 
     #[test]
-    fn operation_meta_circular_ref_does_not_hang() {
+    fn operation_meta_circular_ref_preserved() {
         let spec = parse_spec(json!({
             "openapi": "3.1.0",
             "info": { "title": "T", "version": "0" },
@@ -337,9 +418,18 @@ mod tests {
         }));
         let op = get_op(&spec, "/items", "get");
         let meta = build_operation_meta(op, &spec);
+        let schema = &meta["responses"]["200"]["content"]["application/json"]["schema"];
+        // Top-level Foo is inlined, but the self-reference stays as $ref.
+        assert_eq!(schema["type"].as_str().unwrap(), "object");
+        assert_eq!(
+            schema["properties"]["self"]["$ref"].as_str().unwrap(),
+            "#/components/schemas/Foo",
+            "circular $ref should be preserved"
+        );
+        // components.schemas should be present for the circular ref.
         assert!(
             meta["components"]["schemas"]["Foo"].is_object(),
-            "Foo should be bundled once"
+            "Foo should be bundled for circular ref resolution"
         );
     }
 

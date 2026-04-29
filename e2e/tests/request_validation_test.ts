@@ -91,3 +91,108 @@ describe("request validation", () => {
     await resp.body?.cancel();
   });
 });
+
+describe("request validation with $ref schema", () => {
+  let network: StartedNetwork;
+  let wiremock: WiremockContainer;
+  let gateway: GatewayContainer;
+  let wm: WireMockClient;
+
+  beforeAll(async () => {
+    network = await new Network().start();
+    wiremock = await startWiremock({ network, alias: "wiremock" });
+    gateway = await startGateway({
+      network,
+      fixtures: {
+        openapi: "openapi-validation-ref.yaml",
+        overlays: [
+          "overlay-upstream-validation.yaml",
+          "overlay-validation-ref-interceptors.yaml",
+        ],
+      },
+    });
+    wm = new WireMockClient(wiremock.adminUrl);
+  });
+
+  afterAll(async () => {
+    await gateway?.container.stop();
+    await wiremock?.container.stop();
+    await network?.stop();
+  });
+
+  test("valid body with $ref schema passes validation", async () => {
+    await wm.stubFor({
+      request: { method: "POST", urlPath: "/items" },
+      response: {
+        status: 201,
+        jsonBody: { id: "1", name: "Widget" },
+        headers: { "Content-Type": "application/json" },
+      },
+    });
+
+    const resp = await fetch(`${gateway.baseUrl}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Widget", quantity: 5 }),
+    });
+    expect(resp.status).toEqual(201);
+    await resp.body?.cancel();
+  });
+
+  test("invalid body with $ref schema returns 400", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Widget" }), // missing required 'quantity'
+    });
+    expect(resp.status).toEqual(400);
+    const body = await resp.json() as { type: string; errors: Array<{ path: string; message: string }> };
+    expect(body.type).toEqual("request-validation-error");
+    expect(body.errors.length > 0).toBe(true);
+  });
+});
+
+describe("request validation with explicit schema override", () => {
+  let network: StartedNetwork;
+  let wiremock: WiremockContainer;
+  let gateway: GatewayContainer;
+  let wm: WireMockClient;
+
+  beforeAll(async () => {
+    network = await new Network().start();
+    wiremock = await startWiremock({ network, alias: "wiremock" });
+    gateway = await startGateway({
+      network,
+      fixtures: {
+        // spec schema only requires 'name', but explicit interceptor schema requires 'name' + 'quantity'
+        openapi: "openapi-validation-override.yaml",
+        overlays: [
+          "overlay-upstream-validation.yaml",
+          "overlay-validation-override-interceptors.yaml",
+        ],
+      },
+    });
+    wm = new WireMockClient(wiremock.adminUrl);
+  });
+
+  afterAll(async () => {
+    await gateway?.container.stop();
+    await wiremock?.container.stop();
+    await network?.stop();
+  });
+
+  test("explicit options.schema overrides spec schema", async () => {
+    // The spec schema has no required fields, but the explicit interceptor
+    // schema requires both 'name' and 'quantity'. Sending only 'name' should
+    // fail because the explicit schema takes priority.
+    const resp = await fetch(`${gateway.baseUrl}/items`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "Widget" }),
+    });
+    expect(resp.status).toEqual(400);
+    const body = await resp.json() as { type: string; errors: Array<{ path: string; message: string }> };
+    expect(body.type).toEqual("request-validation-error");
+    expect(body.errors.length > 0).toBe(true);
+  });
+});
