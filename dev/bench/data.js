@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777499350062,
+  "lastUpdate": 1777501119416,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -1944,6 +1944,78 @@ window.BENCHMARK_DATA = {
             "value": 3.752,
             "unit": "ms",
             "extra": "n=7901"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "e305989fbbf10c1ff7074f2794d0f76dd7a0b26e",
+          "message": "Merge pull request #138 from thesoftwarebakery/fix/cargo-lock\n\nfix: update Cargo.lock",
+          "timestamp": "2026-04-29T23:10:53+01:00",
+          "tree_id": "d30d52f28135395610e0a7e3c86af0c0847db70d",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/e305989fbbf10c1ff7074f2794d0f76dd7a0b26e"
+        },
+        "date": 1777501119097,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.802,
+            "unit": "ms",
+            "extra": "n=12472"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 3.07,
+            "unit": "ms",
+            "extra": "n=12472"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.903,
+            "unit": "ms",
+            "extra": "n=11070"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.98,
+            "unit": "ms",
+            "extra": "n=11070"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.31,
+            "unit": "ms",
+            "extra": "n=7631"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 1.769,
+            "unit": "ms",
+            "extra": "n=7631"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.203,
+            "unit": "ms",
+            "extra": "n=8316"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.642,
+            "unit": "ms",
+            "extra": "n=8316"
           }
         ]
       }
