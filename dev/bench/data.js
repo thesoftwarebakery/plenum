@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777485470319,
+  "lastUpdate": 1777486639719,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -1512,6 +1512,78 @@ window.BENCHMARK_DATA = {
             "value": 3.477,
             "unit": "ms",
             "extra": "n=8555"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bcdc9bef1a172e3201310439aedba2e4564e8a65",
+          "message": "Merge pull request #126 from thesoftwarebakery/docs-quickstart-and-readme\n\ndocs: add quickstart guide and getting-started example",
+          "timestamp": "2026-04-29T19:13:52+01:00",
+          "tree_id": "d4e95652f1df78775ac2f6f959398a25cf9ddcdf",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/bcdc9bef1a172e3201310439aedba2e4564e8a65"
+        },
+        "date": 1777486639435,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.84,
+            "unit": "ms",
+            "extra": "n=11900"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 1.699,
+            "unit": "ms",
+            "extra": "n=11900"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.944,
+            "unit": "ms",
+            "extra": "n=10589"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.617,
+            "unit": "ms",
+            "extra": "n=10589"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.387,
+            "unit": "ms",
+            "extra": "n=7209"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 2.03,
+            "unit": "ms",
+            "extra": "n=7209"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.232,
+            "unit": "ms",
+            "extra": "n=8122"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.574,
+            "unit": "ms",
+            "extra": "n=8122"
           }
         ]
       }
