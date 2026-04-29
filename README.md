@@ -1,52 +1,85 @@
 # Plenum
 
-An OpenAPI-first API gateway and reverse proxy.
+An OpenAPI-first API gateway built on [pingora](https://github.com/cloudflare/pingora). Define your gateway configuration entirely within an OpenAPI spec using `x-plenum-*` extensions, applied via [OpenAPI Overlays](https://github.com/OAI/Overlay-Specification) — no separate gateway config files needed.
 
-## Vision
+## Features
 
-Plenum uses an OpenAPI specification as the single source of truth for all gateway configuration. Extensions (applied via [OpenAPI Overlay](https://github.com/OAI/Overlay-Specification)) configure routing, upstreams, validation, and behaviour — no separate gateway config files.
+- **OpenAPI as source of truth** — routing, upstream mapping, validation, interceptors, and CORS are all defined in your OpenAPI spec
+- **HTTP/HTTPS reverse proxying** — single upstreams or load-balanced pools with round-robin, weighted, and consistent-hashing selection
+- **Programmable interceptors** — JavaScript modules hook into five lifecycle phases (on_request_headers, on_request, before_upstream, on_response, on_response_body)
+- **Request/response validation** — automatic schema validation against your OpenAPI definitions, configurable per-route
+- **Load balancing with health checks** — active and passive health monitoring with automatic backend rotation
+- **CORS handling** — per-operation CORS configuration with origin glob matching and preflight support
+- **Plugin system** — custom Node.js handlers for non-HTTP upstreams (databases, custom logic)
+- **Static responses** — return pre-built responses without hitting an upstream
+- **TLS termination** — inbound HTTPS listener and outbound upstream TLS verification
+- **Sandboxed execution** — interceptors and plugins run with explicit permission grants (env, filesystem, network)
+- **Environment variable substitution** — `${VAR}` and `${VAR:-default}` syntax in config values
 
-### Core principles
+## Quick start
 
-- **OpenAPI as source of truth** — routing, upstream mapping, validation rules, and interceptor registration are all defined in the OpenAPI spec via `x-plenum-*` extensions
-- **Multiple upstream types** — starting with HTTP/HTTPS reverse proxying, expanding to direct database connections (building on [openapi-db](https://github.com/thesoftwarebakery/openapi-db)) where the gateway generates and executes queries directly
-- **Programmable behaviour** — JS modules executed via an embedded [Deno](https://deno.com/) runtime (`deno_core`) allow users to register interceptors at various points in the request lifecycle, configured per-path, per-operation, or globally
-- **Request/response validation** — request and response validation against OpenAPI schemas is enabled by default, overridable at global, per-route, or per-route+method levels. Non-2xx upstream responses get sensible default error handling, also configurable at the same granularity
-
-## Project structure
-
-Rust workspace with two crates:
-
-- **`plenum-core`** — the gateway binary (config parsing, routing, proxying via [pingora](https://github.com/cloudflare/pingora))
-- **`openapi-overlay`** — library for applying the [OpenAPI Overlay specification](https://github.com/OAI/Overlay-Specification) to OpenAPI documents (independently publishable)
-
-## Build & test
+Pull the image from GitHub Container Registry:
 
 ```bash
-cargo build                       # build all crates
-cargo test                        # run all tests
-cargo test -p plenum-core        # test gateway only
-cargo test -p oapi-overlay        # test overlay library only
+docker pull ghcr.io/thesoftwarebakery/plenum
 ```
 
-## Running
+Run with your OpenAPI spec and overlays:
 
 ```bash
-cargo run -p plenum-core -- \
-  --config-path <dir> \
-  --openapi-schema <file> \
-  --openapi-overlay <overlay1>,<overlay2>
+docker run -d \
+  -v $(pwd)/config:/config \
+  -p 6188:6188 \
+  ghcr.io/thesoftwarebakery/plenum \
+  --config-path /config \
+  --openapi-schema openapi.yaml \
+  --openapi-overlay overlay-gateway.yaml,overlay-upstream.yaml
 ```
 
-Environment variables: `PLENUM_CONFIG_PATH`, `PLENUM_OPENAPI_SCHEMA`, `PLENUM_OPENAPI_OVERLAYS`
+Or with environment variables:
 
-## Current status
+```bash
+docker run -d \
+  -v $(pwd)/config:/config \
+  -p 6188:6188 \
+  -e PLENUM_CONFIG_PATH=/config \
+  -e PLENUM_OPENAPI_SCHEMA=openapi.yaml \
+  -e PLENUM_OPENAPI_OVERLAYS=overlay-gateway.yaml,overlay-upstream.yaml \
+  ghcr.io/thesoftwarebakery/plenum
+```
 
-The core routing and HTTP proxying pipeline is functional:
+## Documentation
 
-- OpenAPI spec parsing with extension resolution and `$ref` support
-- Overlay application for configuration injection
-- Path-based request routing (including parameterised paths)
-- HTTP/HTTPS reverse proxying via pingora
+- [Quickstart guide](docs/quickstart.md) — step-by-step setup with configuration reference
 
-See [issues](https://github.com/thesoftwarebakery/plenum/issues) for planned work.
+More documentation coming soon.
+
+## Contributing
+
+### Project structure
+
+Rust workspace with four crates:
+
+| Crate | Description |
+|-------|-------------|
+| `plenum-core` | Gateway binary — config parsing, routing, proxying |
+| `openapi-overlay` | OpenAPI Overlay spec implementation |
+| `plenum-js-runtime` | Out-of-process Node.js runtime for interceptors and plugins |
+| `plenum-sandbox` | OS-level sandboxing (bubblewrap on Linux, env filtering elsewhere) |
+
+### Build and test
+
+```bash
+# Build
+cargo build
+
+# Rust tests
+cargo test
+
+# E2E tests (requires Docker)
+cd e2e && pnpm install && pnpm test
+```
+
+## License
+
+See [LICENSE](LICENSE) for details.

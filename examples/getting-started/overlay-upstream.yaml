@@ -1,0 +1,17 @@
+overlay: 1.1.0
+info:
+  title: Upstream configuration
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      components:
+        x-upstreams:
+          default:
+            kind: "HTTP"
+            address: "backend"
+            port: 8080
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/default"
