@@ -1,0 +1,24 @@
+overlay: 1.1.0
+info:
+  title: Gateway configuration with error handler
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        listen: "0.0.0.0:6188"
+        request-timeout-ms: 2000
+        on-gateway-error:
+          module: "./interceptors/error-handler.js"
+          function: onError
+      components:
+        x-upstreams:
+          default:
+            kind: "HTTP"
+            address: "backend"
+            port: 8080
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/default"

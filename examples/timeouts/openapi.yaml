@@ -1,0 +1,31 @@
+openapi: 3.1.0
+info:
+  title: Timeouts Example
+  version: 1.0.0
+paths:
+  /fast:
+    get:
+      operationId: fast
+      responses:
+        "200":
+          description: Fast endpoint
+  /slow:
+    get:
+      operationId: slow
+      responses:
+        "200":
+          description: Slow endpoint (exceeds global timeout)
+  /slow-with-override:
+    get:
+      operationId: slowWithOverride
+      x-plenum-timeout: 5000
+      responses:
+        "200":
+          description: Slow endpoint with extended timeout
+  /upload:
+    post:
+      operationId: upload
+      x-plenum-body-limit: 256
+      responses:
+        "200":
+          description: Upload with 256-byte limit
