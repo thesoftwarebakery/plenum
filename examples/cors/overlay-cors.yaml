@@ -1,0 +1,16 @@
+overlay: 1.1.0
+info:
+  title: CORS configuration
+  version: 1.0.0
+actions:
+  - target: "$.paths['/products'].get"
+    update:
+      x-plenum-cors:
+        origins:
+          - "https://example.com"
+          - "*.example.com"
+        methods: [GET]
+        headers: [Content-Type, Authorization]
+        allow-credentials: true
+        max-age: 3600
+        expose-headers: [X-Request-Id]
