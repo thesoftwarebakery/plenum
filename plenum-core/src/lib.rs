@@ -97,10 +97,10 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
-        let path = session.req_header().uri.path();
+        let path = session.req_header().uri.path().to_string();
         let route_result = {
-            let _span = tracing::debug_span!("route_match", path).entered();
-            self.router.at(path).ok()
+            let _span = tracing::debug_span!("route_match", path = path.as_str()).entered();
+            self.router.at(&path).ok()
         };
         let Some(matched) = route_result else {
             log::warn!("No route matched for path: {}", path);
@@ -137,8 +137,27 @@ impl ProxyHttp for Plenum {
             return Ok(true);
         }
 
-        let Some(op) = route_arc.operations.get(&method) else {
-            return Ok(false);
+        let Some(op) = route_arc.get_operation(&method) else {
+            // OPTIONS without a matching operation is proxied upstream (non-CORS OPTIONS,
+            // or CORS without Origin header). All other methods get 405.
+            if method == http::Method::OPTIONS {
+                return Ok(false);
+            }
+            let allowed = route_arc.allowed_methods();
+            log::warn!(
+                "Method {} not allowed for path: {} (allowed: {})",
+                method,
+                path,
+                allowed.join(", ")
+            );
+            phases::gateway_error::respond(
+                session,
+                ctx,
+                GatewayErrorResponse::method_not_allowed(&allowed),
+                ctx.error_hook.clone().as_deref(),
+            )
+            .await;
+            return Ok(true);
         };
 
         ctx.request_start = Some(Instant::now());
@@ -238,8 +257,14 @@ impl ProxyHttp for Plenum {
                         e,
                     )
                 })?;
+            // HEAD responses must not include a body (RFC 9110).
+            let body = if method == http::Method::HEAD {
+                Bytes::new()
+            } else {
+                static_resp.body.clone()
+            };
             session
-                .write_response_body(Some(static_resp.body.clone()), true)
+                .write_response_body(Some(body), true)
                 .await
                 .map_err(|e| {
                     pingora_core::Error::because(
@@ -272,7 +297,7 @@ impl ProxyHttp for Plenum {
         let Some(method) = ctx.matched_method.clone() else {
             return Ok(());
         };
-        let Some(op) = route_arc.operations.get(&method) else {
+        let Some(op) = route_arc.get_operation(&method) else {
             return Ok(());
         };
         phases::on_request::run_body_filter(session, body, end_of_stream, ctx, op).await?;
@@ -296,7 +321,7 @@ impl ProxyHttp for Plenum {
         let Some(method) = ctx.matched_method.clone() else {
             return Ok(());
         };
-        let Some(op) = route_arc.operations.get(&method) else {
+        let Some(op) = route_arc.get_operation(&method) else {
             return Ok(());
         };
         phases::before_upstream::run(upstream_request, ctx, op).await
@@ -319,7 +344,7 @@ impl ProxyHttp for Plenum {
         let Some(method) = ctx.matched_method.clone() else {
             return Ok(());
         };
-        let Some(op) = route_arc.operations.get(&method) else {
+        let Some(op) = route_arc.get_operation(&method) else {
             return Ok(());
         };
 
@@ -363,11 +388,17 @@ impl ProxyHttp for Plenum {
         let Some(method) = ctx.matched_method.clone() else {
             return Ok(None);
         };
-        let Some(op) = route_arc.operations.get(&method) else {
+        let Some(op) = route_arc.get_operation(&method) else {
             return Ok(None);
         };
 
         if op.interceptors.on_response_body.is_empty() {
+            return Ok(None);
+        }
+
+        // HEAD responses must not have a body (RFC 9110). Skip body transforms
+        // when HEAD fell back to GET's operation config.
+        if method == http::Method::HEAD && !route_arc.operations.contains_key(&http::Method::HEAD) {
             return Ok(None);
         }
 

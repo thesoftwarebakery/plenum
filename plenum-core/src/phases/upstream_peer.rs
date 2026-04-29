@@ -17,7 +17,7 @@ fn matched_op<'a>(
 ) -> Option<&'a OperationSchemas> {
     let route = matched_route.as_ref()?;
     let method = matched_method.as_ref()?;
-    route.operations.get(method)
+    route.get_operation(method)
 }
 
 /// Resolve the upstream peer for an HTTP route.
