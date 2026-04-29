@@ -123,8 +123,15 @@ pub(crate) async fn respond(
         }
     }
 
-    session
-        .respond_error_with_body(error.status, error.body)
-        .await
-        .ok();
+    if error.headers.is_empty() {
+        session
+            .respond_error_with_body(error.status, error.body)
+            .await
+            .ok();
+    } else {
+        // Use write_response when extra headers are needed (e.g. Allow for 405).
+        write_response(session, error.status, &error.headers, error.body)
+            .await
+            .ok();
+    }
 }

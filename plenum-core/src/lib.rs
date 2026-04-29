@@ -143,33 +143,20 @@ impl ProxyHttp for Plenum {
             if method == http::Method::OPTIONS {
                 return Ok(false);
             }
-            // Path matched but method not allowed — respond with 405 and Allow header.
-            let mut allowed: Vec<&str> = route_arc.operations.keys().map(|m| m.as_str()).collect();
-            // HEAD is implicitly allowed whenever GET is defined.
-            if route_arc.operations.contains_key(&http::Method::GET)
-                && !route_arc.operations.contains_key(&http::Method::HEAD)
-            {
-                allowed.push("HEAD");
-            }
-            allowed.sort();
-            let allow_value = allowed.join(", ");
+            let allowed = route_arc.allowed_methods();
             log::warn!(
                 "Method {} not allowed for path: {} (allowed: {})",
                 method,
                 path,
-                allow_value
+                allowed.join(", ")
             );
-            proxy_utils::write_response(
+            phases::gateway_error::respond(
                 session,
-                405,
-                &[
-                    ("Allow".to_string(), allow_value),
-                    ("Content-Type".to_string(), "application/json".to_string()),
-                ],
-                Bytes::from(serde_json::json!({"error": "method not allowed"}).to_string()),
+                ctx,
+                GatewayErrorResponse::method_not_allowed(&allowed),
+                ctx.error_hook.clone().as_deref(),
             )
-            .await
-            .ok();
+            .await;
             return Ok(true);
         };
 

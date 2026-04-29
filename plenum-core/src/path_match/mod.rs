@@ -119,6 +119,19 @@ impl RouteEntry {
             }
         })
     }
+
+    /// Return the sorted list of HTTP methods this route accepts, including
+    /// implicit HEAD when GET is defined (RFC 9110).
+    pub fn allowed_methods(&self) -> Vec<&str> {
+        let mut methods: Vec<&str> = self.operations.keys().map(|m| m.as_str()).collect();
+        if self.operations.contains_key(&Method::GET)
+            && !self.operations.contains_key(&Method::HEAD)
+        {
+            methods.push("HEAD");
+        }
+        methods.sort();
+        methods
+    }
 }
 
 pub type PlenumRouter = Router<Arc<RouteEntry>>;
