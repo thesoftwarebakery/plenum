@@ -1,6 +1,6 @@
 overlay: 1.1.0
 info:
-  title: Attach validate-request interceptor to POST /items
+  title: Attach validate-request interceptor (no explicit schema, uses $ref from spec)
   version: 1.0.0
 actions:
   - target: $.paths["/items"].post

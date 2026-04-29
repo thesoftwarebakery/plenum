@@ -63,25 +63,13 @@ actions:
         buffer-response: true
 
   # Attach validate-response interceptor to routes that need it.
-  # The schema is passed explicitly as interceptor options.
+  # Schemas are read automatically from the operation's responses.
   - target: $.paths["/plugin/valid"].get
     update:
       x-plenum-interceptor:
         - module: "internal:validate-response"
           hook: "on_response_body"
           function: "validateResponse"
-          options:
-            schemas:
-              "200":
-                type: object
-                properties:
-                  id:
-                    type: string
-                  name:
-                    type: string
-                required:
-                  - id
-                  - name
 
   - target: $.paths["/plugin/invalid"].get
     update:
@@ -89,18 +77,6 @@ actions:
         - module: "internal:validate-response"
           hook: "on_response_body"
           function: "validateResponse"
-          options:
-            schemas:
-              "200":
-                type: object
-                properties:
-                  id:
-                    type: string
-                  name:
-                    type: string
-                required:
-                  - id
-                  - name
 
   - target: $.paths["/http/valid"].get
     update:
@@ -108,18 +84,6 @@ actions:
         - module: "internal:validate-response"
           hook: "on_response_body"
           function: "validateResponse"
-          options:
-            schemas:
-              "200":
-                type: object
-                properties:
-                  id:
-                    type: string
-                  name:
-                    type: string
-                required:
-                  - id
-                  - name
 
   - target: $.paths["/http/invalid"].get
     update:
@@ -127,15 +91,3 @@ actions:
         - module: "internal:validate-response"
           hook: "on_response_body"
           function: "validateResponse"
-          options:
-            schemas:
-              "200":
-                type: object
-                properties:
-                  id:
-                    type: string
-                  name:
-                    type: string
-                required:
-                  - id
-                  - name

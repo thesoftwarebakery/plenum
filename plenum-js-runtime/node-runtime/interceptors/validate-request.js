@@ -23,7 +23,13 @@ function getValidator(schema) {
 }
 
 exports.validateRequest = function validateRequest(request) {
-  const schema = request.options && request.options.schema;
+  const schema =
+    (request.options && request.options.schema) ||
+    (request.operation &&
+      request.operation.requestBody &&
+      request.operation.requestBody.content &&
+      request.operation.requestBody.content["application/json"] &&
+      request.operation.requestBody.content["application/json"].schema);
 
   if (!schema) {
     return { action: "continue" };

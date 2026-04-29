@@ -110,7 +110,6 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
 | `x-plenum-backend` | Operation | Opaque config passed to plugin `handle()` |
 | `x-plenum-request-timeout` | Operation | Per-operation request timeout (ms) |
 | `x-plenum-max-request-body-bytes` | Operation | Per-operation max body size |
-| `x-plenum-validation` | Operation | Request/response validation control |
 
 ### Upstream types
 

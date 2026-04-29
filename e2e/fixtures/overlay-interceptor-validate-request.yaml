@@ -9,10 +9,3 @@ actions:
         - module: "internal:validate-request"
           hook: on_request
           function: validateRequest
-          options:
-            schema:
-              type: object
-              required: ["name"]
-              properties:
-                name:
-                  type: string
