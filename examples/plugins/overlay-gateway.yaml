@@ -1,0 +1,25 @@
+overlay: 1.1.0
+info:
+  title: Gateway and plugin configuration
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        listen: "0.0.0.0:6188"
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        kind: "plugin"
+        plugin: "./plugins/echo.js"
+  - target: "$.paths['/echo'].get"
+    update:
+      x-plenum-backend:
+        table: echo
+        query: list
+  - target: "$.paths['/echo/{id}'].get"
+    update:
+      x-plenum-backend:
+        table: echo
+        query: get_by_id
