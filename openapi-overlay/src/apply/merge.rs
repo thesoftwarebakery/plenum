@@ -27,8 +27,8 @@ pub(crate) fn merge_in_place(
 ) -> Result<(), ApplyError> {
     match (target.is_object(), update.is_object()) {
         (true, true) => {
-            let target_obj = target.as_object_mut().unwrap();
-            let update_obj = update.as_object().unwrap();
+            let target_obj = target.as_object_mut().expect("guarded by match");
+            let update_obj = update.as_object().expect("guarded by match");
             for (key, update_val) in update_obj {
                 let child_pointer = format!("{pointer}/{key}");
                 if let Some(existing) = target_obj.get_mut(key) {
@@ -41,8 +41,8 @@ pub(crate) fn merge_in_place(
         }
         (false, false) => match (target.is_array(), update.is_array()) {
             (true, true) => {
-                let target_arr = target.as_array_mut().unwrap();
-                let update_arr = update.as_array().unwrap();
+                let target_arr = target.as_array_mut().expect("guarded by match");
+                let update_arr = update.as_array().expect("guarded by match");
                 target_arr.extend(update_arr.iter().cloned());
                 Ok(())
             }
