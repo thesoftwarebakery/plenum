@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777498333884,
+  "lastUpdate": 1777499315265,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -1800,6 +1800,78 @@ window.BENCHMARK_DATA = {
             "value": 4.195,
             "unit": "ms",
             "extra": "n=7761"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "4dff3b05022d1e3ccae86db4825d0540f25434d0",
+          "message": "Merge pull request #135 from thesoftwarebakery/worktree-issue-133-auto-validation\n\nfeat: validation interceptors read schemas from OpenAPI spec",
+          "timestamp": "2026-04-29T22:44:15+01:00",
+          "tree_id": "0e0db9853cf45974e338d7159a473952eedc3ecb",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/4dff3b05022d1e3ccae86db4825d0540f25434d0"
+        },
+        "date": 1777499314954,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.844,
+            "unit": "ms",
+            "extra": "n=11858"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 3.24,
+            "unit": "ms",
+            "extra": "n=11858"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.944,
+            "unit": "ms",
+            "extra": "n=10593"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 3.225,
+            "unit": "ms",
+            "extra": "n=10593"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.419,
+            "unit": "ms",
+            "extra": "n=7047"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 3.958,
+            "unit": "ms",
+            "extra": "n=7047"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.176,
+            "unit": "ms",
+            "extra": "n=8500"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.387,
+            "unit": "ms",
+            "extra": "n=8500"
           }
         ]
       }
