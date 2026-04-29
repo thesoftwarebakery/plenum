@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777414269371,
+  "lastUpdate": 1777483209472,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -1368,6 +1368,78 @@ window.BENCHMARK_DATA = {
             "value": 3.571,
             "unit": "ms",
             "extra": "n=8112"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f665d41f95d6b89c79e6e8ea5e5816acae18604d",
+          "message": "Merge pull request #124 from thesoftwarebakery/worktree-rust-cleanup\n\nfix: remove unnecessary clones and improve idiomatic Rust patterns",
+          "timestamp": "2026-04-29T18:15:49+01:00",
+          "tree_id": "b7a308b0e140245f2a48091d4afbf600f0c9f9d6",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/f665d41f95d6b89c79e6e8ea5e5816acae18604d"
+        },
+        "date": 1777483209065,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.756,
+            "unit": "ms",
+            "extra": "n=13222"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 2.539,
+            "unit": "ms",
+            "extra": "n=13222"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.867,
+            "unit": "ms",
+            "extra": "n=11531"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 2.333,
+            "unit": "ms",
+            "extra": "n=11531"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.233,
+            "unit": "ms",
+            "extra": "n=8110"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 1.852,
+            "unit": "ms",
+            "extra": "n=8110"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.176,
+            "unit": "ms",
+            "extra": "n=8506"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.53,
+            "unit": "ms",
+            "extra": "n=8506"
           }
         ]
       }
