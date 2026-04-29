@@ -150,3 +150,50 @@ describe("HEAD with request validation", () => {
     expect(resp.status).toEqual(200);
   });
 });
+
+describe("method not allowed returns 405", () => {
+  let network: StartedNetwork;
+  let wiremock: WiremockContainer;
+  let gateway: GatewayContainer;
+
+  beforeAll(async () => {
+    network = await new Network().start();
+    wiremock = await startWiremock({ network, alias: "wiremock" });
+    gateway = await startGateway({ network });
+  });
+
+  afterAll(async () => {
+    await gateway?.container.stop();
+    await wiremock?.container.stop();
+    await network?.stop();
+  });
+
+  test("DELETE on GET-only route returns 405 with Allow header", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/products`, { method: "DELETE" });
+    expect(resp.status).toEqual(405);
+    const allow = resp.headers.get("allow");
+    expect(allow).toBeDefined();
+    expect(allow).toContain("GET");
+    expect(allow).toContain("HEAD");
+    const body = await resp.json() as { error: string };
+    expect(body.error).toEqual("method not allowed");
+  });
+
+  test("POST on GET-only route returns 405", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/products`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: "test" }),
+    });
+    expect(resp.status).toEqual(405);
+    expect(resp.headers.get("allow")).toContain("GET");
+  });
+
+  test("PUT on GET-only route returns 405 with correct Allow header", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/products/abc`, { method: "PUT" });
+    expect(resp.status).toEqual(405);
+    const allow = resp.headers.get("allow");
+    expect(allow).toContain("GET");
+    expect(allow).toContain("HEAD");
+  });
+});

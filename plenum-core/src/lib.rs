@@ -97,10 +97,10 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
-        let path = session.req_header().uri.path();
+        let path = session.req_header().uri.path().to_string();
         let route_result = {
-            let _span = tracing::debug_span!("route_match", path).entered();
-            self.router.at(path).ok()
+            let _span = tracing::debug_span!("route_match", path = path.as_str()).entered();
+            self.router.at(&path).ok()
         };
         let Some(matched) = route_result else {
             log::warn!("No route matched for path: {}", path);
@@ -138,7 +138,39 @@ impl ProxyHttp for Plenum {
         }
 
         let Some(op) = route_arc.get_operation(&method) else {
-            return Ok(false);
+            // OPTIONS without a matching operation is proxied upstream (non-CORS OPTIONS,
+            // or CORS without Origin header). All other methods get 405.
+            if method == http::Method::OPTIONS {
+                return Ok(false);
+            }
+            // Path matched but method not allowed — respond with 405 and Allow header.
+            let mut allowed: Vec<&str> = route_arc.operations.keys().map(|m| m.as_str()).collect();
+            // HEAD is implicitly allowed whenever GET is defined.
+            if route_arc.operations.contains_key(&http::Method::GET)
+                && !route_arc.operations.contains_key(&http::Method::HEAD)
+            {
+                allowed.push("HEAD");
+            }
+            allowed.sort();
+            let allow_value = allowed.join(", ");
+            log::warn!(
+                "Method {} not allowed for path: {} (allowed: {})",
+                method,
+                path,
+                allow_value
+            );
+            proxy_utils::write_response(
+                session,
+                405,
+                &[
+                    ("Allow".to_string(), allow_value),
+                    ("Content-Type".to_string(), "application/json".to_string()),
+                ],
+                Bytes::from(serde_json::json!({"error": "method not allowed"}).to_string()),
+            )
+            .await
+            .ok();
+            return Ok(true);
         };
 
         ctx.request_start = Some(Instant::now());
