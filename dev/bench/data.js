@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777493016346,
+  "lastUpdate": 1777498333884,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -1728,6 +1728,78 @@ window.BENCHMARK_DATA = {
             "value": 3.748,
             "unit": "ms",
             "extra": "n=8373"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "24b01d9b76da816d9bf948f99cb977cdce3769dc",
+          "message": "Merge pull request #134 from thesoftwarebakery/worktree-issue-131-head-support\n\nfeat: implicit HEAD support and 405 for unmatched methods",
+          "timestamp": "2026-04-29T22:27:40+01:00",
+          "tree_id": "10e66817803a76947401c5b1c952b980269a0dcc",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/24b01d9b76da816d9bf948f99cb977cdce3769dc"
+        },
+        "date": 1777498333605,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.809,
+            "unit": "ms",
+            "extra": "n=12354"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 2.965,
+            "unit": "ms",
+            "extra": "n=12354"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.905,
+            "unit": "ms",
+            "extra": "n=11056"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.859,
+            "unit": "ms",
+            "extra": "n=11056"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.343,
+            "unit": "ms",
+            "extra": "n=7449"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 2.661,
+            "unit": "ms",
+            "extra": "n=7449"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.289,
+            "unit": "ms",
+            "extra": "n=7761"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 4.195,
+            "unit": "ms",
+            "extra": "n=7761"
           }
         ]
       }
