@@ -48,7 +48,7 @@ fn apply_action(doc: &mut Value, action: &Action) -> Result<(), ApplyError> {
 
 fn apply_remove(doc: &mut Value, path: &JsonPath) -> Result<(), ApplyError> {
     let located = path.query_located(doc);
-    if located.iter().len() == 0 {
+    if located.is_empty() {
         return Ok(());
     }
 

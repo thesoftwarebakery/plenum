@@ -164,7 +164,7 @@ fn add_preflight_headers(resp: &mut ResponseHeader, config: &CorsConfig) {
     // Access-Control-Max-Age
     let _ = resp.insert_header(
         http::header::ACCESS_CONTROL_MAX_AGE,
-        HeaderValue::from_str(&config.max_age.to_string()).unwrap(),
+        HeaderValue::from(config.max_age),
     );
 }
 

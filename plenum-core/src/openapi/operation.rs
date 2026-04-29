@@ -11,17 +11,11 @@ pub(crate) fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_
     let mut result = serde_json::Map::new();
 
     if let Some(id) = &operation.operation_id {
-        result.insert(
-            "operationId".to_owned(),
-            serde_json::Value::String(id.clone()),
-        );
+        result.insert("operationId".into(), serde_json::Value::String(id.clone()));
     }
 
     if let Some(summary) = &operation.summary {
-        result.insert(
-            "summary".to_owned(),
-            serde_json::Value::String(summary.clone()),
-        );
+        result.insert("summary".into(), serde_json::Value::String(summary.clone()));
     }
 
     // Parameters
@@ -33,10 +27,7 @@ pub(crate) fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_
             .filter_map(|p| serde_json::to_value(p).ok())
             .collect();
         if !param_values.is_empty() {
-            result.insert(
-                "parameters".to_owned(),
-                serde_json::Value::Array(param_values),
-            );
+            result.insert("parameters".into(), serde_json::Value::Array(param_values));
         }
     }
 
@@ -44,7 +35,7 @@ pub(crate) fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_
     if let Ok(Some(req_body)) = operation.request_body(spec)
         && let Ok(val) = serde_json::to_value(&req_body)
     {
-        result.insert("requestBody".to_owned(), val);
+        result.insert("requestBody".into(), val);
     }
 
     // responses
@@ -57,10 +48,7 @@ pub(crate) fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_
             }
         }
         if !responses_obj.is_empty() {
-            result.insert(
-                "responses".to_owned(),
-                serde_json::Value::Object(responses_obj),
-            );
+            result.insert("responses".into(), serde_json::Value::Object(responses_obj));
         }
     }
 
@@ -102,12 +90,9 @@ pub(crate) fn build_operation_meta(operation: &Operation, spec: &Spec) -> serde_
 
     if !bundled_schemas.is_empty() {
         let mut components_obj = serde_json::Map::new();
-        components_obj.insert(
-            "schemas".to_owned(),
-            serde_json::Value::Object(bundled_schemas),
-        );
+        components_obj.insert("schemas".into(), serde_json::Value::Object(bundled_schemas));
         result.insert(
-            "components".to_owned(),
+            "components".into(),
             serde_json::Value::Object(components_obj),
         );
     }

@@ -109,20 +109,15 @@ impl ProxyHttp for Plenum {
                 )
             })?
         };
-        ctx.matched_route = Some(matched.value.clone());
-        ctx.matched_method = Some(session.req_header().method.clone());
+        let route_arc = matched.value.clone();
+        let method = session.req_header().method.clone();
+        ctx.matched_route = Some(route_arc.clone());
+        ctx.matched_method = Some(method.clone());
         ctx.path_params = matched
             .params
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect();
-
-        let Some(route_arc) = ctx.matched_route.clone() else {
-            return Ok(false);
-        };
-        let Some(method) = ctx.matched_method.clone() else {
-            return Ok(false);
-        };
 
         // CORS preflight: OPTIONS requests won't have a matching operation in the
         // OpenAPI spec, so check before the method-based lookup. Find the first
