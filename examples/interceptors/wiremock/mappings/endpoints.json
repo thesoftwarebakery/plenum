@@ -1,0 +1,21 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/(products|admin)"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "path": "{{request.path}}",
+          "requestId": "{{request.headers.x-request-id}}"
+        },
+        "transformers": ["response-template"]
+      }
+    }
+  ]
+}
