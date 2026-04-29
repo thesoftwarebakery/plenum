@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.12.1](https://github.com/thesoftwarebakery/plenum/compare/v0.12.0...v0.12.1) (2026-04-29)
+
+
+### Bug Fixes
+
+* remove unnecessary clones and improve idiomatic Rust patterns ([f665d41](https://github.com/thesoftwarebakery/plenum/commit/f665d41f95d6b89c79e6e8ea5e5816acae18604d))
+* remove unnecessary clones and improve idiomatic Rust patterns ([2ca99a7](https://github.com/thesoftwarebakery/plenum/commit/2ca99a7eaa35054e2e6ece56d0d37b3ca2217a52))
+
 ## [0.12.0](https://github.com/thesoftwarebakery/plenum/compare/v0.11.0...v0.12.0) (2026-04-28)
 
 
