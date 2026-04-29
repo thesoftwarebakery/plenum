@@ -1,0 +1,25 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/products(/[^/]+)?"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "method": "{{request.method}}",
+          "path": "{{request.path}}",
+          "headers": {
+            "host": "{{request.headers.Host}}",
+            "user-agent": "{{request.headers.User-Agent}}"
+          }
+        },
+        "transformers": ["response-template"]
+      }
+    }
+  ]
+}
