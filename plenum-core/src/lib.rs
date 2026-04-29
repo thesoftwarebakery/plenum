@@ -98,16 +98,20 @@ impl ProxyHttp for Plenum {
         Self::CTX: Send + Sync,
     {
         let path = session.req_header().uri.path();
-        let matched = {
+        let route_result = {
             let _span = tracing::debug_span!("route_match", path).entered();
-            self.router.at(path).map_err(|e| {
-                log::warn!("No route matched for path: {}", path);
-                pingora_core::Error::because(
-                    pingora_core::ErrorType::HTTPStatus(404),
-                    "no matching route",
-                    e,
-                )
-            })?
+            self.router.at(path).ok()
+        };
+        let Some(matched) = route_result else {
+            log::warn!("No route matched for path: {}", path);
+            phases::gateway_error::respond(
+                session,
+                ctx,
+                GatewayErrorResponse::not_found("no matching route"),
+                ctx.error_hook.clone().as_deref(),
+            )
+            .await;
+            return Ok(true);
         };
         let route_arc = matched.value.clone();
         let method = session.req_header().method.clone();
