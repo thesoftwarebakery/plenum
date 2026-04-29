@@ -1,0 +1,22 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/products"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "products": [
+            { "id": "1", "name": "Widget" },
+            { "id": "2", "name": "Gadget" }
+          ]
+        }
+      }
+    }
+  ]
+}
