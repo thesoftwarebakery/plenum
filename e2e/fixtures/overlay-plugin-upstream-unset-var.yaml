@@ -9,4 +9,4 @@ actions:
         kind: "plugin"
         plugin: "./plugins/echo.js"
         options:
-          host: "${UNSET_VAR_FOR_TEST}"
+          host: "${{ env.UNSET_VAR_FOR_TEST }}"
