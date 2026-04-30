@@ -1,0 +1,49 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPathPattern": "/products(/[^/]+)?"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "method": "{{request.method}}",
+          "path": "{{request.path}}"
+        },
+        "transformers": ["response-template"]
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "urlPath": "/products"
+      },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "created": true,
+          "path": "{{request.path}}"
+        },
+        "transformers": ["response-template"]
+      }
+    },
+    {
+      "request": {
+        "method": "PUT",
+        "urlPathPattern": "/products/[^/]+"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": {
+          "updated": true,
+          "path": "{{request.path}}"
+        },
+        "transformers": ["response-template"]
+      }
+    }
+  ]
+}

@@ -8,32 +8,6 @@ Plugins are JavaScript modules that handle requests directly instead of proxying
 > docker compose up
 > ```
 
-## Writing a plugin
-
-A plugin exports two functions:
-
-```javascript
-// plugins/hello.js
-
-// Called once at startup. Return value is available as plugin state.
-exports.init = function init(options) {
-  return {};
-};
-
-// Called for each request. Returns the full response.
-exports.handle = function handle(input) {
-  return {
-    status: 200,
-    headers: { "content-type": "application/json" },
-    body: {
-      message: "Hello from plugin",
-      path: input.request.path,
-      params: input.request.params,
-    },
-  };
-};
-```
-
 ## Configuration
 
 Set `kind: "plugin"` on the upstream and point to the module:
@@ -42,36 +16,6 @@ Set `kind: "plugin"` on the upstream and point to the module:
 x-plenum-upstream:
   kind: "plugin"
   plugin: "./plugins/hello.js"
-```
-
-## Plugin input
-
-The `handle()` function receives:
-
-| Field | Description |
-|-------|-------------|
-| `request.method` | HTTP method |
-| `request.path` | Full request path |
-| `request.params` | Path parameters (`Record<string, unknown>`), coerced to the declared schema type (`integer`, `boolean`, etc.) |
-| `request.query` | Raw query string (preserved for backward compatibility) |
-| `request.queryParams` | Parsed query parameters (`Record<string, unknown>`), typed per the OpenAPI spec |
-| `request.headers` | Request headers |
-| `body` | Request body (for POST/PUT/PATCH) |
-| `config` | Value from `x-plenum-backend` (per-operation config) |
-| `operation` | OpenAPI operation metadata |
-
-`queryParams` is parsed using the parameter definitions from the OpenAPI spec, applying the correct style, explode, and type coercion rules. Undeclared parameters are included as raw strings. Use `queryParams` instead of manually parsing `query` whenever you need typed values.
-
-## Plugin output
-
-Return a response object:
-
-```javascript
-{
-  status: 200,
-  headers: { "content-type": "application/json" },
-  body: { ... },  // JSON object, string, or null
-}
 ```
 
 ## Per-operation config with `x-plenum-backend`
@@ -159,3 +103,7 @@ x-plenum-upstream:
     env: ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]
     net: ["${{ env.DB_HOST }}"]
 ```
+
+## Writing custom plugins
+
+See the [Writing Plugins](writing-plugins/index.md) guide for the full authoring workflow — plugin contract, TypeScript setup, bundling, and dependency management.

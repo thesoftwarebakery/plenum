@@ -1,0 +1,10 @@
+{
+  "name": "full-stack-example",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/error-handler.ts --bundle --format=cjs --platform=node --target=node22 --outfile=dist/error-handler.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

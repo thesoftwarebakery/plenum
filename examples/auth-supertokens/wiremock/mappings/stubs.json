@@ -1,0 +1,23 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET",
+        "urlPath": "/protected/profile"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "userId": "{{request.headers.x-user-id}}",
+          "profile": {
+            "message": "This is protected data"
+          }
+        },
+        "transformers": ["response-template"]
+      }
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+openapi: 3.1.0
+info:
+  title: Full Stack API
+  description: Kitchen sink example demonstrating all major Plenum features
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Health check (static response)
+      responses:
+        "200":
+          description: Service is healthy
+  /public/info:
+    get:
+      operationId: publicInfo
+      summary: Public info (static + CORS)
+      responses:
+        "200":
+          description: Public information
+  /products:
+    get:
+      operationId: listProducts
+      summary: List products (HTTP proxy + CORS)
+      responses:
+        "200":
+          description: List of products
+    post:
+      operationId: createProduct
+      summary: Create product (auth + validation + rate limit)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, price]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                price:
+                  type: number
+                  minimum: 0
+      responses:
+        "201":
+          description: Product created
+  /products/{id}:
+    get:
+      operationId: getProduct
+      summary: Get product (HTTP proxy + timeout)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Product found
+    put:
+      operationId: updateProduct
+      summary: Update product (auth + validation + rate limit)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                price:
+                  type: number
+                  minimum: 0
+      responses:
+        "200":
+          description: Product updated
+  /items:
+    get:
+      operationId: listItems
+      summary: List items (database)
+      responses:
+        "200":
+          description: List of items
+    post:
+      operationId: createItem
+      summary: Create item (database + validation)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                  minLength: 1
+                description:
+                  type: string
+      responses:
+        "200":
+          description: Item created
+  /items/{id}:
+    get:
+      operationId: getItem
+      summary: Get item by ID (database)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Item found
+        "404":
+          description: Item not found
+  /pool/status:
+    get:
+      operationId: poolStatus
+      summary: Load-balanced pool status
+      responses:
+        "200":
+          description: Pool status from one backend

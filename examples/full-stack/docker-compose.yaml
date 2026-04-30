@@ -1,0 +1,58 @@
+services:
+  gateway:
+    image: ghcr.io/thesoftwarebakery/plenum
+    ports:
+      - "6188:6188"
+    environment:
+      API_KEY: "my-secret-api-key"
+      DB_HOST: "postgres"
+      DB_PORT: "5432"
+      DB_NAME: "plenum"
+      DB_USER: "plenum"
+      DB_PASSWORD: "plenum"
+    volumes:
+      - ./:/config
+    command:
+      - --config-path=/config
+      - --openapi-schema=openapi.yaml
+      - --openapi-overlay=overlay-gateway.yaml,overlay-features.yaml
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backend:
+        condition: service_started
+      backend-pool-1:
+        condition: service_started
+      backend-pool-2:
+        condition: service_started
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: plenum
+      POSTGRES_USER: plenum
+      POSTGRES_PASSWORD: plenum
+    volumes:
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U plenum"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    image: wiremock/wiremock:3x
+    volumes:
+      - ./wiremock:/home/wiremock
+    command:
+      - --global-response-templating
+
+  backend-pool-1:
+    image: wiremock/wiremock:3x
+    volumes:
+      - ./wiremock-pool-1:/home/wiremock
+
+  backend-pool-2:
+    image: wiremock/wiremock:3x
+    volumes:
+      - ./wiremock-pool-2:/home/wiremock

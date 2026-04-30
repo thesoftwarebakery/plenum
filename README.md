@@ -48,11 +48,24 @@ docker run -d \
   ghcr.io/thesoftwarebakery/plenum
 ```
 
+## Examples
+
+Complete, runnable examples — each with its own `docker-compose.yaml` and README:
+
+| Example | Description |
+|---------|-------------|
+| [Getting Started](examples/getting-started/) | Basic gateway setup with a WireMock backend |
+| [Mock API](examples/mock-api/) | Schema-driven mock responses using json-schema-faker — no backend needed |
+| [Auth with SuperTokens](examples/auth-supertokens/) | Authentication flow with session verification, protected routes, and user context propagation |
+| [REST Database](examples/rest-database/) | Full CRUD REST API backed by PostgreSQL with pagination, joins, and field mapping |
+| [Full Stack](examples/full-stack/) | All features composed: CORS, rate limiting, auth, validation, load balancing, database, static responses |
+
+More single-feature examples covering [CORS](examples/cors/), [interceptors](examples/interceptors/), [load balancing](examples/load-balancing/), [plugins](examples/plugins/), [static responses](examples/static-responses/), [validation](examples/validation/), and others are in the [`examples/`](examples/) directory.
+
 ## Documentation
 
 - [Quickstart guide](docs/quickstart.md) — step-by-step setup with configuration reference
-
-More documentation coming soon.
+- [Writing Plugins](docs/writing-plugins/index.md) — TypeScript setup, bundling, and dependency management
 
 ## Contributing
 

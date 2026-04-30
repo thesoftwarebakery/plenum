@@ -1,0 +1,102 @@
+openapi: 3.1.0
+info:
+  title: Auth Example API
+  description: API with SuperTokens authentication
+  version: 1.0.0
+paths:
+  /auth/signup:
+    post:
+      operationId: signup
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  userId:
+                    type: string
+        "400":
+          description: Signup failed
+  /auth/signin:
+    post:
+      operationId: signin
+      summary: Sign in and receive a session token
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  userId:
+                    type: string
+                  accessToken:
+                    type: string
+        "401":
+          description: Invalid credentials
+  /protected/profile:
+    get:
+      operationId: getProfile
+      summary: Get the authenticated user's profile
+      responses:
+        "200":
+          description: User profile
+          content:
+            application/json:
+              schema:
+                type: object
+        "401":
+          description: Not authenticated
+  /public/health:
+    get:
+      operationId: healthCheck
+      summary: Public health check
+      responses:
+        "200":
+          description: Service is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string

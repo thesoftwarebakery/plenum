@@ -1,0 +1,10 @@
+{
+  "name": "auth-supertokens-example",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/auth-plugin.ts src/verify-session.ts --bundle --format=cjs --platform=node --target=node22 --outdir=dist"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}
