@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.0](https://github.com/thesoftwarebakery/plenum/compare/v0.13.0...v0.14.0) (2026-04-30)
+
+
+### Features
+
+* universal boot-time interpolation with ${{ env.* }} and ${{ file.* }} ([16cff4d](https://github.com/thesoftwarebakery/plenum/commit/16cff4dab89054abd745247d85ee87b4ba9d29b1))
+* universal boot-time interpolation with ${{ env.* }} and ${{ file.* }} ([00d8d4a](https://github.com/thesoftwarebakery/plenum/commit/00d8d4a3b983a714e5ef8432ce8abf9b901078ee)), closes [#139](https://github.com/thesoftwarebakery/plenum/issues/139)
+
 ## [0.13.0](https://github.com/thesoftwarebakery/plenum/compare/v0.12.2...v0.13.0) (2026-04-29)
 
 
