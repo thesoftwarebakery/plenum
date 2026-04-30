@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.14.1](https://github.com/thesoftwarebakery/plenum/compare/v0.14.0...v0.14.1) (2026-04-30)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * oapi-overlay bumped from ^0 to 0.2.0
+
 ## [0.14.0](https://github.com/thesoftwarebakery/plenum/compare/v0.13.0...v0.14.0) (2026-04-30)
 
 
