@@ -36,19 +36,28 @@ actions:
   - target: $.paths['/users/{id}'].get
     update:
       x-plenum-backend:
-        query: "SELECT id, name, created_at FROM users WHERE id = ${{path.id}}"
+        query: "SELECT id, name, created_at FROM users WHERE id = ?"
+        params:
+          - "${{path.id}}"
         fields:
           created_at: "createdAt"
         returns: "/0"
   - target: $.paths['/users'].post
     update:
       x-plenum-backend:
-        query: "INSERT INTO users (name, created_at) VALUES (${{body.name}}, NOW())"
+        query: "INSERT INTO users (name, created_at) VALUES (?, NOW())"
+        params:
+          - "${{body.name}}"
   - target: $.paths['/users/{id}'].put
     update:
       x-plenum-backend:
-        query: "UPDATE users SET name = ${{body.name}} WHERE id = ${{path.id}}"
+        query: "UPDATE users SET name = ? WHERE id = ?"
+        params:
+          - "${{body.name}}"
+          - "${{path.id}}"
   - target: $.paths['/users/{id}'].delete
     update:
       x-plenum-backend:
-        query: "DELETE FROM users WHERE id = ${{path.id}}"
+        query: "DELETE FROM users WHERE id = ?"
+        params:
+          - "${{path.id}}"

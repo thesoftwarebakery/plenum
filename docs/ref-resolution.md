@@ -154,10 +154,14 @@ Reuse database query patterns across plugin routes:
 components:
   x-backends:
     list-all:
-      query: "SELECT * FROM ${{path.table}}"
+      query: "SELECT * FROM users"
     get-by-id:
-      query: "SELECT * FROM ${{path.table}} WHERE id = ${{path.id}}"
+      query: "SELECT id, name FROM users WHERE id = $1"
+      params:
+        - "${{path.id}}"
 ```
+
+The `params` array accepts `${{...}}` tokens that the gateway resolves at request time. Values are passed to the database driver as a native parameter array — never interpolated into the query string.
 
 ## Resolution details
 

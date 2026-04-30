@@ -126,3 +126,14 @@ The `${{ }}` syntax is also used for runtime context resolution in certain field
 | `client-ip` | Request time | `${{ client-ip }}` |
 
 Boot-time tokens (`env`, `file`) are resolved once at startup. Runtime tokens pass through and are resolved per-request.
+
+`query.*` tokens resolve from parsed query parameters (`queryParams`), so values are typed — an integer query param resolves as a number, not a string. Use `query.*` tokens in `x-plenum-backend.params` to safely pass query parameter values to database queries:
+
+```yaml
+x-plenum-backend:
+  query: "SELECT * FROM users LIMIT $1"
+  params:
+    - "${{query.limit}}"
+```
+
+The gateway resolves each entry in `params` before calling the plugin. The resolved values are passed as a native parameter array — never interpolated into the query string.

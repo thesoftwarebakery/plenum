@@ -1,5 +1,7 @@
 pub(crate) mod module_resolver;
 
+use crate::request_context::config_value::ConfigValue;
+use oas_query::ParameterDef;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::path::Path;
@@ -76,9 +78,10 @@ pub struct OperationInterceptors {
 /// Per-operation metadata resolved at boot time.
 pub struct OperationSchemas {
     pub interceptors: OperationInterceptors,
-    /// Raw `x-plenum-backend` extension value from the operation, passed opaquely to the
-    /// plugin's `handle()` function. Never interpreted by the gateway itself.
-    pub backend_config: Option<serde_json::Value>,
+    /// Pre-compiled `x-plenum-backend` extension value from the operation. Tokens are
+    /// compiled at boot time and resolved per-request before being passed to the plugin's
+    /// `handle()` function.
+    pub backend_config: Option<ConfigValue>,
     /// Curated OpenAPI Operation Object JSON value built at boot time. Contains operationId,
     /// summary, parameters, requestBody, responses, and a bundled components.schemas for any
     /// referenced component schemas. x-plenum-* extensions are stripped.
@@ -105,6 +108,10 @@ pub struct RouteEntry {
     /// The OpenAPI path template for this route (e.g. `/users/{id}`).
     /// Populated in `ctx.gateway.route` for each interceptor/plugin call.
     pub path: String,
+    /// Pre-compiled path parameter schemas used to coerce raw matchit captures to typed
+    /// JSON values at request time. Built once at startup from the operation parameter
+    /// definitions; path params are path-level and shared across all methods on a route.
+    pub path_param_schemas: Vec<oas_query::ParameterDef>,
 }
 
 impl RouteEntry {
@@ -490,9 +497,11 @@ pub fn build_router(
                 default_interceptor_timeout,
             )?;
 
-            // Operation-level backend config (opaque, passed to plugin's handle())
-            let backend_config: Option<serde_json::Value> =
-                operation.extensions.get("plenum-backend").cloned();
+            // Operation-level backend config — compiled at boot time for cheap per-request resolution
+            let backend_config: Option<ConfigValue> = operation
+                .extensions
+                .get("plenum-backend")
+                .map(ConfigValue::from_json);
 
             // Operation-level CORS config
             let cors: Option<CorsConfig> = operation
@@ -546,13 +555,29 @@ pub fn build_router(
             );
         }
 
-        // If this is a plugin upstream, call validate() for each operation's backend_config
+        // If this is a plugin upstream, call validate() for each operation's backend_config.
+        // Resolve the ConfigValue with an empty context — tokens become null at validate time.
         if let Upstream::Plugin(ref plugin_handle) = upstream {
             for (method, op_schemas) in &operations {
-                let validate_arg = op_schemas
-                    .backend_config
-                    .clone()
-                    .unwrap_or(serde_json::Value::Null);
+                let validate_arg = match &op_schemas.backend_config {
+                    Some(config) => {
+                        use crate::request_context::ExtractionCtx;
+                        let empty_req = pingora_http::RequestHeader::build("GET", b"/", None)
+                            .expect("valid request");
+                        let empty_params: std::collections::HashMap<String, serde_json::Value> =
+                            std::collections::HashMap::new();
+                        let empty_cx = ExtractionCtx {
+                            req: &empty_req,
+                            path_params: &empty_params,
+                            user_ctx: None,
+                            peer_addr: None,
+                            query_params: None,
+                            body_json: None,
+                        };
+                        config.resolve(&empty_cx)
+                    }
+                    None => serde_json::Value::Null,
+                };
                 match plugin_handle.runtime.call_blocking(
                     "validate",
                     validate_arg,
@@ -589,11 +614,32 @@ pub fn build_router(
             }
         }
 
+        // Collect path parameter schemas — shared across all methods on a path.
+        // First definition of each name wins (path params must be consistent per-path).
+        let mut path_param_schemas: Vec<ParameterDef> = Vec::new();
+        let mut seen_path_params: HashSet<String> = HashSet::new();
+        for op_schemas in operations.values() {
+            if let Some(arr) = op_schemas
+                .operation_meta
+                .get("parameters")
+                .and_then(|v| v.as_array())
+            {
+                for param_json in arr {
+                    if let Some(def) = ParameterDef::path_from_json(param_json)
+                        && seen_path_params.insert(def.name.clone())
+                    {
+                        path_param_schemas.push(def);
+                    }
+                }
+            }
+        }
+
         let entry = Arc::new(RouteEntry {
             upstream,
             buffer_response: upstream_buffer_response,
             operations,
             path: path.to_string(),
+            path_param_schemas,
         });
         router
             .insert(path, entry)
@@ -1162,7 +1208,20 @@ mod tests {
             .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        let backend = get.backend_config.as_ref().unwrap();
+        let backend_cv = get.backend_config.as_ref().unwrap();
+        // Resolve with an empty context to get a serde_json::Value for assertions.
+        use crate::request_context::ExtractionCtx;
+        let empty_req = pingora_http::RequestHeader::build("GET", b"/", None).unwrap();
+        let empty_params = std::collections::HashMap::new();
+        let empty_cx = ExtractionCtx {
+            req: &empty_req,
+            path_params: &empty_params,
+            user_ctx: None,
+            peer_addr: None,
+            query_params: None,
+            body_json: None,
+        };
+        let backend = backend_cv.resolve(&empty_cx);
         assert_eq!(backend["table"].as_str().unwrap(), "users");
         assert_eq!(backend["query"].as_str().unwrap(), "find_by_id");
     }

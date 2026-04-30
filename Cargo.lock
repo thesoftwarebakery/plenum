@@ -1849,6 +1849,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "oas-query"
+version = "0.1.0"
+dependencies = [
+ "form_urlencoded",
+ "serde_json",
+]
+
+[[package]]
 name = "oas3"
 version = "0.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2297,6 +2305,7 @@ dependencies = [
  "log",
  "matchit",
  "oapi-overlay",
+ "oas-query",
  "oas3",
  "parking_lot",
  "pingora-core",

@@ -108,7 +108,7 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
 | `x-plenum-upstream` | Path item | Upstream target (HTTP, HTTP pool, plugin, static) |
 | `x-plenum-interceptor` | Operation | JS interceptor chain (array of hook configs) |
 | `x-plenum-cors` | Operation | CORS configuration |
-| `x-plenum-backend` | Operation | Opaque config passed to plugin `handle()` |
+| `x-plenum-backend` | Operation | Opaque config passed to plugin `handle()`; `params` array values are resolved at request time |
 | `x-plenum-request-timeout` | Operation | Per-operation request timeout (ms) |
 | `x-plenum-max-request-body-bytes` | Operation | Per-operation max body size |
 
@@ -118,7 +118,7 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
 - **HTTP pool** — load-balanced backends (`kind: "HTTP"`, `backends[]`, `selection`, `health-check`)
   - Selection: `round-robin` (default), `weighted`, `consistent`
   - `hash-key` supports `${{header.*}}`, `${{query.*}}`, `${{path-param.*}}`, `${{cookie.*}}`, `${{client-ip}}`
-- **Plugin** — Node.js handler (`kind: "plugin"`, `plugin`, `options`, `permissions`, `timeout-ms`)
+- **Plugin** — Node.js handler (`kind: "plugin"`, `plugin`, `options`, `permissions`, `timeout-ms`); plugins receive `input.request.queryParams` (parsed, typed) alongside `input.request.query` (raw string); `x-plenum-backend.params` tokens are resolved before calling `handle()`
 - **Static** — pre-built response (`kind: "static"`, `status`, `headers`, `body`)
 
 ### Interceptor lifecycle hooks (execution order)
@@ -138,6 +138,7 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
   - Unknown namespaces (e.g. `${{ header.* }}`) pass through for runtime resolution
 - `x-plenum-files` maps named keys to file paths (relative to `config-path`), loaded at startup
 - Overlays are applied sequentially in the order specified
+- `x-plenum-backend.params` entries containing `${{...}}` tokens are resolved at request time by `upstream_plugin/mod.rs` using `query.*` (typed from `queryParams`), `path.*`, `header.*`, and `body.*` namespaces — the resolved array is passed to `handle()` as `input.config.params`
 
 ## Key conventions
 

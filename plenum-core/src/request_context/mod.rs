@@ -29,6 +29,8 @@
 //! `"${{header.x-tenant}}-${{ctx.userId}}"`. Use it when a config field is a
 //! free-form template string.
 
+pub mod config_value;
+
 use std::collections::HashMap;
 
 use crate::config::interpolation::{Template, TemplatePart, Token};
@@ -41,13 +43,20 @@ use crate::config::interpolation::{Template, TemplatePart, Token};
 /// [`ContextTemplate::resolve`].
 pub struct ExtractionCtx<'a> {
     pub req: &'a pingora_http::RequestHeader,
-    pub path_params: &'a HashMap<String, String>,
+    pub path_params: &'a HashMap<String, serde_json::Value>,
     /// The request-scoped user ctx bag written by interceptors.
     /// Required for `${{ctx.*}}` expressions; absent or `None` → `None`.
     pub user_ctx: Option<&'a serde_json::Map<String, serde_json::Value>>,
     /// Direct peer IP, used as fallback for `${{client-ip}}` when
     /// `X-Forwarded-For` is absent.
     pub peer_addr: Option<std::net::IpAddr>,
+    /// Pre-parsed typed query parameters. When present, `query.*` tokens resolve
+    /// to typed JSON values rather than raw strings. Optional — absent in contexts
+    /// that don't have queryParams available (response hooks, hash-key selection, etc).
+    pub query_params: Option<&'a serde_json::Map<String, serde_json::Value>>,
+    /// Parsed request/response body. Present only when the body has been buffered
+    /// and is JSON-parseable. `body.*` tokens resolve to `null` when absent.
+    pub body_json: Option<&'a serde_json::Value>,
 }
 
 // ── ContextRef ───────────────────────────────────────────────────────────────
@@ -72,6 +81,8 @@ enum Source {
     ClientIp,
     Path,
     Method,
+    /// Top-level field from the parsed JSON request body.
+    Body(String),
 }
 
 impl ContextRef {
@@ -106,7 +117,7 @@ impl ContextRef {
     /// Convert a parsed [`Token`] into a [`ContextRef`] by validating
     /// the namespace and key. This is used by both [`ContextRef::parse`]
     /// and [`ContextTemplate::parse`].
-    fn from_token(token: &Token) -> Result<Self, String> {
+    pub(super) fn from_token(token: &Token) -> Result<Self, String> {
         let key = if token.key.is_empty() {
             None
         } else {
@@ -169,14 +180,15 @@ impl ContextRef {
                     source: Source::ClientIp,
                 })
             }
-            "path" => {
-                if key.is_some() {
-                    return Err("${{path}} does not take a sub-key".to_string());
-                }
-                Ok(Self {
+            "path" => match key {
+                Some(k) if !k.is_empty() => Ok(Self {
+                    source: Source::PathParam(k.to_string()),
+                }),
+                Some(_) => Err("${{path.name}} requires a non-empty parameter name".to_string()),
+                None => Ok(Self {
                     source: Source::Path,
-                })
-            }
+                }),
+            },
             "method" => {
                 if key.is_some() {
                     return Err("${{method}} does not take a sub-key".to_string());
@@ -185,9 +197,18 @@ impl ContextRef {
                     source: Source::Method,
                 })
             }
+            "body" => {
+                let k = key.ok_or("${{body.field}} requires a field name")?;
+                if k.is_empty() {
+                    return Err("${{body.field}} requires a non-empty field name".to_string());
+                }
+                Ok(Self {
+                    source: Source::Body(k.to_string()),
+                })
+            }
             other => Err(format!(
                 "unknown context namespace '{other}'; expected one of: \
-                 header, query, path-param, cookie, ctx, client-ip, path, method"
+                 header, query, path-param, path, cookie, ctx, client-ip, method, body"
             )),
         }
     }
@@ -210,7 +231,10 @@ impl ContextRef {
                     .find(|(k, _)| k == key)
                     .map(|(_, v)| v.into_owned())
             }
-            Source::PathParam(name) => cx.path_params.get(name.as_str()).cloned(),
+            Source::PathParam(name) => cx.path_params.get(name.as_str()).map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }),
             Source::Cookie(name) => {
                 let cookie_header = cx.req.headers.get("cookie")?;
                 let cookie_str = cookie_header.to_str().ok()?;
@@ -241,6 +265,30 @@ impl ContextRef {
             }
             Source::Path => Some(cx.req.uri.path().to_string()),
             Source::Method => Some(cx.req.method.as_str().to_string()),
+            Source::Body(field) => cx
+                .body_json
+                .and_then(|b| b.get(field.as_str()))
+                .map(json_value_to_string),
+        }
+    }
+
+    /// Like [`extract`] but returns a typed [`serde_json::Value`] instead of always
+    /// a `String`. For `query.*` tokens this uses `cx.query_params` when present,
+    /// preserving integer/boolean types. For `body.*` tokens this reads from
+    /// `cx.body_json`. All other sources wrap the string result in `Value::String`.
+    /// Returns `None` if the source value is absent (missing header, body not
+    /// buffered, etc.).
+    pub fn extract_value(&self, cx: &ExtractionCtx<'_>) -> Option<serde_json::Value> {
+        match &self.source {
+            Source::Query(key) => {
+                if let Some(qp) = cx.query_params {
+                    return qp.get(key.as_str()).cloned();
+                }
+                self.extract(cx).map(serde_json::Value::String)
+            }
+            Source::PathParam(name) => cx.path_params.get(name.as_str()).cloned(),
+            Source::Body(field) => cx.body_json.and_then(|b| b.get(field.as_str())).cloned(),
+            _ => self.extract(cx).map(serde_json::Value::String),
         }
     }
 }
@@ -389,19 +437,21 @@ mod tests {
 
     fn cx<'a>(
         req: &'a pingora_http::RequestHeader,
-        path_params: &'a HashMap<String, String>,
+        path_params: &'a HashMap<String, serde_json::Value>,
     ) -> ExtractionCtx<'a> {
         ExtractionCtx {
             req,
             path_params,
             user_ctx: None,
             peer_addr: None,
+            query_params: None,
+            body_json: None,
         }
     }
 
     fn cx_with_ctx<'a>(
         req: &'a pingora_http::RequestHeader,
-        path_params: &'a HashMap<String, String>,
+        path_params: &'a HashMap<String, serde_json::Value>,
         user_ctx: &'a serde_json::Map<String, serde_json::Value>,
     ) -> ExtractionCtx<'a> {
         ExtractionCtx {
@@ -409,6 +459,8 @@ mod tests {
             path_params,
             user_ctx: Some(user_ctx),
             peer_addr: None,
+            query_params: None,
+            body_json: None,
         }
     }
 
@@ -480,8 +532,20 @@ mod tests {
 
     #[test]
     fn rejects_unknown_namespace() {
-        let err = ContextRef::parse("${{body.name}}").unwrap_err();
+        let err = ContextRef::parse("${{unknown.name}}").unwrap_err();
         assert!(err.contains("unknown context namespace"), "got: {err}");
+    }
+
+    #[test]
+    fn parses_body_token() {
+        let r = ContextRef::parse("${{body.name}}").unwrap();
+        assert_eq!(r.source, Source::Body("name".to_string()));
+    }
+
+    #[test]
+    fn parses_path_dot_param_as_path_param() {
+        let r = ContextRef::parse("${{path.id}}").unwrap();
+        assert_eq!(r.source, Source::PathParam("id".to_string()));
     }
 
     #[test]
@@ -506,8 +570,9 @@ mod tests {
     }
 
     #[test]
-    fn rejects_path_with_sub_key() {
-        assert!(ContextRef::parse("${{path.extra}}").is_err());
+    fn path_with_sub_key_maps_to_path_param() {
+        let r = ContextRef::parse("${{path.extra}}").unwrap();
+        assert_eq!(r.source, Source::PathParam("extra".to_string()));
     }
 
     #[test]
@@ -553,7 +618,10 @@ mod tests {
     fn extracts_path_param() {
         let req = make_request("GET", "/users/42", vec![]);
         let mut params = HashMap::new();
-        params.insert("id".to_string(), "42".to_string());
+        params.insert(
+            "id".to_string(),
+            serde_json::Value::String("42".to_string()),
+        );
         let r = ContextRef::parse("${{path-param.id}}").unwrap();
         assert_eq!(r.extract(&cx(&req, &params)), Some("42".to_string()));
     }
@@ -653,6 +721,8 @@ mod tests {
             path_params: &params,
             user_ctx: None,
             peer_addr: Some(peer),
+            query_params: None,
+            body_json: None,
         };
         let r = ContextRef::parse("${{client-ip}}").unwrap();
         assert_eq!(r.extract(&ecx), Some("10.0.0.1".to_string()));
@@ -680,6 +750,98 @@ mod tests {
         let params = HashMap::new();
         let r = ContextRef::parse("${{method}}").unwrap();
         assert_eq!(r.extract(&cx(&req, &params)), Some("POST".to_string()));
+    }
+
+    #[test]
+    fn extracts_body_field() {
+        let req = make_request("POST", "/test", vec![]);
+        let params = HashMap::new();
+        let body = json!({ "name": "alice", "age": 30 });
+        let r = ContextRef::parse("${{body.name}}").unwrap();
+        let ecx = ExtractionCtx {
+            req: &req,
+            path_params: &params,
+            user_ctx: None,
+            peer_addr: None,
+            query_params: None,
+            body_json: Some(&body),
+        };
+        assert_eq!(r.extract(&ecx), Some("alice".to_string()));
+    }
+
+    #[test]
+    fn extracts_body_field_absent_when_no_body() {
+        let req = make_request("POST", "/test", vec![]);
+        let params = HashMap::new();
+        let r = ContextRef::parse("${{body.name}}").unwrap();
+        assert_eq!(r.extract(&cx(&req, &params)), None);
+    }
+
+    #[test]
+    fn extract_value_uses_typed_query_params() {
+        let req = make_request("GET", "/test?limit=10", vec![]);
+        let params = HashMap::new();
+        let mut qp = serde_json::Map::new();
+        qp.insert("limit".to_string(), json!(10u64));
+        let r = ContextRef::parse("${{query.limit}}").unwrap();
+        let ecx = ExtractionCtx {
+            req: &req,
+            path_params: &params,
+            user_ctx: None,
+            peer_addr: None,
+            query_params: Some(&qp),
+            body_json: None,
+        };
+        // Should return typed Number, not String
+        assert_eq!(r.extract_value(&ecx), Some(json!(10u64)));
+    }
+
+    #[test]
+    fn extract_value_falls_back_to_raw_query_when_no_typed_params() {
+        let req = make_request("GET", "/test?key=abc", vec![]);
+        let params = HashMap::new();
+        let r = ContextRef::parse("${{query.key}}").unwrap();
+        assert_eq!(
+            r.extract_value(&cx(&req, &params)),
+            Some(serde_json::Value::String("abc".to_string()))
+        );
+    }
+
+    #[test]
+    fn extract_value_returns_typed_body_field() {
+        let req = make_request("POST", "/test", vec![]);
+        let params = HashMap::new();
+        let body = json!({ "count": 42 });
+        let r = ContextRef::parse("${{body.count}}").unwrap();
+        let ecx = ExtractionCtx {
+            req: &req,
+            path_params: &params,
+            user_ctx: None,
+            peer_addr: None,
+            query_params: None,
+            body_json: Some(&body),
+        };
+        assert_eq!(r.extract_value(&ecx), Some(json!(42)));
+    }
+
+    #[test]
+    fn extract_value_returns_typed_path_param() {
+        // Typed integer path param — coercion done upstream, stored as Value::Number.
+        let req = make_request("GET", "/users/42", vec![]);
+        let mut params = HashMap::new();
+        params.insert("id".to_string(), serde_json::Value::Number(42.into()));
+        let r = ContextRef::parse("${{path.id}}").unwrap();
+        assert_eq!(r.extract_value(&cx(&req, &params)), Some(json!(42)));
+    }
+
+    #[test]
+    fn extract_value_path_param_string_for_unknown_type() {
+        // Untyped path param falls back to string storage — extract_value preserves it.
+        let req = make_request("GET", "/items/abc", vec![]);
+        let mut params = HashMap::new();
+        params.insert("slug".to_string(), serde_json::Value::String("abc".into()));
+        let r = ContextRef::parse("${{path.slug}}").unwrap();
+        assert_eq!(r.extract_value(&cx(&req, &params)), Some(json!("abc")));
     }
 
     // ── ContextTemplate::parse ────────────────────────────────────────────────
@@ -717,7 +879,13 @@ mod tests {
 
     #[test]
     fn template_rejects_unknown_namespace() {
-        assert!(ContextTemplate::parse("${{body.x}}").is_err());
+        assert!(ContextTemplate::parse("${{unknown.x}}").is_err());
+    }
+
+    #[test]
+    fn template_accepts_body_namespace() {
+        let t = ContextTemplate::parse("${{body.name}}").unwrap();
+        assert_eq!(t.template.parts().len(), 1);
     }
 
     #[test]

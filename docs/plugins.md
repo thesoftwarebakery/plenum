@@ -52,12 +52,15 @@ The `handle()` function receives:
 |-------|-------------|
 | `request.method` | HTTP method |
 | `request.path` | Full request path |
-| `request.params` | Path parameters |
-| `request.query` | Query string |
+| `request.params` | Path parameters (`Record<string, unknown>`), coerced to the declared schema type (`integer`, `boolean`, etc.) |
+| `request.query` | Raw query string (preserved for backward compatibility) |
+| `request.queryParams` | Parsed query parameters (`Record<string, unknown>`), typed per the OpenAPI spec |
 | `request.headers` | Request headers |
 | `body` | Request body (for POST/PUT/PATCH) |
 | `config` | Value from `x-plenum-backend` (per-operation config) |
 | `operation` | OpenAPI operation metadata |
+
+`queryParams` is parsed using the parameter definitions from the OpenAPI spec, applying the correct style, explode, and type coercion rules. Undeclared parameters are included as raw strings. Use `queryParams` instead of manually parsing `query` whenever you need typed values.
 
 ## Plugin output
 
@@ -84,10 +87,35 @@ actions:
   - target: "$.paths['/users/{id}'].get"
     update:
       x-plenum-backend:
-        query: "SELECT * FROM users WHERE id = ${{path.id}}"
+        query: "SELECT * FROM users WHERE id = $1"
+        params:
+          - "${{path.id}}"
 ```
 
-The plugin receives this as `input.config`.
+The plugin receives this as `input.config`. The gateway resolves `${{...}}` tokens in `params` at request time and passes the resolved array as `input.config.params`. The built-in database plugins feed this array directly into native parameterised queries — never string-interpolating user input into SQL.
+
+### Parameterised queries
+
+Always put request-derived values in `params`, not inline in the query string. The gateway resolves each `${{...}}` token before calling the plugin:
+
+```yaml
+x-plenum-backend:
+  query: "SELECT id, name FROM users WHERE role = $1 AND active = $2"
+  params:
+    - "${{query.role}}"
+    - "${{query.active}}"
+```
+
+Available token namespaces in `params`:
+
+| Token | Resolves to |
+|-------|-------------|
+| `${{path.NAME}}` | Path parameter value |
+| `${{query.NAME}}` | Parsed query parameter value (from `queryParams`) |
+| `${{header.NAME}}` | Request header value |
+| `${{body.NAME}}` | Top-level field from the JSON request body |
+
+MySQL uses `?` placeholders; PostgreSQL uses `$1`, `$2`, …
 
 ## Permissions and timeouts
 

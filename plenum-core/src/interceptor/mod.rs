@@ -13,8 +13,16 @@ pub struct RequestInput {
     pub route: String,
     pub path: String,
     pub headers: HashMap<String, String>,
+    /// Raw query string. Preserved for backward compatibility.
     pub query: String,
-    pub params: HashMap<String, String>,
+    /// Query parameters parsed according to the operation's OpenAPI parameter definitions.
+    /// Scalar values are type-coerced; arrays and objects follow the OAS style/explode rules.
+    /// Parameters not declared in the spec are included as raw strings.
+    #[serde(rename = "queryParams")]
+    #[ts(rename = "queryParams", type = "Record<string, unknown>")]
+    pub query_params: serde_json::Value,
+    #[ts(type = "Record<string, unknown>")]
+    pub params: HashMap<String, serde_json::Value>,
     #[ts(type = "unknown")]
     pub operation: serde_json::Value,
     /// Gateway-populated rate limit state. Read-only for interceptors.
@@ -231,18 +239,23 @@ pub fn request_input_from_parts(
     method: &http::Method,
     uri: &http::Uri,
     headers: &http::HeaderMap,
-    params: HashMap<String, String>,
+    params: HashMap<String, serde_json::Value>,
     operation: serde_json::Value,
     route: &str,
     rate_limits: Option<RateLimitState>,
     ctx: serde_json::Value,
 ) -> RequestInput {
+    let query_str = uri.query().unwrap_or("");
+    let query_param_defs = oas_query::extract_query_params(&operation);
+    let query_params =
+        serde_json::Value::Object(oas_query::parse_query_params(query_str, &query_param_defs));
     RequestInput {
         method: method.to_string(),
         route: route.to_string(),
         path: uri.path().to_string(),
         headers: header_map_to_hash_map(headers),
-        query: uri.query().unwrap_or("").to_string(),
+        query: query_str.to_string(),
+        query_params,
         params,
         operation,
         rate_limits,
@@ -462,7 +475,8 @@ mod tests {
                 ("authorization".into(), "Bearer tok".into()),
             ]),
             query: "page=1".into(),
-            params: HashMap::from([("id".into(), "123".into())]),
+            query_params: serde_json::Value::Object(serde_json::Map::new()),
+            params: HashMap::from([("id".into(), serde_json::Value::String("123".into()))]),
             operation: serde_json::Value::Null,
             rate_limits: None,
             ctx: serde_json::Value::Null,
@@ -525,7 +539,7 @@ mod tests {
         let uri: http::Uri = "https://example.com/items/42".parse().unwrap();
         let method = http::Method::GET;
         let headers = http::HeaderMap::new();
-        let params = HashMap::from([("id".to_string(), "42".to_string())]);
+        let params = HashMap::from([("id".to_string(), serde_json::Value::Number(42.into()))]);
 
         let input = request_input_from_parts(
             &method,
@@ -537,7 +551,7 @@ mod tests {
             None,
             serde_json::Value::Null,
         );
-        assert_eq!(input.params.get("id").unwrap(), "42");
+        assert_eq!(input.params.get("id").unwrap().as_i64().unwrap(), 42);
     }
 
     #[test]

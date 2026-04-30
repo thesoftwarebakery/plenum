@@ -10,6 +10,7 @@ use crate::path_match::{OperationSchemas, PluginHandle};
 use crate::proxy_utils::{
     call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_ctx, merge_options,
 };
+use crate::request_context::{ExtractionCtx, config_value::ConfigValue};
 use pingora_proxy::Session;
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
@@ -24,9 +25,17 @@ pub struct PluginRequest {
     /// The matched OpenAPI path template, e.g. `/users/{id}`.
     pub route: String,
     pub path: String,
+    /// Raw query string. Preserved for backward compatibility.
     pub query: String,
+    /// Query parameters parsed according to the operation's OpenAPI parameter definitions.
+    /// Scalar values are type-coerced; arrays and objects follow the OAS style/explode rules.
+    /// Parameters not declared in the spec are included as raw strings.
+    #[serde(rename = "queryParams")]
+    #[ts(rename = "queryParams", type = "Record<string, unknown>")]
+    pub query_params: serde_json::Value,
     pub headers: HashMap<String, String>,
-    pub params: HashMap<String, String>,
+    #[ts(type = "Record<string, unknown>")]
+    pub params: HashMap<String, serde_json::Value>,
 }
 
 /// Input passed to a plugin's `handle()` function.
@@ -82,7 +91,7 @@ pub(crate) async fn dispatch(
     ctx: &mut GatewayCtx,
     op: &OperationSchemas,
     plugin: &PluginHandle,
-    backend_config: Option<serde_json::Value>,
+    backend_config: Option<ConfigValue>,
 ) -> pingora_core::Result<bool> {
     let route = ctx
         .matched_route
@@ -247,16 +256,44 @@ pub(crate) async fn dispatch(
     }
 
     // Step B: call plugin handle()
+    let plugin_query_str = session.req_header().uri.query().unwrap_or("");
+    let plugin_query_defs = oas_query::extract_query_params(&op.operation_meta);
+    let plugin_query_params = serde_json::Value::Object(oas_query::parse_query_params(
+        plugin_query_str,
+        &plugin_query_defs,
+    ));
+
+    // Resolve ${{...}} tokens in backend config using the canonical
+    // request_context machinery — compiled at boot, cheap at request time.
+    let body_json: Option<serde_json::Value> = serde_json::from_slice(&final_buf).ok();
+    let cx = ExtractionCtx {
+        req: session.req_header(),
+        path_params: &ctx.path_params,
+        user_ctx: Some(&ctx.user_ctx),
+        peer_addr: None,
+        query_params: if let serde_json::Value::Object(ref m) = plugin_query_params {
+            Some(m)
+        } else {
+            None
+        },
+        body_json: body_json.as_ref(),
+    };
+    let resolved_config = match &backend_config {
+        Some(config) => config.resolve(&cx),
+        None => serde_json::Value::Null,
+    };
+
     let plugin_input = PluginInput {
         request: PluginRequest {
             method: session.req_header().method.to_string(),
             route: route.clone(),
             path: session.req_header().uri.path().to_string(),
-            query: session.req_header().uri.query().unwrap_or("").to_string(),
+            query: plugin_query_str.to_string(),
+            query_params: plugin_query_params,
             headers: header_map_to_hash_map(&request_headers),
             params: ctx.path_params.clone(),
         },
-        config: backend_config.unwrap_or(serde_json::Value::Null),
+        config: resolved_config,
         operation: op.operation_meta.clone(),
         ctx: serde_json::Value::Object(ctx.user_ctx.clone()),
     };

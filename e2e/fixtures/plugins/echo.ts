@@ -15,6 +15,7 @@ export function handle(input: PluginInput): PluginOutput & { body?: unknown } {
       path: input.request.path,
       params: input.request.params,
       query: input.request.query,
+      queryParams: input.request.queryParams,
       headers: input.request.headers,
       config: input.config,
       requestBody: input.body,

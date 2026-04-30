@@ -20,7 +20,7 @@ pub struct GatewayCtx {
     pub(crate) response_body_buf: BytesMut,
     pub(crate) upstream_response_status: Option<http::StatusCode>,
     pub(crate) upstream_response_content_type: Option<String>,
-    pub(crate) path_params: HashMap<String, String>,
+    pub(crate) path_params: HashMap<String, serde_json::Value>,
     /// Timestamp when the request started processing (set after route matching).
     /// Used to compute remaining time budget for overall request timeout.
     pub(crate) request_start: Option<Instant>,

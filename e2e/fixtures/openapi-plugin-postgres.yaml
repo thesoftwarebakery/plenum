@@ -7,6 +7,11 @@ paths:
     get:
       operationId: listUsers
       summary: List all users
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
       responses:
         "200":
           description: List of users
