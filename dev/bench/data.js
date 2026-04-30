@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777561428509,
+  "lastUpdate": 1777561594161,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -2520,6 +2520,78 @@ window.BENCHMARK_DATA = {
             "value": 3.187,
             "unit": "ms",
             "extra": "n=10528"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "fb8f19f36dd367926e105257d3e7e3ad18b33338",
+          "message": "Merge pull request #153 from thesoftwarebakery/worktree-issue-149-tls-file-descriptors\n\nfeat!: file descriptor accessors + TLS field rename",
+          "timestamp": "2026-04-30T16:00:58+01:00",
+          "tree_id": "bd6a31ff43671e3f824f23366959dcce94bc49da",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/fb8f19f36dd367926e105257d3e7e3ad18b33338"
+        },
+        "date": 1777561593243,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.867,
+            "unit": "ms",
+            "extra": "n=11540"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 3.46,
+            "unit": "ms",
+            "extra": "n=11540"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.979,
+            "unit": "ms",
+            "extra": "n=10219"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 3.407,
+            "unit": "ms",
+            "extra": "n=10219"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.405,
+            "unit": "ms",
+            "extra": "n=7120"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 3.789,
+            "unit": "ms",
+            "extra": "n=7120"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.229,
+            "unit": "ms",
+            "extra": "n=8134"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.726,
+            "unit": "ms",
+            "extra": "n=8134"
           }
         ]
       }
