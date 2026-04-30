@@ -7,6 +7,7 @@ pub use upstreams::*;
 
 mod cors;
 mod interceptor;
+pub mod interpolation;
 mod parser;
 pub mod rate_limit;
 pub mod server;

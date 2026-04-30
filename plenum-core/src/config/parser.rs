@@ -2,15 +2,18 @@ use oas3::Spec;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::error::Error;
 use std::fs::{canonicalize, read_to_string};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+use super::interpolation;
 
 #[derive(Debug)]
 pub struct Config {
     pub spec: Spec,
     raw_doc: Value,
+    files: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,14 +34,18 @@ impl Config {
         self.resolve(value)
     }
 
-    /// Deserialize a raw extension `Value` with `$ref` resolution.
+    /// Deserialize a raw extension `Value` with `$ref` resolution and
+    /// boot-time interpolation (`${{ env.* }}`, `${{ file.* }}`).
     /// Use this for operation-level reads where the value is already in hand.
     pub fn resolve<T: DeserializeOwned>(&self, value: &Value) -> Result<T, Box<dyn Error>> {
-        if let Ok(ext_ref) = serde_json::from_value::<ExtensionRef>(value.clone()) {
-            let resolved = self.follow_ref(&ext_ref.path)?;
-            return self.resolve(resolved);
-        }
-        Ok(serde_json::from_value(value.clone())?)
+        let value = if let Ok(ext_ref) = serde_json::from_value::<ExtensionRef>(value.clone()) {
+            self.follow_ref(&ext_ref.path)?.clone()
+        } else {
+            value.clone()
+        };
+        let interpolated = interpolation::interpolate_value(value, &self.files)
+            .map_err(|e| -> Box<dyn Error> { e.into() })?;
+        Ok(serde_json::from_value(interpolated)?)
     }
 
     fn follow_ref(&self, path: &str) -> Result<&Value, Box<dyn Error>> {
@@ -50,7 +57,11 @@ impl Config {
 
     pub fn from_value(doc: serde_json::Value) -> Result<Self, Box<dyn Error>> {
         let spec: Spec = serde_json::from_value(doc.clone())?;
-        Ok(Config { spec, raw_doc: doc })
+        Ok(Config {
+            spec,
+            raw_doc: doc,
+            files: HashMap::new(),
+        })
     }
 
     pub fn parse(
@@ -68,8 +79,61 @@ impl Config {
             )?)?)?;
             oapi_overlay::apply_overlay(&mut doc, &overlay_doc)?
         }
+
+        let files = Self::parse_files(&doc, config_base)?;
+
         let spec: Spec = serde_json::from_value(doc.clone())?;
-        Ok(Config { spec, raw_doc: doc })
+        Ok(Config {
+            spec,
+            raw_doc: doc,
+            files,
+        })
+    }
+
+    /// Parse the `x-plenum-files` root extension into a map of key → file
+    /// contents. Relative paths are resolved against `config_base`. Each
+    /// file is read eagerly so that missing files are caught at startup.
+    fn parse_files(
+        doc: &Value,
+        config_base: &str,
+    ) -> Result<HashMap<String, String>, Box<dyn Error>> {
+        // The oas3 crate strips the `x-` prefix from extension keys, but
+        // we're reading from the raw doc here, so use the full key.
+        let Some(files_value) = doc.get("x-plenum-files") else {
+            return Ok(HashMap::new());
+        };
+
+        let entries = files_value
+            .as_object()
+            .ok_or("x-plenum-files must be an object mapping names to file paths")?;
+
+        let base = Path::new(config_base);
+        let mut files = HashMap::with_capacity(entries.len());
+
+        for (key, path_value) in entries {
+            let file_path = path_value.as_str().ok_or_else(|| {
+                format!("x-plenum-files: value for '{}' must be a string path", key)
+            })?;
+
+            let resolved = if Path::new(file_path).is_absolute() {
+                PathBuf::from(file_path)
+            } else {
+                base.join(file_path)
+            };
+
+            let contents = std::fs::read_to_string(&resolved).map_err(|e| {
+                format!(
+                    "x-plenum-files: '{}' -> '{}': {}",
+                    key,
+                    resolved.display(),
+                    e
+                )
+            })?;
+
+            files.insert(key.clone(), contents.trim_end_matches('\n').to_string());
+        }
+
+        Ok(files)
     }
 }
 
@@ -79,8 +143,7 @@ mod tests {
     use serde_json::json;
 
     fn make_config(doc: Value) -> Config {
-        let spec: Spec = serde_json::from_value(doc.clone()).unwrap();
-        Config { spec, raw_doc: doc }
+        Config::from_value(doc).unwrap()
     }
 
     #[derive(Debug, Deserialize, PartialEq)]
@@ -239,5 +302,57 @@ mod tests {
         let val = json!(5000);
         let timeout: u64 = config.resolve(&val).unwrap();
         assert_eq!(timeout, 5000);
+    }
+
+    #[test]
+    fn resolve_applies_env_interpolation() {
+        unsafe { std::env::set_var("PLENUM_TEST_PARSER_ADDR", "10.0.0.1") };
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        });
+        let config = make_config(doc);
+
+        let val = json!({ "address": "${{ env.PLENUM_TEST_PARSER_ADDR }}", "port": 443 });
+        let upstream: TestUpstream = config.resolve(&val).unwrap();
+        assert_eq!(upstream.address, "10.0.0.1");
+        assert_eq!(upstream.port, 443);
+    }
+
+    #[test]
+    fn resolve_applies_file_interpolation() {
+        let mut config = make_config(json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        }));
+        config
+            .files
+            .insert("HOST".to_string(), "db.internal".to_string());
+
+        let val = json!({ "address": "${{ file.HOST }}", "port": 5432 });
+        let upstream: TestUpstream = config.resolve(&val).unwrap();
+        assert_eq!(upstream.address, "db.internal");
+    }
+
+    #[test]
+    fn resolve_errors_on_missing_env_var() {
+        unsafe { std::env::remove_var("PLENUM_TEST_PARSER_MISSING") };
+        let config = make_config(json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        }));
+
+        let val = json!({ "address": "${{ env.PLENUM_TEST_PARSER_MISSING }}", "port": 80 });
+        let result = config.resolve::<TestUpstream>(&val);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("PLENUM_TEST_PARSER_MISSING")
+        );
     }
 }

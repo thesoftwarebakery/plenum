@@ -31,6 +31,8 @@
 
 use std::collections::HashMap;
 
+use crate::config::interpolation::{Template, TemplatePart, Token};
+
 // ── ExtractionCtx ────────────────────────────────────────────────────────────
 
 /// All per-request data that may be needed to resolve a [`ContextRef`].
@@ -73,29 +75,45 @@ enum Source {
 }
 
 impl ContextRef {
-    /// Parse a `${{namespace.key}}` token string.
+    /// Parse a `${{namespace.key}}` token string using the shared
+    /// [`Template`] parser, then validate that it references a known
+    /// runtime namespace.
     ///
     /// Returns an error if the token is malformed or references an unknown namespace.
     pub fn parse(token: &str) -> Result<Self, String> {
-        let inner = token
-            .strip_prefix("${{")
-            .and_then(|s| s.strip_suffix("}}"))
-            .ok_or_else(|| {
-                format!("invalid context token '{token}': must be wrapped in ${{{{...}}}}")
-            })?;
+        let template = Template::parse(token)?;
+        let parts = template.parts();
 
-        let inner = inner.trim();
-        if inner.is_empty() {
-            return Err("empty context token".to_string());
+        // Must be exactly one expression, no literals.
+        if parts.len() != 1 {
+            return Err(format!(
+                "invalid context token '{token}': must be a single ${{{{...}}}} expression"
+            ));
         }
 
-        // Split on first '.' only — the key portion may itself contain dots (e.g. header names).
-        let (namespace, key) = match inner.split_once('.') {
-            Some((ns, k)) => (ns, Some(k)),
-            None => (inner, None),
+        let parsed_token = match &parts[0] {
+            TemplatePart::Expr(t) => t,
+            TemplatePart::Literal(_) => {
+                return Err(format!(
+                    "invalid context token '{token}': must be wrapped in ${{{{...}}}}"
+                ));
+            }
         };
 
-        match namespace {
+        Self::from_token(parsed_token)
+    }
+
+    /// Convert a parsed [`Token`] into a [`ContextRef`] by validating
+    /// the namespace and key. This is used by both [`ContextRef::parse`]
+    /// and [`ContextTemplate::parse`].
+    fn from_token(token: &Token) -> Result<Self, String> {
+        let key = if token.key.is_empty() {
+            None
+        } else {
+            Some(token.key.as_str())
+        };
+
+        match token.namespace.as_str() {
             "header" => {
                 let k = key.ok_or("${{header.name}} requires a header name")?;
                 if k.is_empty() {
@@ -244,60 +262,42 @@ impl ContextRef {
 /// ```
 #[derive(Debug, Clone)]
 pub struct ContextTemplate {
-    /// Original template string, preserved for display and error messages.
-    original: String,
-    parts: Vec<TemplatePart>,
-}
-
-#[derive(Debug, Clone)]
-enum TemplatePart {
-    Literal(String),
-    Expr(ContextRef),
+    /// Shared parsed template — handles the `${{ }}` syntax.
+    template: Template,
+    /// Pre-validated runtime context refs for each expression part.
+    refs: Vec<Option<ContextRef>>,
 }
 
 impl ContextTemplate {
     /// Parse a template string into a [`ContextTemplate`].
     ///
+    /// Uses the shared [`Template`] parser for `${{ }}` syntax, then
+    /// validates that all expression tokens reference known runtime
+    /// namespaces.
+    ///
     /// Returns an error if the string contains no `${{…}}` expressions, any
     /// expression is malformed, or any namespace is unknown.
-    pub fn parse(template: &str) -> Result<Self, String> {
-        let mut parts: Vec<TemplatePart> = Vec::new();
-        let mut rest = template;
+    pub fn parse(template_str: &str) -> Result<Self, String> {
+        let template = Template::parse(template_str)?;
 
-        loop {
-            match rest.find("${{") {
-                None => {
-                    if !rest.is_empty() {
-                        parts.push(TemplatePart::Literal(rest.to_string()));
-                    }
-                    break;
-                }
-                Some(start) => {
-                    if start > 0 {
-                        parts.push(TemplatePart::Literal(rest[..start].to_string()));
-                    }
-                    rest = &rest[start..]; // keep "${{" for ContextRef::parse
-                    let end = rest
-                        .find("}}")
-                        .ok_or_else(|| format!("unclosed '${{{{' in template: {template}"))?;
-                    let token = &rest[..end + 2]; // "${{...}}"
-                    parts.push(TemplatePart::Expr(ContextRef::parse(token)?));
-                    rest = &rest[end + 2..];
+        if !template.has_expressions() {
+            return Err(format!(
+                "template '{template_str}' contains no ${{{{...}}}} expressions"
+            ));
+        }
+
+        // Validate all expressions reference known runtime namespaces.
+        let mut refs = Vec::new();
+        for part in template.parts() {
+            match part {
+                TemplatePart::Literal(_) => refs.push(None),
+                TemplatePart::Expr(token) => {
+                    refs.push(Some(ContextRef::from_token(token)?));
                 }
             }
         }
 
-        let has_expr = parts.iter().any(|p| matches!(p, TemplatePart::Expr(_)));
-        if !has_expr {
-            return Err(format!(
-                "template '{template}' contains no ${{{{...}}}} expressions"
-            ));
-        }
-
-        Ok(Self {
-            original: template.to_string(),
-            parts,
-        })
+        Ok(Self { template, refs })
     }
 
     /// Resolve all expressions in the template against the request context.
@@ -307,10 +307,12 @@ impl ContextTemplate {
     /// unresolvable and the caller should skip rate limiting / hashing.
     pub fn resolve(&self, cx: &ExtractionCtx<'_>) -> Option<String> {
         let mut result = String::new();
-        for part in &self.parts {
+        for (part, ctx_ref) in self.template.parts().iter().zip(self.refs.iter()) {
             match part {
                 TemplatePart::Literal(s) => result.push_str(s),
-                TemplatePart::Expr(ctx_ref) => result.push_str(&ctx_ref.extract(cx)?),
+                TemplatePart::Expr(_) => {
+                    result.push_str(&ctx_ref.as_ref()?.extract(cx)?);
+                }
             }
         }
         if result.is_empty() {
@@ -322,13 +324,13 @@ impl ContextTemplate {
 
     /// Returns the original template string as written in configuration.
     pub fn as_str(&self) -> &str {
-        &self.original
+        self.template.as_str()
     }
 }
 
 impl std::fmt::Display for ContextTemplate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.original)
+        f.write_str(self.template.as_str())
     }
 }
 
@@ -685,26 +687,26 @@ mod tests {
     #[test]
     fn template_parses_single_expr() {
         let t = ContextTemplate::parse("${{header.x-api-key}}").unwrap();
-        assert_eq!(t.parts.len(), 1);
-        assert!(matches!(&t.parts[0], TemplatePart::Expr(_)));
+        assert_eq!(t.template.parts().len(), 1);
+        assert!(matches!(&t.template.parts()[0], TemplatePart::Expr(_)));
     }
 
     #[test]
     fn template_parses_composite() {
         let t = ContextTemplate::parse("${{header.x-tenant}}-${{ctx.userId}}").unwrap();
-        assert_eq!(t.parts.len(), 3); // Expr, Literal("-"), Expr
-        assert!(matches!(&t.parts[0], TemplatePart::Expr(_)));
-        assert!(matches!(&t.parts[1], TemplatePart::Literal(s) if s == "-"));
-        assert!(matches!(&t.parts[2], TemplatePart::Expr(_)));
+        assert_eq!(t.template.parts().len(), 3); // Expr, Literal("-"), Expr
+        assert!(matches!(&t.template.parts()[0], TemplatePart::Expr(_)));
+        assert!(matches!(&t.template.parts()[1], TemplatePart::Literal(s) if s == "-"));
+        assert!(matches!(&t.template.parts()[2], TemplatePart::Expr(_)));
     }
 
     #[test]
     fn template_parses_with_surrounding_literals() {
         let t = ContextTemplate::parse("tenant:${{ctx.tenantId}}:v1").unwrap();
-        assert_eq!(t.parts.len(), 3);
-        assert!(matches!(&t.parts[0], TemplatePart::Literal(s) if s == "tenant:"));
-        assert!(matches!(&t.parts[1], TemplatePart::Expr(_)));
-        assert!(matches!(&t.parts[2], TemplatePart::Literal(s) if s == ":v1"));
+        assert_eq!(t.template.parts().len(), 3);
+        assert!(matches!(&t.template.parts()[0], TemplatePart::Literal(s) if s == "tenant:"));
+        assert!(matches!(&t.template.parts()[1], TemplatePart::Expr(_)));
+        assert!(matches!(&t.template.parts()[2], TemplatePart::Literal(s) if s == ":v1"));
     }
 
     #[test]

@@ -27,7 +27,6 @@ bytes = "1"
 plenum-js-runtime = { path = "../plenum-js-runtime" }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 tokio-util = "0.7"
-shellexpand = "3"
 parking_lot = "0.12"
 form_urlencoded = "1"
 
