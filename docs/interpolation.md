@@ -9,7 +9,8 @@ All interpolation uses the same `${{ }}` template syntax:
 | Expression | Description |
 |------------|-------------|
 | `${{ env.VAR }}` | Value of environment variable `VAR` |
-| `${{ file.NAME }}` | Contents of a file declared in `x-plenum-files` |
+| `${{ file.NAME.content }}` | Contents of a file declared in `x-plenum-files` |
+| `${{ file.NAME.path }}` | Resolved absolute path to the file |
 
 Whitespace inside the braces is optional — `${{env.VAR}}` and `${{ env.VAR }}` are equivalent.
 
@@ -39,7 +40,7 @@ environment:
 
 ## File interpolation
 
-Inject file contents into config values using `${{ file.NAME }}`. First, declare your files in `x-plenum-files` at the spec root:
+Inject file contents or paths into config values using `${{ file.NAME.accessor }}`. First, declare your files in `x-plenum-files` at the spec root:
 
 ```yaml
 x-plenum-files:
@@ -55,10 +56,34 @@ x-plenum-interceptor:
     hook: on_request_headers
     function: checkJwt
     options:
-      secret: "${{ file.jwt-secret }}"
+      secret: "${{ file.jwt-secret.content }}"
 ```
 
 Files are read at startup. Relative paths resolve against `--config-path`. Missing files cause a startup error.
+
+### File accessors
+
+Each file entry is a descriptor with two accessors:
+
+| Accessor | Description |
+|----------|-------------|
+| `${{ file.NAME.content }}` | File contents |
+| `${{ file.NAME.path }}` | Resolved absolute path to the file |
+
+An accessor is always required — bare `${{ file.NAME }}` is an error.
+
+The `.path` accessor is useful for fields that expect a filesystem path rather than inline content — for example, TLS certificate and key paths:
+
+```yaml
+x-plenum-files:
+  gateway-cert: /certs/gateway.crt
+  gateway-key: /certs/gateway.key
+
+x-plenum-config:
+  tls:
+    cert: "${{ file.gateway-cert.path }}"
+    key: "${{ file.gateway-key.path }}"
+```
 
 ### Declaring files via overlay
 
@@ -78,7 +103,7 @@ actions:
 
 Interpolation applies to **all string values** in any `x-plenum-*` extension — universally, with no exceptions:
 
-- Upstream addresses, ports, TLS paths
+- Upstream addresses, ports, TLS cert/key/CA paths
 - Interceptor module paths and options
 - Plugin options and permissions
 - CORS origins and headers
@@ -92,7 +117,7 @@ The `${{ }}` syntax is also used for runtime context resolution in certain field
 | Namespace | Resolved at | Example |
 |-----------|------------|---------|
 | `env` | Boot time | `${{ env.API_KEY }}` |
-| `file` | Boot time | `${{ file.secret }}` |
+| `file` | Boot time | `${{ file.secret.content }}`, `${{ file.cert.path }}` |
 | `header` | Request time | `${{ header.x-user-id }}` |
 | `query` | Request time | `${{ query.page }}` |
 | `path` | Request time | `${{ path.id }}` |

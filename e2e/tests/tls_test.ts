@@ -201,7 +201,7 @@ describe('tls-verify: false — dev mode bypass', () => {
     certs = getTestCerts();
     network = await new Network().start();
     upstream = await startHttpsUpstream({ network, certs });
-    // No ca_file: gateway uses system trust store (won't trust test CA).
+    // No ca: gateway uses system trust store (won't trust test CA).
     // tls-verify: false overrides this and allows the connection anyway.
     gateway = await startGateway({
       network,
@@ -245,7 +245,7 @@ describe('HTTPS upstream with untrusted cert → 502', () => {
     certs = getTestCerts();
     network = await new Network().start();
     upstream = await startHttpsUpstream({ network, certs });
-    // No ca_file: gateway uses system trust store which does NOT contain
+    // No ca: gateway uses system trust store which does NOT contain
     // our test CA, so the upstream cert will be rejected.
     gateway = await startGateway({
       network,

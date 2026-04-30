@@ -8,12 +8,13 @@ use std::fs::{canonicalize, read_to_string};
 use std::path::{Path, PathBuf};
 
 use super::interpolation;
+use super::interpolation::FileEntry;
 
 #[derive(Debug)]
 pub struct Config {
     pub spec: Spec,
     raw_doc: Value,
-    files: HashMap<String, String>,
+    files: HashMap<String, FileEntry>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,13 +91,14 @@ impl Config {
         })
     }
 
-    /// Parse the `x-plenum-files` root extension into a map of key → file
-    /// contents. Relative paths are resolved against `config_base`. Each
-    /// file is read eagerly so that missing files are caught at startup.
+    /// Parse the `x-plenum-files` root extension into a map of key →
+    /// [`FileEntry`]. Each entry stores both the resolved absolute path and
+    /// the file contents. Relative paths are resolved against `config_base`.
+    /// Each file is read eagerly so that missing files are caught at startup.
     fn parse_files(
         doc: &Value,
         config_base: &str,
-    ) -> Result<HashMap<String, String>, Box<dyn Error>> {
+    ) -> Result<HashMap<String, FileEntry>, Box<dyn Error>> {
         // The oas3 crate strips the `x-` prefix from extension keys, but
         // we're reading from the raw doc here, so use the full key.
         let Some(files_value) = doc.get("x-plenum-files") else {
@@ -130,7 +132,15 @@ impl Config {
                 )
             })?;
 
-            files.insert(key.clone(), contents.trim_end_matches('\n').to_string());
+            let abs_path = resolved.to_string_lossy().into_owned();
+
+            files.insert(
+                key.clone(),
+                FileEntry {
+                    path: abs_path,
+                    content: contents.trim_end_matches('\n').to_string(),
+                },
+            );
         }
 
         Ok(files)
@@ -327,11 +337,15 @@ mod tests {
             "info": { "title": "Test", "version": "1.0" },
             "paths": {}
         }));
-        config
-            .files
-            .insert("HOST".to_string(), "db.internal".to_string());
+        config.files.insert(
+            "HOST".to_string(),
+            interpolation::FileEntry {
+                path: "/etc/hosts/db".to_string(),
+                content: "db.internal".to_string(),
+            },
+        );
 
-        let val = json!({ "address": "${{ file.HOST }}", "port": 5432 });
+        let val = json!({ "address": "${{ file.HOST.content }}", "port": 5432 });
         let upstream: TestUpstream = config.resolve(&val).unwrap();
         assert_eq!(upstream.address, "db.internal");
     }
