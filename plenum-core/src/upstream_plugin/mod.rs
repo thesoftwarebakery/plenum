@@ -10,6 +10,7 @@ use crate::path_match::{OperationSchemas, PluginHandle};
 use crate::proxy_utils::{
     call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_ctx, merge_options,
 };
+use crate::request_context::{ExtractionCtx, config_value::ConfigValue};
 use pingora_proxy::Session;
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
@@ -80,105 +81,6 @@ pub struct JsPluginInput {
     body_encoding: Option<String>,
 }
 
-/// Resolve `${{...}}` tokens in backend config values at request time.
-///
-/// Walks the entire config tree recursively, replacing any string that is exactly
-/// a single `${{namespace.key}}` expression with its resolved value.
-///
-/// Supported namespaces:
-/// - `${{query.key}}` — typed value from the parsed query params
-/// - `${{path.key}}` — path parameter value (string)
-/// - `${{header.name}}` — request header (case-insensitive, string)
-/// - `${{body.field}}` — top-level field from the JSON request body
-///
-/// Strings that contain tokens mixed with literal text (e.g. `"prefix-${{path.id}}"`)
-/// are not resolved and passed through unchanged — only bare single-token expressions
-/// are replaced. If a token resolves to nothing, the value becomes `null`.
-fn resolve_config_tokens(
-    value: serde_json::Value,
-    path_params: &HashMap<String, String>,
-    headers: &http::HeaderMap,
-    body_json: Option<&serde_json::Value>,
-    query_params: &serde_json::Value,
-) -> serde_json::Value {
-    match value {
-        serde_json::Value::String(s) => {
-            // Only resolve strings that are a bare single ${{...}} expression.
-            if let Some(resolved) =
-                try_resolve_token(&s, path_params, headers, body_json, query_params)
-            {
-                resolved
-            } else {
-                serde_json::Value::String(s)
-            }
-        }
-        serde_json::Value::Array(arr) => serde_json::Value::Array(
-            arr.into_iter()
-                .map(|v| resolve_config_tokens(v, path_params, headers, body_json, query_params))
-                .collect(),
-        ),
-        serde_json::Value::Object(obj) => serde_json::Value::Object(
-            obj.into_iter()
-                .map(|(k, v)| {
-                    (
-                        k,
-                        resolve_config_tokens(v, path_params, headers, body_json, query_params),
-                    )
-                })
-                .collect(),
-        ),
-        other => other,
-    }
-}
-
-/// Try to resolve a string as a bare `${{namespace.key}}` token.
-/// Returns `None` if the string isn't a single-token expression.
-fn try_resolve_token(
-    s: &str,
-    path_params: &HashMap<String, String>,
-    headers: &http::HeaderMap,
-    body_json: Option<&serde_json::Value>,
-    query_params: &serde_json::Value,
-) -> Option<serde_json::Value> {
-    // Must start with ${{ and end with }}
-    let inner = s.strip_prefix("${{")?.strip_suffix("}}")?;
-    let inner = inner.trim();
-
-    // Must be namespace.key (no nested dots for now)
-    let (namespace, key) = inner.split_once('.')?;
-    let namespace = namespace.trim();
-    let key = key.trim();
-
-    match namespace {
-        "query" => Some(
-            query_params
-                .get(key)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-        ),
-        "path" => Some(
-            path_params
-                .get(key)
-                .map(|v| serde_json::Value::String(v.clone()))
-                .unwrap_or(serde_json::Value::Null),
-        ),
-        "header" => Some(
-            headers
-                .get(key.to_lowercase().as_str())
-                .and_then(|v| v.to_str().ok())
-                .map(|v| serde_json::Value::String(v.to_string()))
-                .unwrap_or(serde_json::Value::Null),
-        ),
-        "body" => Some(
-            body_json
-                .and_then(|b| b.get(key))
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-        ),
-        _ => None,
-    }
-}
-
 /// Handle a plugin route request end-to-end:
 /// reads the request body, runs interceptors, calls the plugin handle(), runs response
 /// interceptors, and writes the response to the downstream session.
@@ -188,7 +90,7 @@ pub(crate) async fn dispatch(
     ctx: &mut GatewayCtx,
     op: &OperationSchemas,
     plugin: &PluginHandle,
-    backend_config: Option<serde_json::Value>,
+    backend_config: Option<ConfigValue>,
 ) -> pingora_core::Result<bool> {
     let route = ctx
         .matched_route
@@ -360,17 +262,23 @@ pub(crate) async fn dispatch(
         &plugin_query_defs,
     ));
 
-    // Resolve ${{...}} tokens in backend config at the gateway level.
-    // The body is parsed as JSON so body.* tokens can be resolved.
+    // Resolve ${{...}} tokens in backend config using the canonical
+    // request_context machinery — compiled at boot, cheap at request time.
     let body_json: Option<serde_json::Value> = serde_json::from_slice(&final_buf).ok();
-    let resolved_config = match backend_config {
-        Some(config) => resolve_config_tokens(
-            config,
-            &ctx.path_params,
-            &session.req_header().headers,
-            body_json.as_ref(),
-            &plugin_query_params,
-        ),
+    let cx = ExtractionCtx {
+        req: session.req_header(),
+        path_params: &ctx.path_params,
+        user_ctx: Some(&ctx.user_ctx),
+        peer_addr: None,
+        query_params: if let serde_json::Value::Object(ref m) = plugin_query_params {
+            Some(m)
+        } else {
+            None
+        },
+        body_json: body_json.as_ref(),
+    };
+    let resolved_config = match &backend_config {
+        Some(config) => config.resolve(&cx),
         None => serde_json::Value::Null,
     };
 

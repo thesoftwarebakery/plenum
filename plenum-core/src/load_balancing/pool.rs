@@ -92,6 +92,8 @@ impl UpstreamPool {
                     path_params,
                     user_ctx: None,
                     peer_addr: None,
+                    query_params: None,
+                    body_json: None,
                 })
                 .unwrap_or_default()
                 .into_bytes(),

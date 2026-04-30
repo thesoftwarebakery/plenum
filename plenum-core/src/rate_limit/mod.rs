@@ -57,6 +57,8 @@ pub(crate) fn evaluate(
         path_params: &ctx.path_params,
         user_ctx: Some(&ctx.user_ctx),
         peer_addr,
+        query_params: None,
+        body_json: None,
     };
 
     let Some(identifier) = config.identifier.resolve(&cx) else {
