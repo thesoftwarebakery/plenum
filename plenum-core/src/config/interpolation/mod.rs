@@ -1,5 +1,110 @@
 use std::collections::HashMap;
 
+// ── Shared template parser ──────────────────────────────────────────────────
+
+/// A single parsed `${{ namespace.key }}` token.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Token {
+    /// The namespace portion (e.g. `"env"`, `"header"`, `"ctx"`).
+    pub namespace: String,
+    /// Everything after the first `.`, or empty if there is no dot
+    /// (e.g. `"client-ip"`, `"method"`).
+    pub key: String,
+}
+
+/// One segment of a parsed template string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TemplatePart {
+    /// Literal text between tokens.
+    Literal(String),
+    /// A parsed `${{ namespace.key }}` expression.
+    Expr(Token),
+}
+
+/// A parsed template string containing zero or more `${{ … }}` expressions
+/// interspersed with literal text.
+///
+/// This is the shared parser used by both boot-time interpolation (`env`,
+/// `file`) and runtime context resolution (`header`, `query`, `ctx`, etc.).
+#[derive(Debug, Clone)]
+pub struct Template {
+    original: String,
+    parts: Vec<TemplatePart>,
+}
+
+impl Template {
+    /// Parse a template string into its constituent parts.
+    ///
+    /// Returns an error only on malformed syntax (unclosed `${{`). Unknown
+    /// namespaces are accepted — validation is the caller's responsibility.
+    pub fn parse(template: &str) -> Result<Self, String> {
+        let mut parts: Vec<TemplatePart> = Vec::new();
+        let mut remaining = template;
+
+        loop {
+            let Some(start) = remaining.find("${{") else {
+                if !remaining.is_empty() {
+                    parts.push(TemplatePart::Literal(remaining.to_string()));
+                }
+                break;
+            };
+
+            if start > 0 {
+                parts.push(TemplatePart::Literal(remaining[..start].to_string()));
+            }
+
+            let after_open = &remaining[start + 3..];
+            let end = after_open
+                .find("}}")
+                .ok_or_else(|| format!("unclosed '${{{{' in template: {template}"))?;
+
+            let inner = after_open[..end].trim();
+            remaining = &after_open[end + 2..];
+
+            if inner.is_empty() {
+                return Err("empty ${{ }} token".to_string());
+            }
+
+            let (namespace, key) = match inner.split_once('.') {
+                Some((ns, k)) => (ns.to_string(), k.to_string()),
+                None => (inner.to_string(), String::new()),
+            };
+
+            parts.push(TemplatePart::Expr(Token { namespace, key }));
+        }
+
+        Ok(Self {
+            original: template.to_string(),
+            parts,
+        })
+    }
+
+    /// Returns the parsed parts.
+    pub fn parts(&self) -> &[TemplatePart] {
+        &self.parts
+    }
+
+    /// Returns whether the template contains at least one expression.
+    pub fn has_expressions(&self) -> bool {
+        self.parts
+            .iter()
+            .any(|p| matches!(p, TemplatePart::Expr(_)))
+    }
+
+    /// Returns the original template string as written in configuration.
+    pub fn as_str(&self) -> &str {
+        &self.original
+    }
+}
+
+impl std::fmt::Display for Template {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.original)
+    }
+}
+
+// ── Boot-time interpolation ─────────────────────────────────────────────────
+
 /// Recursively walk a JSON value, interpolating `${{ namespace.key }}` tokens
 /// in all string values. Objects and arrays are traversed; other types pass
 /// through unchanged.
@@ -36,65 +141,45 @@ pub fn interpolate_value(
     }
 }
 
-/// Interpolate `${{ namespace.key }}` tokens in a single string.
-///
-/// The parser scans for `${{` … `}}` pairs. For each token the content is
-/// trimmed of whitespace, then split on the first `.` to yield a namespace and
-/// key. Resolution depends on the namespace:
-///
-///   - `env`  — looked up in the process environment; error if unset
-///   - `file` — looked up in the provided `files` map; error if missing
-///   - anything else — left as the original literal (runtime token)
+/// Interpolate boot-time tokens in a single string using the shared
+/// [`Template`] parser. Resolves `env` and `file` namespaces; passes
+/// through all others as literal text.
 fn interpolate_string(s: &str, files: &HashMap<String, String>) -> Result<String, String> {
+    let template = Template::parse(s)?;
     let mut result = String::with_capacity(s.len());
-    let mut remaining = s;
 
-    loop {
-        let Some(start) = remaining.find("${{") else {
-            result.push_str(remaining);
-            break;
-        };
-
-        result.push_str(&remaining[..start]);
-
-        let after_open = &remaining[start + 3..];
-        let Some(end) = after_open.find("}}") else {
-            // Unclosed ${{ — treat as literal text
-            result.push_str("${{");
-            remaining = after_open;
-            continue;
-        };
-
-        let token = after_open[..end].trim();
-        remaining = &after_open[end + 2..];
-
-        let Some((namespace, key)) = token.split_once('.') else {
-            // No dot — not a namespaced token, pass through as literal
-            result.push_str("${{");
-            result.push_str(&after_open[..end]);
-            result.push_str("}}");
-            continue;
-        };
-
-        match namespace {
-            "env" => match std::env::var(key) {
-                Ok(val) => result.push_str(&val),
-                Err(_) => {
-                    return Err(format!("environment variable '{}' is not set", key,));
+    for part in template.parts() {
+        match part {
+            TemplatePart::Literal(lit) => result.push_str(lit),
+            TemplatePart::Expr(token) => match token.namespace.as_str() {
+                "env" => match std::env::var(&token.key) {
+                    Ok(val) => result.push_str(&val),
+                    Err(_) => {
+                        return Err(format!("environment variable '{}' is not set", token.key));
+                    }
+                },
+                "file" => match files.get(&token.key) {
+                    Some(contents) => result.push_str(contents),
+                    None => {
+                        return Err(format!(
+                            "file key '{}' not found in x-plenum-files",
+                            token.key
+                        ));
+                    }
+                },
+                _ => {
+                    // Unknown namespace — reconstruct original token for runtime
+                    result.push_str("${{");
+                    if token.key.is_empty() {
+                        result.push_str(&token.namespace);
+                    } else {
+                        result.push_str(&token.namespace);
+                        result.push('.');
+                        result.push_str(&token.key);
+                    }
+                    result.push_str("}}");
                 }
             },
-            "file" => match files.get(key) {
-                Some(contents) => result.push_str(contents),
-                None => {
-                    return Err(format!("file key '{}' not found in x-plenum-files", key,));
-                }
-            },
-            _ => {
-                // Unknown namespace — leave token as-is for runtime resolution
-                result.push_str("${{");
-                result.push_str(&after_open[..end]);
-                result.push_str("}}");
-            }
         }
     }
 
@@ -105,6 +190,80 @@ fn interpolate_string(s: &str, files: &HashMap<String, String>) -> Result<String
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── Template parser tests ────────────────────────────────────────────────
+
+    #[test]
+    fn template_parses_single_expr() {
+        let t = Template::parse("${{ header.x-api-key }}").unwrap();
+        assert_eq!(t.parts().len(), 1);
+        assert!(matches!(
+            &t.parts()[0],
+            TemplatePart::Expr(Token { namespace, key })
+                if namespace == "header" && key == "x-api-key"
+        ));
+    }
+
+    #[test]
+    fn template_parses_composite() {
+        let t = Template::parse("${{header.x-tenant}}-${{ctx.userId}}").unwrap();
+        assert_eq!(t.parts().len(), 3);
+        assert!(matches!(&t.parts()[0], TemplatePart::Expr(_)));
+        assert!(matches!(&t.parts()[1], TemplatePart::Literal(s) if s == "-"));
+        assert!(matches!(&t.parts()[2], TemplatePart::Expr(_)));
+    }
+
+    #[test]
+    fn template_parses_no_dot_token() {
+        let t = Template::parse("${{ client-ip }}").unwrap();
+        assert!(matches!(
+            &t.parts()[0],
+            TemplatePart::Expr(Token { namespace, key })
+                if namespace == "client-ip" && key.is_empty()
+        ));
+    }
+
+    #[test]
+    fn template_rejects_unclosed() {
+        assert!(Template::parse("${{ header.x").is_err());
+    }
+
+    #[test]
+    fn template_rejects_empty_token() {
+        assert!(Template::parse("${{ }}").is_err());
+    }
+
+    #[test]
+    fn template_plain_string() {
+        let t = Template::parse("no tokens here").unwrap();
+        assert!(!t.has_expressions());
+        assert_eq!(t.parts().len(), 1);
+        assert!(matches!(&t.parts()[0], TemplatePart::Literal(s) if s == "no tokens here"));
+    }
+
+    #[test]
+    fn template_preserves_original() {
+        let s = "${{header.x-tenant}}-${{ctx.userId}}";
+        let t = Template::parse(s).unwrap();
+        assert_eq!(t.as_str(), s);
+    }
+
+    #[test]
+    fn template_whitespace_variants() {
+        let t1 = Template::parse("${{env.X}}").unwrap();
+        let t2 = Template::parse("${{  env.X  }}").unwrap();
+        let t3 = Template::parse("${{ env.X }}").unwrap();
+        // All should parse the same token
+        for t in [&t1, &t2, &t3] {
+            assert!(matches!(
+                &t.parts()[0],
+                TemplatePart::Expr(Token { namespace, key })
+                    if namespace == "env" && key == "X"
+            ));
+        }
+    }
+
+    // ── Boot-time interpolation tests ────────────────────────────────────────
 
     #[test]
     fn env_var_present() {
@@ -160,7 +319,7 @@ mod tests {
     #[test]
     fn unknown_namespace_passed_through() {
         let result = interpolate_string("prefix_${{ header.x-api-key }}_suffix", &HashMap::new());
-        assert_eq!(result.unwrap(), "prefix_${{ header.x-api-key }}_suffix");
+        assert_eq!(result.unwrap(), "prefix_${{header.x-api-key}}_suffix");
     }
 
     #[test]
@@ -172,24 +331,10 @@ mod tests {
     #[test]
     fn whitespace_variants() {
         unsafe { std::env::set_var("PLENUM_TEST_INTERP_WS", "val") };
-        // No spaces
         let r1 = interpolate_string("${{env.PLENUM_TEST_INTERP_WS}}", &HashMap::new());
         assert_eq!(r1.unwrap(), "val");
-        // Extra spaces
         let r2 = interpolate_string("${{  env.PLENUM_TEST_INTERP_WS  }}", &HashMap::new());
         assert_eq!(r2.unwrap(), "val");
-    }
-
-    #[test]
-    fn unclosed_token_treated_as_literal() {
-        let result = interpolate_string("prefix ${{ env.SOME trailing", &HashMap::new());
-        assert_eq!(result.unwrap(), "prefix ${{ env.SOME trailing");
-    }
-
-    #[test]
-    fn no_dot_treated_as_literal() {
-        let result = interpolate_string("${{ nodot }}", &HashMap::new());
-        assert_eq!(result.unwrap(), "${{ nodot }}");
     }
 
     #[test]
