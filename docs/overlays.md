@@ -82,15 +82,10 @@ Overlay actions use JSONPath expressions to select where in the spec to apply ch
 
 ## Shared config with `$ref`
 
-Any `x-plenum-*` extension value can be a `$ref` that points to a shared definition elsewhere in the document. Plenum resolves these references at startup, so you can define config once and reuse it across paths and operations.
-
-### Shared upstreams
-
-The most common use — define upstream backends once and reference them per-path:
+Define config once under `components` and reference it with `$ref` to avoid repetition:
 
 ```yaml
 actions:
-  # Define shared upstreams under components
   - target: $
     update:
       components:
@@ -99,62 +94,14 @@ actions:
             kind: "HTTP"
             address: "backend"
             port: 8080
-          admin:
-            kind: "HTTP"
-            address: "admin-service"
-            port: 9090
 
-  # Apply the default upstream to all paths
   - target: $.paths[*]
     update:
       x-plenum-upstream:
         $ref: "#/components/x-upstreams/default"
-
-  # Override a specific path with a different upstream
-  - target: "$.paths['/admin']"
-    update:
-      x-plenum-upstream:
-        $ref: "#/components/x-upstreams/admin"
 ```
 
-### Shared interceptor chains
-
-Reuse the same interceptor configuration across multiple operations:
-
-```yaml
-actions:
-  - target: $
-    update:
-      components:
-        x-interceptors:
-          auth:
-            - module: "internal:auth-apikey"
-              hook: on_request_headers
-              function: checkApiKey
-              options:
-                header: "x-api-key"
-                envVar: "API_KEY"
-              permissions:
-                env: ["API_KEY"]
-
-  - target: "$.paths['/products'].get"
-    update:
-      x-plenum-interceptor:
-        $ref: "#/components/x-interceptors/auth"
-
-  - target: "$.paths['/orders'].get"
-    update:
-      x-plenum-interceptor:
-        $ref: "#/components/x-interceptors/auth"
-```
-
-### How `$ref` resolution works
-
-- References use JSON Pointer syntax: `#/components/x-upstreams/default`
-- The `#` refers to the root of the merged document (spec + overlays)
-- References resolve recursively — a `$ref` can point to another `$ref`
-- You can store shared config under any key in `components` (e.g. `x-upstreams`, `x-interceptors`, `x-cors-policies`)
-- Resolution happens at startup; invalid references cause a clear error
+`$ref` works for any `x-plenum-*` extension — upstreams, interceptors, CORS policies, and more. See [`$ref` resolution](ref-resolution.md) for the full guide.
 
 ## Layering multiple overlays
 
