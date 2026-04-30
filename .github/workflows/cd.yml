@@ -13,8 +13,8 @@ jobs:
   release-please:
     runs-on: ubuntu-latest
     outputs:
-      release_created: ${{ steps.release.outputs.release_created || steps.post-merge-release.outputs.release_created }}
-      tag_name: ${{ steps.release.outputs.tag_name || steps.post-merge-release.outputs.tag_name }}
+      release_created: ${{ steps.release.outputs['plenum-core--release_created'] || steps.post-merge-release.outputs['plenum-core--release_created'] }}
+      tag_name: ${{ steps.release.outputs['plenum-core--tag_name'] || steps.post-merge-release.outputs['plenum-core--tag_name'] }}
     steps:
       - uses: actions/create-github-app-token@v2
         id: app-token
