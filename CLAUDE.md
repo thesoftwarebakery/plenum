@@ -104,7 +104,7 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
 | Extension | Level | Purpose |
 |-----------|-------|---------|
 | `x-plenum-config` | Spec root | Server settings (threads, listen, TLS, timeouts, body limits) |
-| `x-plenum-files` | Spec root | Named file map for `${{ file.KEY }}` (content), `${{ file.KEY.path }}` (path) interpolation |
+| `x-plenum-files` | Spec root | Named file map for `${{ file.KEY.content }}` and `${{ file.KEY.path }}` interpolation |
 | `x-plenum-upstream` | Path item | Upstream target (HTTP, HTTP pool, plugin, static) |
 | `x-plenum-interceptor` | Operation | JS interceptor chain (array of hook configs) |
 | `x-plenum-cors` | Operation | CORS configuration |

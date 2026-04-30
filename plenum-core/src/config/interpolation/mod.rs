@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 /// A file declared in `x-plenum-files`, storing both its resolved absolute
 /// path and its contents. Accessed in templates via `${{ file.NAME.path }}`
-/// or `${{ file.NAME.content }}` (bare `${{ file.NAME }}` defaults to content).
+/// or `${{ file.NAME.content }}`. An accessor is always required.
 #[derive(Debug, Clone)]
 pub struct FileEntry {
     /// Resolved absolute path to the file on disk.
@@ -124,8 +124,8 @@ impl std::fmt::Display for Template {
 ///
 /// Boot-time namespaces resolved here:
 ///   - `env`  — process environment variables
-///   - `file` — entries from the `x-plenum-files` map, with accessor support:
-///     - `${{ file.NAME }}` or `${{ file.NAME.content }}` — file contents
+///   - `file` — entries from the `x-plenum-files` map (accessor required):
+///     - `${{ file.NAME.content }}` — file contents
 ///     - `${{ file.NAME.path }}` — resolved absolute file path
 ///
 /// Any other namespace (e.g. `header`, `query`, `ctx`) is left as-is for
@@ -197,20 +197,24 @@ fn interpolate_string(s: &str, files: &HashMap<String, FileEntry>) -> Result<Str
 
 /// Resolve a `file` namespace token key against the files map.
 ///
-/// Supports accessors:
-///   - `NAME` or `NAME.content` → file contents
+/// An accessor is always required:
+///   - `NAME.content` → file contents
 ///   - `NAME.path` → resolved absolute path
 ///
-/// When the key contains a dot, we first check if the full key exists as a
-/// file entry (to avoid ambiguity with file names containing dots). If not,
-/// we split on the last dot to extract an accessor.
+/// Bare `NAME` (without accessor) is an error. When the key contains a dot,
+/// we first check if the full key exists as a file entry (to reject bare
+/// usage with a helpful message). If not, we split on the last dot to
+/// extract an accessor.
 fn resolve_file_token(key: &str, files: &HashMap<String, FileEntry>) -> Result<String, String> {
-    // Exact match — bare `${{ file.NAME }}` → content
-    if let Some(entry) = files.get(key) {
-        return Ok(entry.content.clone());
+    // Bare `${{ file.NAME }}` without an accessor is an error.
+    if files.contains_key(key) {
+        return Err(format!(
+            "file token '{key}' requires an accessor \
+             (use ${{{{ file.{key}.content }}}} or ${{{{ file.{key}.path }}}})"
+        ));
     }
 
-    // Try splitting on the last dot to extract an accessor.
+    // Split on the last dot to extract an accessor.
     if let Some((name, accessor)) = key.rsplit_once('.')
         && let Some(entry) = files.get(name)
     {
@@ -338,14 +342,15 @@ mod tests {
     }
 
     #[test]
-    fn file_key_present() {
+    fn file_key_bare_requires_accessor() {
         let mut files = HashMap::new();
         files.insert(
             "MY_CERT".to_string(),
             file_entry("/certs/my.crt", "cert-contents"),
         );
         let result = interpolate_string("${{ file.MY_CERT }}", &files);
-        assert_eq!(result.unwrap(), "cert-contents");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("requires an accessor"));
     }
 
     #[test]
@@ -395,7 +400,7 @@ mod tests {
         let mut files = HashMap::new();
         files.insert("GREETING".to_string(), file_entry("/greet.txt", "hello"));
         let result = interpolate_string(
-            "${{ file.GREETING }}_${{ env.PLENUM_TEST_INTERP_MIX }}",
+            "${{ file.GREETING.content }}_${{ env.PLENUM_TEST_INTERP_MIX }}",
             &files,
         );
         assert_eq!(result.unwrap(), "hello_world");

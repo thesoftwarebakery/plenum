@@ -345,7 +345,7 @@ mod tests {
             },
         );
 
-        let val = json!({ "address": "${{ file.HOST }}", "port": 5432 });
+        let val = json!({ "address": "${{ file.HOST.content }}", "port": 5432 });
         let upstream: TestUpstream = config.resolve(&val).unwrap();
         assert_eq!(upstream.address, "db.internal");
     }
