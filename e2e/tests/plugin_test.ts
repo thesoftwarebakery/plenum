@@ -88,6 +88,87 @@ describe("plugin upstream: basic tests", () => {
     expect(parameters[0].name).toEqual("id");
     expect(parameters[0].in).toEqual("path");
   });
+
+  test("queryParams: no query string yields empty object", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    expect(body.queryParams).toEqual({});
+  });
+
+  test("queryParams: string parameter parsed correctly", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?message=hello`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.message).toEqual("hello");
+  });
+
+  test("queryParams: integer parameter coerced to number", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?count=42`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.count).toEqual(42);
+    expect(typeof qp.count).toEqual("number");
+  });
+
+  test("queryParams: boolean parameter coerced to bool", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?active=true`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.active).toEqual(true);
+    expect(typeof qp.active).toEqual("boolean");
+  });
+
+  test("queryParams: form+explode=true array (?tags=a&tags=b)", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?tags=red&tags=blue`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.tags).toEqual(["red", "blue"]);
+  });
+
+  test("queryParams: form+explode=false array (?csv=a,b,c)", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?csv=a,b,c`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.csv).toEqual(["a", "b", "c"]);
+  });
+
+  test("queryParams: spaceDelimited array (?spaced=a%20b%20c)", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?spaced=a%20b%20c`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.spaced).toEqual(["a", "b", "c"]);
+  });
+
+  test("queryParams: pipeDelimited array (?piped=a|b|c)", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?piped=a%7Cb%7Cc`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.piped).toEqual(["a", "b", "c"]);
+  });
+
+  test("queryParams: deepObject (?filter[name]=alice&filter[age]=30)", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?filter%5Bname%5D=alice&filter%5Bage%5D=30`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.filter).toEqual({ name: "alice", age: "30" });
+  });
+
+  test("queryParams: undeclared params included as raw strings", async () => {
+    const resp = await fetch(`${gateway.baseUrl}/echo?undeclared=value`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as Record<string, unknown>;
+    const qp = body.queryParams as Record<string, unknown>;
+    expect(qp.undeclared).toEqual("value");
+  });
 });
 
 test("plugin upstream: on_request interceptor runs before plugin", async () => {

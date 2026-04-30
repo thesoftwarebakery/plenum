@@ -19,6 +19,7 @@ FROM chef AS planner
 
 COPY Cargo.toml Cargo.lock ./
 COPY plenum-core/ plenum-core/
+COPY oas-query/ oas-query/
 COPY openapi-overlay/ openapi-overlay/
 COPY plenum-js-runtime/ plenum-js-runtime/
 COPY plenum-sandbox/ plenum-sandbox/
@@ -33,6 +34,7 @@ RUN cargo chef cook --release --recipe-path recipe.json -p plenum-core
 
 COPY Cargo.toml Cargo.lock ./
 COPY plenum-core/ plenum-core/
+COPY oas-query/ oas-query/
 COPY openapi-overlay/ openapi-overlay/
 COPY plenum-js-runtime/ plenum-js-runtime/
 COPY plenum-sandbox/ plenum-sandbox/

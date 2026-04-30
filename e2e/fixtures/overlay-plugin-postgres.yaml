@@ -30,31 +30,42 @@ actions:
   - target: $.paths['/users'].get
     update:
       x-plenum-backend:
-        query: "SELECT id, name, created_at FROM users ORDER BY id"
+        query: "SELECT id, name, created_at FROM users ORDER BY id LIMIT $1"
+        params:
+          - "${{query.limit}}"
         fields:
           created_at: "createdAt"
   - target: $.paths['/users'].post
     update:
       x-plenum-backend:
-        query: "INSERT INTO users (name, created_at) VALUES (${{body.name}}, NOW()) RETURNING id, name, created_at"
+        query: "INSERT INTO users (name, created_at) VALUES ($1, NOW()) RETURNING id, name, created_at"
+        params:
+          - "${{body.name}}"
         fields:
           created_at: "createdAt"
         returns: "/0"
   - target: $.paths['/users/{id}'].get
     update:
       x-plenum-backend:
-        query: "SELECT id, name, created_at FROM users WHERE id = ${{path.id}}"
+        query: "SELECT id, name, created_at FROM users WHERE id = $1"
+        params:
+          - "${{path.id}}"
         fields:
           created_at: "createdAt"
         returns: "/0"
   - target: $.paths['/users/{id}'].put
     update:
       x-plenum-backend:
-        query: "UPDATE users SET name = ${{body.name}} WHERE id = ${{path.id}} RETURNING id, name, created_at"
+        query: "UPDATE users SET name = $1 WHERE id = $2 RETURNING id, name, created_at"
+        params:
+          - "${{body.name}}"
+          - "${{path.id}}"
         fields:
           created_at: "createdAt"
         returns: "/0"
   - target: $.paths['/users/{id}'].delete
     update:
       x-plenum-backend:
-        query: "DELETE FROM users WHERE id = ${{path.id}}"
+        query: "DELETE FROM users WHERE id = $1"
+        params:
+          - "${{path.id}}"

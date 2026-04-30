@@ -24,7 +24,14 @@ pub struct PluginRequest {
     /// The matched OpenAPI path template, e.g. `/users/{id}`.
     pub route: String,
     pub path: String,
+    /// Raw query string. Preserved for backward compatibility.
     pub query: String,
+    /// Query parameters parsed according to the operation's OpenAPI parameter definitions.
+    /// Scalar values are type-coerced; arrays and objects follow the OAS style/explode rules.
+    /// Parameters not declared in the spec are included as raw strings.
+    #[serde(rename = "queryParams")]
+    #[ts(rename = "queryParams", type = "Record<string, unknown>")]
+    pub query_params: serde_json::Value,
     pub headers: HashMap<String, String>,
     pub params: HashMap<String, String>,
 }
@@ -71,6 +78,105 @@ pub struct JsPluginInput {
     #[serde(rename = "bodyEncoding")]
     #[ts(optional)]
     body_encoding: Option<String>,
+}
+
+/// Resolve `${{...}}` tokens in backend config values at request time.
+///
+/// Walks the entire config tree recursively, replacing any string that is exactly
+/// a single `${{namespace.key}}` expression with its resolved value.
+///
+/// Supported namespaces:
+/// - `${{query.key}}` — typed value from the parsed query params
+/// - `${{path.key}}` — path parameter value (string)
+/// - `${{header.name}}` — request header (case-insensitive, string)
+/// - `${{body.field}}` — top-level field from the JSON request body
+///
+/// Strings that contain tokens mixed with literal text (e.g. `"prefix-${{path.id}}"`)
+/// are not resolved and passed through unchanged — only bare single-token expressions
+/// are replaced. If a token resolves to nothing, the value becomes `null`.
+fn resolve_config_tokens(
+    value: serde_json::Value,
+    path_params: &HashMap<String, String>,
+    headers: &http::HeaderMap,
+    body_json: Option<&serde_json::Value>,
+    query_params: &serde_json::Value,
+) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            // Only resolve strings that are a bare single ${{...}} expression.
+            if let Some(resolved) =
+                try_resolve_token(&s, path_params, headers, body_json, query_params)
+            {
+                resolved
+            } else {
+                serde_json::Value::String(s)
+            }
+        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(
+            arr.into_iter()
+                .map(|v| resolve_config_tokens(v, path_params, headers, body_json, query_params))
+                .collect(),
+        ),
+        serde_json::Value::Object(obj) => serde_json::Value::Object(
+            obj.into_iter()
+                .map(|(k, v)| {
+                    (
+                        k,
+                        resolve_config_tokens(v, path_params, headers, body_json, query_params),
+                    )
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+
+/// Try to resolve a string as a bare `${{namespace.key}}` token.
+/// Returns `None` if the string isn't a single-token expression.
+fn try_resolve_token(
+    s: &str,
+    path_params: &HashMap<String, String>,
+    headers: &http::HeaderMap,
+    body_json: Option<&serde_json::Value>,
+    query_params: &serde_json::Value,
+) -> Option<serde_json::Value> {
+    // Must start with ${{ and end with }}
+    let inner = s.strip_prefix("${{")?.strip_suffix("}}")?;
+    let inner = inner.trim();
+
+    // Must be namespace.key (no nested dots for now)
+    let (namespace, key) = inner.split_once('.')?;
+    let namespace = namespace.trim();
+    let key = key.trim();
+
+    match namespace {
+        "query" => Some(
+            query_params
+                .get(key)
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        ),
+        "path" => Some(
+            path_params
+                .get(key)
+                .map(|v| serde_json::Value::String(v.clone()))
+                .unwrap_or(serde_json::Value::Null),
+        ),
+        "header" => Some(
+            headers
+                .get(key.to_lowercase().as_str())
+                .and_then(|v| v.to_str().ok())
+                .map(|v| serde_json::Value::String(v.to_string()))
+                .unwrap_or(serde_json::Value::Null),
+        ),
+        "body" => Some(
+            body_json
+                .and_then(|b| b.get(key))
+                .cloned()
+                .unwrap_or(serde_json::Value::Null),
+        ),
+        _ => None,
+    }
 }
 
 /// Handle a plugin route request end-to-end:
@@ -247,16 +353,38 @@ pub(crate) async fn dispatch(
     }
 
     // Step B: call plugin handle()
+    let plugin_query_str = session.req_header().uri.query().unwrap_or("");
+    let plugin_query_defs = oas_query::extract_query_params(&op.operation_meta);
+    let plugin_query_params = serde_json::Value::Object(oas_query::parse_query_params(
+        plugin_query_str,
+        &plugin_query_defs,
+    ));
+
+    // Resolve ${{...}} tokens in backend config at the gateway level.
+    // The body is parsed as JSON so body.* tokens can be resolved.
+    let body_json: Option<serde_json::Value> = serde_json::from_slice(&final_buf).ok();
+    let resolved_config = match backend_config {
+        Some(config) => resolve_config_tokens(
+            config,
+            &ctx.path_params,
+            &session.req_header().headers,
+            body_json.as_ref(),
+            &plugin_query_params,
+        ),
+        None => serde_json::Value::Null,
+    };
+
     let plugin_input = PluginInput {
         request: PluginRequest {
             method: session.req_header().method.to_string(),
             route: route.clone(),
             path: session.req_header().uri.path().to_string(),
-            query: session.req_header().uri.query().unwrap_or("").to_string(),
+            query: plugin_query_str.to_string(),
+            query_params: plugin_query_params,
             headers: header_map_to_hash_map(&request_headers),
             params: ctx.path_params.clone(),
         },
-        config: backend_config.unwrap_or(serde_json::Value::Null),
+        config: resolved_config,
         operation: op.operation_meta.clone(),
         ctx: serde_json::Value::Object(ctx.user_ctx.clone()),
     };

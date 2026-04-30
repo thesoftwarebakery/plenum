@@ -4,8 +4,8 @@
  * Config per operation:
  *   collection: string           — collection name
  *   operation:  string           — find | findOne | insertOne | updateOne | deleteOne
- *   filter:     object           — query filter (supports ${{namespace.key}} interpolation)
- *   document:   object           — document for insert/update (supports interpolation)
+ *   filter:     object           — query filter (tokens resolved by gateway before handle() is called)
+ *   document:   object           — document for insert/update (tokens resolved by gateway)
  *   fields:     object           — field rename map (same as postgres/mysql plugins)
  *   returns:    string           — JSON Pointer, e.g. "/0" (same as postgres/mysql plugins)
  */
@@ -45,7 +45,6 @@ exports.handle = async function handle(input) {
   }
 
   const config = input.config || {};
-  const request = input.request || {};
 
   if (!config.collection || typeof config.collection !== "string") {
     return { status: 500, headers: {}, body: { error: "config.collection must be a string" } };
@@ -60,32 +59,11 @@ exports.handle = async function handle(input) {
     };
   }
 
-  // Interpolate ${{namespace.key}} values into a document (recursive)
-  function interpolate(value) {
-    if (typeof value === "string") {
-      return value.replace(/\$\{\{(\w+)\.(\w+)\}\}/g, (_match, namespace, key) => {
-        if (namespace === "path") return request.params?.[key] ?? null;
-        if (namespace === "query") return request.query?.[key] ?? null;
-        if (namespace === "body") return input.body?.[key] ?? null;
-        return null;
-      });
-    }
-    if (Array.isArray(value)) {
-      return value.map(interpolate);
-    }
-    if (value !== null && typeof value === "object") {
-      const result = {};
-      for (const [k, v] of Object.entries(value)) {
-        result[k] = interpolate(v);
-      }
-      return result;
-    }
-    return value;
-  }
-
+  // The gateway resolves ${{...}} tokens in config before calling handle().
+  // filter and document are fully resolved objects — use them directly.
   const collection = db.collection(config.collection);
-  const filter = interpolate(config.filter || {});
-  const document = interpolate(config.document || {});
+  const filter = config.filter || {};
+  const document = config.document || {};
 
   try {
     let body;

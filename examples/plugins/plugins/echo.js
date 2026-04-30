@@ -17,6 +17,7 @@ exports.handle = function handle(input) {
       path: input.request.path,
       params: input.request.params,
       query: input.request.query,
+      queryParams: input.request.queryParams,
       config: input.config,
       body: input.body || null,
     },

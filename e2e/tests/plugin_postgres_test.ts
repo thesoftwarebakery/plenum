@@ -135,4 +135,12 @@ describe('internal:postgres plugin', () => {
     const get = await fetch(`${gateway.baseUrl}/users/2`);
     expect(get.status).toEqual(404);
   });
+
+  test('GET /users?limit=1 respects query param via native parameterisation', async () => {
+    const resp = await fetch(`${gateway.baseUrl}/users?limit=1`);
+    expect(resp.status).toEqual(200);
+    const body = await resp.json() as unknown[];
+    expect(Array.isArray(body)).toBe(true);
+    expect(body.length).toEqual(1);
+  });
 });

@@ -166,7 +166,8 @@ The function receives a request or response object depending on the hook:
 | `path` | Full request path |
 | `route` | OpenAPI path template (e.g. `/products/{id}`) |
 | `headers` | Request headers |
-| `query` | Query string |
+| `query` | Raw query string |
+| `queryParams` | Parsed query parameters (`Record<string, unknown>`), typed per the OpenAPI spec |
 | `params` | Path parameters |
 | `ctx` | Context bag (shared across interceptors) |
 | `body` | Request body (`on_request` only) |

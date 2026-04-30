@@ -36,24 +36,12 @@ exports.handle = async function handle(input) {
   }
 
   const config = input.config || {};
-  const request = input.request || {};
 
-  // Interpolation: replace ${{namespace.key}} with ? placeholders (MySQL style)
-  let query = config.query || "";
-  const values = [];
-
-  query = query.replace(/\$\{\{(\w+)\.(\w+)\}\}/g, (_match, namespace, key) => {
-    let value = null;
-    if (namespace === "path") {
-      value = request.params?.[key] ?? null;
-    } else if (namespace === "query") {
-      value = request.query?.[key] ?? null;
-    } else if (namespace === "body") {
-      value = input.body?.[key] ?? null;
-    }
-    values.push(value);
-    return "?";
-  });
+  // The gateway resolves ${{...}} tokens in config before calling handle().
+  // config.query uses native positional parameters (?).
+  // config.params is a pre-resolved array of values for those parameters.
+  const query = config.query || "";
+  const values = Array.isArray(config.params) ? config.params : [];
 
   try {
     // mysql2 returns [rows, fields]

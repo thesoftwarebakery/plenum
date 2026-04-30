@@ -6,6 +6,23 @@ paths:
   /echo:
     get:
       operationId: echoGet
+      parameters:
+        - name: message
+          in: query
+          schema:
+            type: string
+        - name: count
+          in: query
+          schema:
+            type: integer
+        - name: tags
+          in: query
+          style: form
+          explode: true
+          schema:
+            type: array
+            items:
+              type: string
       responses:
         "200":
           description: Echo response

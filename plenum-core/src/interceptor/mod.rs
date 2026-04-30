@@ -13,7 +13,14 @@ pub struct RequestInput {
     pub route: String,
     pub path: String,
     pub headers: HashMap<String, String>,
+    /// Raw query string. Preserved for backward compatibility.
     pub query: String,
+    /// Query parameters parsed according to the operation's OpenAPI parameter definitions.
+    /// Scalar values are type-coerced; arrays and objects follow the OAS style/explode rules.
+    /// Parameters not declared in the spec are included as raw strings.
+    #[serde(rename = "queryParams")]
+    #[ts(rename = "queryParams", type = "Record<string, unknown>")]
+    pub query_params: serde_json::Value,
     pub params: HashMap<String, String>,
     #[ts(type = "unknown")]
     pub operation: serde_json::Value,
@@ -237,12 +244,17 @@ pub fn request_input_from_parts(
     rate_limits: Option<RateLimitState>,
     ctx: serde_json::Value,
 ) -> RequestInput {
+    let query_str = uri.query().unwrap_or("");
+    let query_param_defs = oas_query::extract_query_params(&operation);
+    let query_params =
+        serde_json::Value::Object(oas_query::parse_query_params(query_str, &query_param_defs));
     RequestInput {
         method: method.to_string(),
         route: route.to_string(),
         path: uri.path().to_string(),
         headers: header_map_to_hash_map(headers),
-        query: uri.query().unwrap_or("").to_string(),
+        query: query_str.to_string(),
+        query_params,
         params,
         operation,
         rate_limits,
@@ -462,6 +474,7 @@ mod tests {
                 ("authorization".into(), "Bearer tok".into()),
             ]),
             query: "page=1".into(),
+            query_params: serde_json::Value::Object(serde_json::Map::new()),
             params: HashMap::from([("id".into(), "123".into())]),
             operation: serde_json::Value::Null,
             rate_limits: None,

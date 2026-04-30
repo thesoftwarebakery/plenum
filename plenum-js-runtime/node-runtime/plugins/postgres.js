@@ -42,26 +42,12 @@ exports.handle = async function handle(input) {
   }
 
   const config = input.config || {};
-  const request = input.request || {};
 
-  // Simple interpolation: replace ${{namespace.key}} with values
-  let query = config.query || "";
-  const values = [];
-  let paramIndex = 0;
-
-  query = query.replace(/\$\{\{(\w+)\.(\w+)\}\}/g, (_match, namespace, key) => {
-    let value = null;
-    if (namespace === "path") {
-      value = request.params?.[key] ?? null;
-    } else if (namespace === "query") {
-      value = request.query?.[key] ?? null;
-    } else if (namespace === "body") {
-      value = input.body?.[key] ?? null;
-    }
-    paramIndex++;
-    values.push(value);
-    return `$${paramIndex}`;
-  });
+  // The gateway resolves ${{...}} tokens in config before calling handle().
+  // config.query uses native positional parameters ($1, $2, ...).
+  // config.params is a pre-resolved array of values for those parameters.
+  const query = config.query || "";
+  const values = Array.isArray(config.params) ? config.params : [];
 
   try {
     const result = await pool.query(query, values);
