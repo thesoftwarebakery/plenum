@@ -34,7 +34,8 @@ pub struct PluginRequest {
     #[ts(rename = "queryParams", type = "Record<string, unknown>")]
     pub query_params: serde_json::Value,
     pub headers: HashMap<String, String>,
-    pub params: HashMap<String, String>,
+    #[ts(type = "Record<string, unknown>")]
+    pub params: HashMap<String, serde_json::Value>,
 }
 
 /// Input passed to a plugin's `handle()` function.

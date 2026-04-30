@@ -90,6 +90,27 @@ impl ParameterDef {
             items_type,
         })
     }
+
+    /// Build a `ParameterDef` from a serialized OpenAPI Parameter JSON object for a path
+    /// parameter.
+    ///
+    /// Only parameters with `"in": "path"` are returned; others yield `None`.
+    /// `style` and `explode` are not applicable to path parameters and are set to defaults.
+    pub fn path_from_json(value: &serde_json::Value) -> Option<Self> {
+        let obj = value.as_object()?;
+        if obj.get("in")?.as_str()? != "path" {
+            return None;
+        }
+        let name = obj.get("name")?.as_str()?.to_string();
+        let schema_type = schema_type_from_json(obj.get("schema")).unwrap_or(SchemaType::String);
+        Some(ParameterDef {
+            name,
+            style: Style::Form,
+            explode: false,
+            schema_type,
+            items_type: None,
+        })
+    }
 }
 
 /// Extract `SchemaType` from a JSON schema object's `"type"` field.
@@ -106,7 +127,9 @@ fn schema_type_from_json(schema: Option<&serde_json::Value>) -> Option<SchemaTyp
 }
 
 /// Coerce a raw string value to a JSON value based on the target schema type.
-fn coerce_scalar(raw: &str, target: SchemaType) -> serde_json::Value {
+///
+/// Falls back to `Value::String` when the input cannot be parsed as the target type.
+pub fn coerce_scalar(raw: &str, target: SchemaType) -> serde_json::Value {
     match target {
         SchemaType::Integer => raw
             .parse::<i64>()
@@ -123,6 +146,30 @@ fn coerce_scalar(raw: &str, target: SchemaType) -> serde_json::Value {
         },
         _ => serde_json::Value::String(raw.to_string()),
     }
+}
+
+/// Parse raw path parameters into typed JSON values using OpenAPI parameter definitions.
+///
+/// Each `(name, value)` pair is coerced to the JSON type declared in the matching
+/// [`ParameterDef`]. Parameters not covered by `defs` are included as raw strings.
+/// Intended for use with path parameter schemas built via [`ParameterDef::path_from_json`].
+pub fn parse_path_params(
+    raw: &[(&str, &str)],
+    defs: &[ParameterDef],
+) -> HashMap<String, serde_json::Value> {
+    let schema_map: HashMap<&str, SchemaType> = defs
+        .iter()
+        .map(|d| (d.name.as_str(), d.schema_type))
+        .collect();
+    raw.iter()
+        .map(|(name, value)| {
+            let coerced = schema_map
+                .get(name)
+                .map(|&t| coerce_scalar(value, t))
+                .unwrap_or_else(|| serde_json::Value::String(value.to_string()));
+            (name.to_string(), coerced)
+        })
+        .collect()
 }
 
 /// Parse a raw query string into a JSON object using OpenAPI parameter definitions.
@@ -827,5 +874,88 @@ mod tests {
         let defs = extract_query_params(&meta);
         let result = parse_query_params("filter[name]=alice&filter[age]=30", &defs);
         assert_eq!(result["filter"], json!({"name": "alice", "age": "30"}));
+    }
+
+    // ── parse_path_params ─────────────────────────────────────────────────────
+
+    #[test]
+    fn path_param_def_from_json_accepts_path_param() {
+        let param = json!({
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "integer" }
+        });
+        let def = ParameterDef::path_from_json(&param).unwrap();
+        assert_eq!(def.name, "id");
+        assert_eq!(def.schema_type, SchemaType::Integer);
+    }
+
+    #[test]
+    fn path_param_def_from_json_rejects_query_param() {
+        let param = json!({ "name": "page", "in": "query", "schema": { "type": "integer" } });
+        assert!(ParameterDef::path_from_json(&param).is_none());
+    }
+
+    #[test]
+    fn parse_path_params_coerces_integer() {
+        let defs = vec![
+            ParameterDef::path_from_json(&json!({
+                "name": "id",
+                "in": "path",
+                "schema": { "type": "integer" }
+            }))
+            .unwrap(),
+        ];
+        let result = parse_path_params(&[("id", "42")], &defs);
+        assert_eq!(result["id"], json!(42));
+    }
+
+    #[test]
+    fn parse_path_params_coerces_boolean() {
+        let defs = vec![
+            ParameterDef::path_from_json(&json!({
+                "name": "active",
+                "in": "path",
+                "schema": { "type": "boolean" }
+            }))
+            .unwrap(),
+        ];
+        let result = parse_path_params(&[("active", "true")], &defs);
+        assert_eq!(result["active"], json!(true));
+    }
+
+    #[test]
+    fn parse_path_params_undeclared_stays_string() {
+        let result = parse_path_params(&[("slug", "hello-world")], &[]);
+        assert_eq!(result["slug"], json!("hello-world"));
+    }
+
+    #[test]
+    fn parse_path_params_string_type_stays_string() {
+        let defs = vec![
+            ParameterDef::path_from_json(&json!({
+                "name": "name",
+                "in": "path",
+                "schema": { "type": "string" }
+            }))
+            .unwrap(),
+        ];
+        let result = parse_path_params(&[("name", "alice")], &defs);
+        assert_eq!(result["name"], json!("alice"));
+    }
+
+    #[test]
+    fn parse_path_params_invalid_integer_stays_string() {
+        let defs = vec![
+            ParameterDef::path_from_json(&json!({
+                "name": "id",
+                "in": "path",
+                "schema": { "type": "integer" }
+            }))
+            .unwrap(),
+        ];
+        let result = parse_path_params(&[("id", "not-a-number")], &defs);
+        assert_eq!(result["id"], json!("not-a-number"));
     }
 }

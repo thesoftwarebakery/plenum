@@ -1,6 +1,7 @@
 pub(crate) mod module_resolver;
 
 use crate::request_context::config_value::ConfigValue;
+use oas_query::ParameterDef;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::path::Path;
@@ -107,6 +108,10 @@ pub struct RouteEntry {
     /// The OpenAPI path template for this route (e.g. `/users/{id}`).
     /// Populated in `ctx.gateway.route` for each interceptor/plugin call.
     pub path: String,
+    /// Pre-compiled path parameter schemas used to coerce raw matchit captures to typed
+    /// JSON values at request time. Built once at startup from the operation parameter
+    /// definitions; path params are path-level and shared across all methods on a route.
+    pub path_param_schemas: Vec<oas_query::ParameterDef>,
 }
 
 impl RouteEntry {
@@ -559,7 +564,8 @@ pub fn build_router(
                         use crate::request_context::ExtractionCtx;
                         let empty_req = pingora_http::RequestHeader::build("GET", b"/", None)
                             .expect("valid request");
-                        let empty_params = std::collections::HashMap::new();
+                        let empty_params: std::collections::HashMap<String, serde_json::Value> =
+                            std::collections::HashMap::new();
                         let empty_cx = ExtractionCtx {
                             req: &empty_req,
                             path_params: &empty_params,
@@ -608,11 +614,32 @@ pub fn build_router(
             }
         }
 
+        // Collect path parameter schemas — shared across all methods on a path.
+        // First definition of each name wins (path params must be consistent per-path).
+        let mut path_param_schemas: Vec<ParameterDef> = Vec::new();
+        let mut seen_path_params: HashSet<String> = HashSet::new();
+        for op_schemas in operations.values() {
+            if let Some(arr) = op_schemas
+                .operation_meta
+                .get("parameters")
+                .and_then(|v| v.as_array())
+            {
+                for param_json in arr {
+                    if let Some(def) = ParameterDef::path_from_json(param_json) {
+                        if seen_path_params.insert(def.name.clone()) {
+                            path_param_schemas.push(def);
+                        }
+                    }
+                }
+            }
+        }
+
         let entry = Arc::new(RouteEntry {
             upstream,
             buffer_response: upstream_buffer_response,
             operations,
             path: path.to_string(),
+            path_param_schemas,
         });
         router
             .insert(path, entry)

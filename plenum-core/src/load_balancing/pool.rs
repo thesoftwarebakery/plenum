@@ -83,7 +83,7 @@ impl UpstreamPool {
     pub fn select(
         &self,
         req: &pingora_http::RequestHeader,
-        path_params: &HashMap<String, String>,
+        path_params: &HashMap<String, serde_json::Value>,
     ) -> Option<(Box<HttpPeer>, SocketAddr)> {
         let key = match &self.hash_key_source {
             Some(ctx_ref) => ctx_ref

@@ -21,7 +21,8 @@ pub struct RequestInput {
     #[serde(rename = "queryParams")]
     #[ts(rename = "queryParams", type = "Record<string, unknown>")]
     pub query_params: serde_json::Value,
-    pub params: HashMap<String, String>,
+    #[ts(type = "Record<string, unknown>")]
+    pub params: HashMap<String, serde_json::Value>,
     #[ts(type = "unknown")]
     pub operation: serde_json::Value,
     /// Gateway-populated rate limit state. Read-only for interceptors.
@@ -238,7 +239,7 @@ pub fn request_input_from_parts(
     method: &http::Method,
     uri: &http::Uri,
     headers: &http::HeaderMap,
-    params: HashMap<String, String>,
+    params: HashMap<String, serde_json::Value>,
     operation: serde_json::Value,
     route: &str,
     rate_limits: Option<RateLimitState>,
@@ -475,7 +476,7 @@ mod tests {
             ]),
             query: "page=1".into(),
             query_params: serde_json::Value::Object(serde_json::Map::new()),
-            params: HashMap::from([("id".into(), "123".into())]),
+            params: HashMap::from([("id".into(), serde_json::Value::String("123".into()))]),
             operation: serde_json::Value::Null,
             rate_limits: None,
             ctx: serde_json::Value::Null,
@@ -538,7 +539,7 @@ mod tests {
         let uri: http::Uri = "https://example.com/items/42".parse().unwrap();
         let method = http::Method::GET;
         let headers = http::HeaderMap::new();
-        let params = HashMap::from([("id".to_string(), "42".to_string())]);
+        let params = HashMap::from([("id".to_string(), serde_json::Value::Number(42.into()))]);
 
         let input = request_input_from_parts(
             &method,
@@ -550,7 +551,7 @@ mod tests {
             None,
             serde_json::Value::Null,
         );
-        assert_eq!(input.params.get("id").unwrap(), "42");
+        assert_eq!(input.params.get("id").unwrap().as_i64().unwrap(), 42);
     }
 
     #[test]

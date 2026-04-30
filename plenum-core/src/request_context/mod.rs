@@ -43,7 +43,7 @@ use crate::config::interpolation::{Template, TemplatePart, Token};
 /// [`ContextTemplate::resolve`].
 pub struct ExtractionCtx<'a> {
     pub req: &'a pingora_http::RequestHeader,
-    pub path_params: &'a HashMap<String, String>,
+    pub path_params: &'a HashMap<String, serde_json::Value>,
     /// The request-scoped user ctx bag written by interceptors.
     /// Required for `${{ctx.*}}` expressions; absent or `None` → `None`.
     pub user_ctx: Option<&'a serde_json::Map<String, serde_json::Value>>,
@@ -231,7 +231,10 @@ impl ContextRef {
                     .find(|(k, _)| k == key)
                     .map(|(_, v)| v.into_owned())
             }
-            Source::PathParam(name) => cx.path_params.get(name.as_str()).cloned(),
+            Source::PathParam(name) => cx.path_params.get(name.as_str()).map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            }),
             Source::Cookie(name) => {
                 let cookie_header = cx.req.headers.get("cookie")?;
                 let cookie_str = cookie_header.to_str().ok()?;
@@ -283,6 +286,7 @@ impl ContextRef {
                 }
                 self.extract(cx).map(serde_json::Value::String)
             }
+            Source::PathParam(name) => cx.path_params.get(name.as_str()).cloned(),
             Source::Body(field) => cx.body_json.and_then(|b| b.get(field.as_str())).cloned(),
             _ => self.extract(cx).map(serde_json::Value::String),
         }
@@ -433,7 +437,7 @@ mod tests {
 
     fn cx<'a>(
         req: &'a pingora_http::RequestHeader,
-        path_params: &'a HashMap<String, String>,
+        path_params: &'a HashMap<String, serde_json::Value>,
     ) -> ExtractionCtx<'a> {
         ExtractionCtx {
             req,
@@ -447,7 +451,7 @@ mod tests {
 
     fn cx_with_ctx<'a>(
         req: &'a pingora_http::RequestHeader,
-        path_params: &'a HashMap<String, String>,
+        path_params: &'a HashMap<String, serde_json::Value>,
         user_ctx: &'a serde_json::Map<String, serde_json::Value>,
     ) -> ExtractionCtx<'a> {
         ExtractionCtx {
@@ -614,7 +618,10 @@ mod tests {
     fn extracts_path_param() {
         let req = make_request("GET", "/users/42", vec![]);
         let mut params = HashMap::new();
-        params.insert("id".to_string(), "42".to_string());
+        params.insert(
+            "id".to_string(),
+            serde_json::Value::String("42".to_string()),
+        );
         let r = ContextRef::parse("${{path-param.id}}").unwrap();
         assert_eq!(r.extract(&cx(&req, &params)), Some("42".to_string()));
     }
@@ -815,6 +822,26 @@ mod tests {
             body_json: Some(&body),
         };
         assert_eq!(r.extract_value(&ecx), Some(json!(42)));
+    }
+
+    #[test]
+    fn extract_value_returns_typed_path_param() {
+        // Typed integer path param — coercion done upstream, stored as Value::Number.
+        let req = make_request("GET", "/users/42", vec![]);
+        let mut params = HashMap::new();
+        params.insert("id".to_string(), serde_json::Value::Number(42.into()));
+        let r = ContextRef::parse("${{path.id}}").unwrap();
+        assert_eq!(r.extract_value(&cx(&req, &params)), Some(json!(42)));
+    }
+
+    #[test]
+    fn extract_value_path_param_string_for_unknown_type() {
+        // Untyped path param falls back to string storage — extract_value preserves it.
+        let req = make_request("GET", "/items/abc", vec![]);
+        let mut params = HashMap::new();
+        params.insert("slug".to_string(), serde_json::Value::String("abc".into()));
+        let r = ContextRef::parse("${{path.slug}}").unwrap();
+        assert_eq!(r.extract_value(&cx(&req, &params)), Some(json!("abc")));
     }
 
     // ── ContextTemplate::parse ────────────────────────────────────────────────
