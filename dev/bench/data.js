@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777561594161,
+  "lastUpdate": 1777581935032,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -2592,6 +2592,78 @@ window.BENCHMARK_DATA = {
             "value": 3.726,
             "unit": "ms",
             "extra": "n=8134"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "89433b560240ff3014e114bd401d2a2f1cd9def5",
+          "message": "Merge pull request #155 from thesoftwarebakery/worktree-issue-151-query-params\n\nfeat: queryParams parsing + safe DB parameterization",
+          "timestamp": "2026-04-30T21:37:34+01:00",
+          "tree_id": "c12ce9c2c8931c62886da3829ab43ed9131e44f9",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/89433b560240ff3014e114bd401d2a2f1cd9def5"
+        },
+        "date": 1777581934564,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.869,
+            "unit": "ms",
+            "extra": "n=11502"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 3.595,
+            "unit": "ms",
+            "extra": "n=11502"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 1.005,
+            "unit": "ms",
+            "extra": "n=9950"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 3.701,
+            "unit": "ms",
+            "extra": "n=9950"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.412,
+            "unit": "ms",
+            "extra": "n=7085"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 3.676,
+            "unit": "ms",
+            "extra": "n=7085"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.228,
+            "unit": "ms",
+            "extra": "n=8143"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.558,
+            "unit": "ms",
+            "extra": "n=8143"
           }
         ]
       }
