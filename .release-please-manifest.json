@@ -1,7 +1,7 @@
 {
-  "plenum-core": "0.14.1",
+  "plenum-core": "0.15.0",
   "openapi-overlay": "0.2.0",
-  "plenum-js-runtime": "0.2.0",
+  "plenum-js-runtime": "0.3.0",
   "plenum-sandbox": "0.2.0",
-  "oas-query": "0.1.0"
+  "oas-query": "0.2.0"
 }
