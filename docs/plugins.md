@@ -52,7 +52,7 @@ The `handle()` function receives:
 |-------|-------------|
 | `request.method` | HTTP method |
 | `request.path` | Full request path |
-| `request.params` | Path parameters |
+| `request.params` | Path parameters (`Record<string, unknown>`), coerced to the declared schema type (`integer`, `boolean`, etc.) |
 | `request.query` | Raw query string (preserved for backward compatibility) |
 | `request.queryParams` | Parsed query parameters (`Record<string, unknown>`), typed per the OpenAPI spec |
 | `request.headers` | Request headers |

@@ -168,7 +168,7 @@ The function receives a request or response object depending on the hook:
 | `headers` | Request headers |
 | `query` | Raw query string |
 | `queryParams` | Parsed query parameters (`Record<string, unknown>`), typed per the OpenAPI spec |
-| `params` | Path parameters |
+| `params` | Path parameters (`Record<string, unknown>`), coerced to the declared schema type (`integer`, `boolean`, etc.) |
 | `ctx` | Context bag (shared across interceptors) |
 | `body` | Request body (`on_request` only) |
 | `options` | Per-interceptor config from overlay |
