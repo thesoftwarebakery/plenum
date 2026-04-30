@@ -99,10 +99,10 @@ x-plenum-upstream:
   plugin: "./plugins/db-query.js"
   timeout-ms: 5000
   options:
-    host: "${DB_HOST}"
+    host: "${{ env.DB_HOST }}"
   permissions:
     env: ["DB_HOST", "DB_PASSWORD"]
-    net: ["${DB_HOST}"]
+    net: ["${{ env.DB_HOST }}"]
 ```
 
 ## Built-in plugins
@@ -122,12 +122,12 @@ x-plenum-upstream:
   kind: "plugin"
   plugin: "internal:postgres"
   options:
-    host: "${DB_HOST}"
-    port: "${DB_PORT:-5432}"
-    database: "${DB_NAME}"
-    user: "${DB_USER}"
-    password: "${DB_PASSWORD}"
+    host: "${{ env.DB_HOST }}"
+    port: "${{ env.DB_PORT }}"
+    database: "${{ env.DB_NAME }}"
+    user: "${{ env.DB_USER }}"
+    password: "${{ env.DB_PASSWORD }}"
   permissions:
     env: ["DB_HOST", "DB_PORT", "DB_NAME", "DB_USER", "DB_PASSWORD"]
-    net: ["${DB_HOST}"]
+    net: ["${{ env.DB_HOST }}"]
 ```

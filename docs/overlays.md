@@ -131,4 +131,4 @@ Use different upstream overlays per environment:
 --openapi-overlay overlay-gateway.yaml,overlay-upstream-prod.yaml
 ```
 
-Where `overlay-upstream-dev.yaml` points to local services and `overlay-upstream-prod.yaml` points to production backends (or uses [environment variable substitution](env-vars.md)).
+Where `overlay-upstream-dev.yaml` points to local services and `overlay-upstream-prod.yaml` points to production backends (or uses [interpolation](interpolation.md) with `${{ env.VAR }}`).
