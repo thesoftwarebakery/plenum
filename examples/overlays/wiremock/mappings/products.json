@@ -2,7 +2,7 @@
   "mappings": [
     {
       "request": {
-        "method": "GET",
+        "method": "GET_OR_HEAD",
         "urlPathPattern": "/products(/[^/]+)?"
       },
       "response": {
@@ -19,7 +19,7 @@
     },
     {
       "request": {
-        "method": "GET",
+        "method": "GET_OR_HEAD",
         "urlPath": "/internal/debug"
       },
       "response": {

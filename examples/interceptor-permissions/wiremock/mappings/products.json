@@ -2,7 +2,7 @@
   "mappings": [
     {
       "request": {
-        "method": "GET",
+        "method": "GET_OR_HEAD",
         "urlPath": "/products"
       },
       "response": {

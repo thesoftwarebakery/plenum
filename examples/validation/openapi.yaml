@@ -1,0 +1,30 @@
+openapi: 3.1.0
+info:
+  title: Validation Example
+  version: 1.0.0
+paths:
+  /items:
+    post:
+      operationId: createItem
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                quantity:
+                  type: integer
+              required:
+                - name
+                - quantity
+      responses:
+        "201":
+          description: Created
+    get:
+      operationId: listItems
+      responses:
+        "200":
+          description: List of items

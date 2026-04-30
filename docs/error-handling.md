@@ -13,9 +13,12 @@ Plenum returns structured error responses when requests fail at the gateway leve
 | Status | When | Body |
 |--------|------|------|
 | `404` | No matching route in the spec | `{"error": "not found"}` |
-| `413` | Request body exceeds size limit | `{"error": "payload too large"}` |
+| `405` | Route exists but method not defined | `{"error": "method not allowed"}` |
+| `413` | Request body exceeds size limit | `{"error": "request body too large"}` |
 | `502` | Upstream connection failed | `{"error": "upstream connection failed"}` |
-| `504` | Request timeout exceeded | `{"error": "gateway timeout"}` |
+| `504` | Request timeout exceeded | `{"error": "request timeout exceeded"}` |
+
+The `405` response includes an `Allow` header listing the methods defined for that route.
 
 ## Custom error interceptor
 
