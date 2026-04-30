@@ -625,10 +625,10 @@ pub fn build_router(
                 .and_then(|v| v.as_array())
             {
                 for param_json in arr {
-                    if let Some(def) = ParameterDef::path_from_json(param_json) {
-                        if seen_path_params.insert(def.name.clone()) {
-                            path_param_schemas.push(def);
-                        }
+                    if let Some(def) = ParameterDef::path_from_json(param_json)
+                        && seen_path_params.insert(def.name.clone())
+                    {
+                        path_param_schemas.push(def);
                     }
                 }
             }
