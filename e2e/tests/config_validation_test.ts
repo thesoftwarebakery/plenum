@@ -111,10 +111,11 @@ test("gateway fails to start when plugin init() throws", async () => {
   }
 });
 
-test("gateway starts when plugin options use ${VAR:-default} for an unset env var", async () => {
+test("gateway starts when plugin options use ${{ env.VAR }} with the var set", async () => {
   const network = await new Network().start();
   const gateway = await startGateway({
     network,
+    environment: { PLENUM_TEST_HOST: "localhost" },
     fixtures: {
       openapi: "openapi-plugin.yaml",
       overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-upstream-default-var.yaml"],
@@ -125,7 +126,7 @@ test("gateway starts when plugin options use ${VAR:-default} for an unset env va
   });
 
   try {
-    // Gateway started successfully -- the default value resolved without error.
+    // Gateway started successfully -- the env var resolved without error.
   } finally {
     await gateway.container.stop();
     await network.stop();

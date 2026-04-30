@@ -1,6 +1,6 @@
 overlay: 1.1.0
 info:
-  title: Plugin upstream config with defaulted env var
+  title: Plugin upstream config with env var set via container environment
   version: 1.0.0
 actions:
   - target: $.paths[*]
@@ -9,4 +9,4 @@ actions:
         kind: "plugin"
         plugin: "./plugins/echo.js"
         options:
-          host: "${UNSET_VAR_FOR_TEST:-localhost}"
+          host: "${{ env.PLENUM_TEST_HOST }}"

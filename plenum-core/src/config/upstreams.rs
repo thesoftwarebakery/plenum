@@ -325,65 +325,6 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
     }
 }
 
-/// Replace `${VAR_NAME}` (and `${VAR:-default}`) patterns in a JSON value with environment
-/// variable values. Returns an error if a `${VAR}` pattern references an environment variable
-/// that is not set at all (use `${VAR:-default}` to provide a fallback). Variables set to `""`
-/// (empty string) resolve to `""` without error.
-pub fn resolve_env_vars(value: serde_json::Value) -> Result<serde_json::Value, String> {
-    match value {
-        serde_json::Value::String(s) => Ok(serde_json::Value::String(substitute_env_vars(&s)?)),
-        serde_json::Value::Object(map) => {
-            let new_map = map
-                .into_iter()
-                .map(|(k, v)| resolve_env_vars(v).map(|v| (k, v)))
-                .collect::<Result<_, _>>()?;
-            Ok(serde_json::Value::Object(new_map))
-        }
-        serde_json::Value::Array(arr) => {
-            let new_arr = arr
-                .into_iter()
-                .map(resolve_env_vars)
-                .collect::<Result<_, _>>()?;
-            Ok(serde_json::Value::Array(new_arr))
-        }
-        other => Ok(other),
-    }
-}
-
-fn substitute_env_vars(s: &str) -> Result<String, String> {
-    use std::borrow::Cow;
-    // Use Ok(None) for unset variables so that shellexpand's `${VAR:-default}` syntax works:
-    // when the lookup returns None, shellexpand applies the `:-` default if present.
-    // Variables set to "" return Ok(Some("")) and are passed through without error.
-    // Any `${VAR}` (no default) that is unset will be left as the literal `${VAR}` by
-    // shellexpand; we then error in a second pass.
-    let expanded = shellexpand::env_with_context(
-        s,
-        |var| -> Result<Option<Cow<str>>, std::convert::Infallible> {
-            match std::env::var(var) {
-                Ok(val) => Ok(Some(Cow::Owned(val))),
-                Err(_) => Ok(None),
-            }
-        },
-    )
-    .map(|s| s.into_owned())
-    .unwrap_or_else(|_| s.to_string());
-
-    // Second pass: any remaining ${VAR} patterns were left literal by shellexpand because the
-    // variable was not set (NotPresent). Error rather than silently substituting empty string.
-    if let Some(start) = expanded.find("${") {
-        let after_open = &expanded[start + 2..];
-        if let Some(end) = after_open.find('}') {
-            let var_name = &after_open[..end];
-            return Err(format!(
-                "environment variable '{}' is not set (use ${{{var_name}:-default}} to provide a fallback)",
-                var_name
-            ));
-        }
-    }
-    Ok(expanded)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,83 +545,11 @@ mod tests {
     }
 
     #[test]
-    fn resolve_env_vars_replaces_present_var() {
-        // SAFETY: single-threaded test, no other threads reading this var
-        unsafe { std::env::set_var("PLENUM_TEST_VAR_PRESENT", "hello") };
-        let value = serde_json::json!("prefix_${PLENUM_TEST_VAR_PRESENT}_suffix");
-        let result = resolve_env_vars(value).unwrap();
-        assert_eq!(result, serde_json::json!("prefix_hello_suffix"));
-    }
-
-    #[test]
-    fn resolve_env_vars_errors_on_missing_var() {
-        // Ensure the var is definitely unset
-        // SAFETY: single-threaded test, no other threads reading this var
-        unsafe { std::env::remove_var("PLENUM_TEST_VAR_DEFINITELY_MISSING") };
-        let value = serde_json::json!("${PLENUM_TEST_VAR_DEFINITELY_MISSING}");
-        let result = resolve_env_vars(value);
-        assert!(result.is_err(), "expected Err for unset variable");
-        let err = result.unwrap_err();
-        assert!(
-            err.contains("PLENUM_TEST_VAR_DEFINITELY_MISSING"),
-            "error should mention variable name, got: {err}"
-        );
-    }
-
-    #[test]
-    fn resolve_env_vars_leaves_value_without_patterns_unchanged() {
-        let value = serde_json::json!("no substitution here");
-        let result = resolve_env_vars(value).unwrap();
-        assert_eq!(result, serde_json::json!("no substitution here"));
-    }
-
-    #[test]
-    fn resolve_env_vars_handles_array_values() {
-        // SAFETY: single-threaded test
-        unsafe { std::env::set_var("PLENUM_TEST_ARRAY_VAR", "item") };
-        let value = serde_json::json!(["${PLENUM_TEST_ARRAY_VAR}", "literal"]);
-        let result = resolve_env_vars(value).unwrap();
-        assert_eq!(result, serde_json::json!(["item", "literal"]));
-    }
-
-    #[test]
-    fn resolve_env_vars_supports_default_syntax() {
-        unsafe { std::env::remove_var("PLENUM_TEST_DEFAULT_VAR") };
-        let value = serde_json::json!("${PLENUM_TEST_DEFAULT_VAR:-fallback}");
-        let result = resolve_env_vars(value).unwrap();
-        assert_eq!(result, serde_json::json!("fallback"));
-    }
-
-    #[test]
     fn rejects_upstream_config_with_missing_kind() {
         let json = serde_json::json!({ "address": "localhost", "port": 8080 });
         let result: Result<UpstreamConfig, _> = serde_json::from_value(json);
         let err = result.unwrap_err().to_string();
         assert!(err.contains("kind"), "got: {err}");
-    }
-
-    #[test]
-    fn resolve_env_vars_handles_nested_objects() {
-        // SAFETY: single-threaded test, no other threads reading this var
-        unsafe { std::env::set_var("PLENUM_TEST_NESTED_VAR", "world") };
-        let value = serde_json::json!({
-            "outer": "plain",
-            "inner": {
-                "key": "${PLENUM_TEST_NESTED_VAR}"
-            }
-        });
-        let result = resolve_env_vars(value).unwrap();
-        assert_eq!(result["inner"]["key"], serde_json::json!("world"));
-        assert_eq!(result["outer"], serde_json::json!("plain"));
-    }
-
-    #[test]
-    fn resolve_env_vars_allows_empty_string_env_var() {
-        // SAFETY: single-threaded test, no other threads reading this var
-        unsafe { std::env::set_var("PLENUM_TEST_EMPTY_STRING_VAR", "") };
-        let value = serde_json::json!("${PLENUM_TEST_EMPTY_STRING_VAR}");
-        let result = resolve_env_vars(value).unwrap();
-        assert_eq!(result, serde_json::json!(""));
     }
 
     #[test]
@@ -734,22 +603,6 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_static_variant_with_file_body() {
-        let json = serde_json::json!({
-            "kind": "static",
-            "status": 200,
-            "body": "file:./version.json"
-        });
-        let config: UpstreamConfig = serde_json::from_value(json).unwrap();
-        match config {
-            UpstreamConfig::Static { body, .. } => {
-                assert_eq!(body.unwrap(), "file:./version.json");
-            }
-            _ => panic!("expected Static variant"),
-        }
-    }
-
-    #[test]
     fn rejects_unknown_field_on_static_variant() {
         let json = serde_json::json!({
             "kind": "static",
@@ -761,15 +614,6 @@ mod tests {
             result.is_err(),
             "expected error for unknown field typo_field"
         );
-    }
-
-    #[test]
-    fn resolve_env_vars_allows_explicit_empty_default() {
-        // SAFETY: single-threaded test, no other threads reading this var
-        unsafe { std::env::remove_var("PLENUM_TEST_EXPLICIT_EMPTY_DEFAULT_VAR") };
-        let value = serde_json::json!("${PLENUM_TEST_EXPLICIT_EMPTY_DEFAULT_VAR:-}");
-        let result = resolve_env_vars(value).unwrap();
-        assert_eq!(result, serde_json::json!(""));
     }
 
     // -----------------------------------------------------------------------

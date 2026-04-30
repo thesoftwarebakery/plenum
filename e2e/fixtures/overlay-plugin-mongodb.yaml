@@ -15,12 +15,12 @@ actions:
             kind: "plugin"
             plugin: "internal:mongodb"
             options:
-              host: "${DB_HOST}"
-              port: "${DB_PORT:-27017}"
-              database: "${DB_NAME}"
+              host: "${{ env.DB_HOST }}"
+              port: "${{ env.DB_PORT }}"
+              database: "${{ env.DB_NAME }}"
             permissions:
               net:
-                - "${DB_HOST}"
+                - "${{ env.DB_HOST }}"
   - target: $.paths[*]
     update:
       x-plenum-upstream:

@@ -15,7 +15,7 @@ use plenum_js_runtime::PluginRuntime;
 
 use crate::config::{
     Config, CorsConfig, InterceptorConfig, RateLimitConfig, ServerConfig, UpstreamConfig,
-    resolve_env_vars, validate_rate_limit_config,
+    validate_rate_limit_config,
 };
 use crate::cors;
 use crate::load_balancing::{self, UpstreamPool};
@@ -369,10 +369,8 @@ pub fn build_router(
                 let h = match plugin_runtime_cache.entry(cache_key) {
                     std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
                     std::collections::hash_map::Entry::Vacant(e) => {
-                        // Resolve init options before spawning so env vars are substituted.
                         let init_options = match options.as_ref() {
-                            Some(o) => resolve_env_vars(o.clone())
-                                .map_err(|e| -> Box<dyn Error> { e.into() })?,
+                            Some(o) => o.clone(),
                             None => serde_json::json!({}),
                         };
 
@@ -423,18 +421,6 @@ pub fn build_router(
                 body,
             } => {
                 let body_bytes = match body {
-                    Some(s) if s.starts_with("file:") => {
-                        let file_ref = &s[5..];
-                        let file_path = config_base.join(file_ref);
-                        std::fs::read(&file_path).map_err(|e| {
-                            format!(
-                                "path '{}': static body file '{}': {}",
-                                path,
-                                file_path.display(),
-                                e
-                            )
-                        })?
-                    }
                     Some(s) => s.as_bytes().to_vec(),
                     None => Vec::new(),
                 };

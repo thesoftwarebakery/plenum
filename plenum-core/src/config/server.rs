@@ -105,20 +105,18 @@ impl ServerConfig {
     }
 }
 
-/// Expand env vars in `s`, resolve it relative to `config_base` if not absolute,
-/// then verify the resulting path exists. Returns the final absolute path.
+/// Resolve `s` relative to `config_base` if not absolute, then verify the
+/// resulting path exists. Returns the final absolute path.
+///
+/// Note: `${{ env.* }}` / `${{ file.* }}` interpolation is handled earlier by
+/// `Config::resolve()` before the value reaches this function.
 fn resolve_path_field(s: &str, config_base: &str, field: &str) -> Result<String, String> {
-    // Env var expansion: reuse the same logic as upstream config paths.
-    let expanded = super::resolve_env_vars(serde_json::Value::String(s.to_string()))
-        .map_err(|e| format!("{field}: {e}"))?;
-    let expanded = expanded.as_str().unwrap_or_default();
-
     // Resolve relative paths against the config directory.
-    let path = if std::path::Path::new(expanded).is_absolute() {
-        expanded.to_string()
+    let path = if std::path::Path::new(s).is_absolute() {
+        s.to_string()
     } else {
         std::path::Path::new(config_base)
-            .join(expanded)
+            .join(s)
             .to_string_lossy()
             .into_owned()
     };

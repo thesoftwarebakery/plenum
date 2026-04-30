@@ -104,6 +104,7 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
 | Extension | Level | Purpose |
 |-----------|-------|---------|
 | `x-plenum-config` | Spec root | Server settings (threads, listen, TLS, timeouts, body limits) |
+| `x-plenum-files` | Spec root | Named file map for `${{ file.KEY }}` interpolation |
 | `x-plenum-upstream` | Path item | Upstream target (HTTP, HTTP pool, plugin, static) |
 | `x-plenum-interceptor` | Operation | JS interceptor chain (array of hook configs) |
 | `x-plenum-cors` | Operation | CORS configuration |
@@ -131,7 +132,11 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
 ### Config resolution
 
 - `Config::extension()` handles `$ref` resolution automatically
-- Environment variable substitution: `${VAR}` and `${VAR:-default}` in string values
+- Boot-time interpolation in all extension string values using `${{ namespace.key }}` syntax:
+  - `${{ env.VAR_NAME }}` — environment variable (error if unset)
+  - `${{ file.KEY }}` — file contents from `x-plenum-files` map (error if key missing)
+  - Unknown namespaces (e.g. `${{ header.* }}`) pass through for runtime resolution
+- `x-plenum-files` maps named keys to file paths (relative to `config-path`), loaded at startup
 - Overlays are applied sequentially in the order specified
 
 ## Key conventions

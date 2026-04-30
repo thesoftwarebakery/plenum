@@ -15,14 +15,14 @@ actions:
             kind: "plugin"
             plugin: "internal:postgres"
             options:
-              host: "${DB_HOST}"
-              port: "${DB_PORT:-5432}"
-              database: "${DB_NAME}"
-              user: "${DB_USER}"
-              password: "${DB_PASSWORD}"
+              host: "${{ env.DB_HOST }}"
+              port: "${{ env.DB_PORT }}"
+              database: "${{ env.DB_NAME }}"
+              user: "${{ env.DB_USER }}"
+              password: "${{ env.DB_PASSWORD }}"
             permissions:
               net:
-                - "${DB_HOST}"
+                - "${{ env.DB_HOST }}"
   - target: $.paths[*]
     update:
       x-plenum-upstream:
