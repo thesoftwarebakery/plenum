@@ -69,7 +69,7 @@ fn main() {
     let conf = ServerConf {
         threads: server_config.threads,
         daemon: server_config.daemon,
-        ca_file: server_config.ca_file.clone(),
+        ca_file: server_config.ca.clone(),
         ..ServerConf::default()
     };
 
@@ -80,7 +80,7 @@ fn main() {
     proxy.add_tcp(&server_config.listen);
 
     if let Some(tls_config) = &server_config.tls {
-        match TlsSettings::intermediate(&tls_config.cert_path, &tls_config.key_path) {
+        match TlsSettings::intermediate(&tls_config.cert, &tls_config.key) {
             Ok(mut settings) => {
                 settings.enable_h2();
                 proxy.add_tls_with_settings(&tls_config.listen, None, settings);

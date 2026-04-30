@@ -10,6 +10,8 @@ All interpolation uses the same `${{ }}` template syntax:
 |------------|-------------|
 | `${{ env.VAR }}` | Value of environment variable `VAR` |
 | `${{ file.NAME }}` | Contents of a file declared in `x-plenum-files` |
+| `${{ file.NAME.content }}` | Same as above (explicit accessor) |
+| `${{ file.NAME.path }}` | Resolved absolute path to the file |
 
 Whitespace inside the braces is optional — `${{env.VAR}}` and `${{ env.VAR }}` are equivalent.
 
@@ -60,6 +62,29 @@ x-plenum-interceptor:
 
 Files are read at startup. Relative paths resolve against `--config-path`. Missing files cause a startup error.
 
+### File accessors
+
+Each file entry is a descriptor with two accessors:
+
+| Accessor | Description |
+|----------|-------------|
+| `${{ file.NAME }}` | File contents (default) |
+| `${{ file.NAME.content }}` | File contents (explicit) |
+| `${{ file.NAME.path }}` | Resolved absolute path to the file |
+
+The `.path` accessor is useful for fields that expect a filesystem path rather than inline content — for example, TLS certificate and key paths:
+
+```yaml
+x-plenum-files:
+  gateway-cert: /certs/gateway.crt
+  gateway-key: /certs/gateway.key
+
+x-plenum-config:
+  tls:
+    cert: "${{ file.gateway-cert.path }}"
+    key: "${{ file.gateway-key.path }}"
+```
+
 ### Declaring files via overlay
 
 ```yaml
@@ -78,7 +103,7 @@ actions:
 
 Interpolation applies to **all string values** in any `x-plenum-*` extension — universally, with no exceptions:
 
-- Upstream addresses, ports, TLS paths
+- Upstream addresses, ports, TLS cert/key/CA paths
 - Interceptor module paths and options
 - Plugin options and permissions
 - CORS origins and headers
@@ -92,7 +117,7 @@ The `${{ }}` syntax is also used for runtime context resolution in certain field
 | Namespace | Resolved at | Example |
 |-----------|------------|---------|
 | `env` | Boot time | `${{ env.API_KEY }}` |
-| `file` | Boot time | `${{ file.secret }}` |
+| `file` | Boot time | `${{ file.secret }}`, `${{ file.cert.path }}` |
 | `header` | Request time | `${{ header.x-user-id }}` |
 | `query` | Request time | `${{ query.page }}` |
 | `path` | Request time | `${{ path.id }}` |

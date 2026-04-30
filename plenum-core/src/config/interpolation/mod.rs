@@ -1,5 +1,18 @@
 use std::collections::HashMap;
 
+// ── File descriptor ───────────────────────────────────────────────────────
+
+/// A file declared in `x-plenum-files`, storing both its resolved absolute
+/// path and its contents. Accessed in templates via `${{ file.NAME.path }}`
+/// or `${{ file.NAME.content }}` (bare `${{ file.NAME }}` defaults to content).
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    /// Resolved absolute path to the file on disk.
+    pub path: String,
+    /// File contents (trailing newline stripped).
+    pub content: String,
+}
+
 // ── Shared template parser ──────────────────────────────────────────────────
 
 /// A single parsed `${{ namespace.key }}` token.
@@ -111,13 +124,15 @@ impl std::fmt::Display for Template {
 ///
 /// Boot-time namespaces resolved here:
 ///   - `env`  — process environment variables
-///   - `file` — entries from the `x-plenum-files` map (pre-loaded file contents)
+///   - `file` — entries from the `x-plenum-files` map, with accessor support:
+///     - `${{ file.NAME }}` or `${{ file.NAME.content }}` — file contents
+///     - `${{ file.NAME.path }}` — resolved absolute file path
 ///
 /// Any other namespace (e.g. `header`, `query`, `ctx`) is left as-is for
 /// runtime resolution.
 pub fn interpolate_value(
     value: serde_json::Value,
-    files: &HashMap<String, String>,
+    files: &HashMap<String, FileEntry>,
 ) -> Result<serde_json::Value, String> {
     match value {
         serde_json::Value::String(s) => {
@@ -144,7 +159,7 @@ pub fn interpolate_value(
 /// Interpolate boot-time tokens in a single string using the shared
 /// [`Template`] parser. Resolves `env` and `file` namespaces; passes
 /// through all others as literal text.
-fn interpolate_string(s: &str, files: &HashMap<String, String>) -> Result<String, String> {
+fn interpolate_string(s: &str, files: &HashMap<String, FileEntry>) -> Result<String, String> {
     let template = Template::parse(s)?;
     let mut result = String::with_capacity(s.len());
 
@@ -158,15 +173,9 @@ fn interpolate_string(s: &str, files: &HashMap<String, String>) -> Result<String
                         return Err(format!("environment variable '{}' is not set", token.key));
                     }
                 },
-                "file" => match files.get(&token.key) {
-                    Some(contents) => result.push_str(contents),
-                    None => {
-                        return Err(format!(
-                            "file key '{}' not found in x-plenum-files",
-                            token.key
-                        ));
-                    }
-                },
+                "file" => {
+                    result.push_str(&resolve_file_token(&token.key, files)?);
+                }
                 _ => {
                     // Unknown namespace — reconstruct original token for runtime
                     result.push_str("${{");
@@ -184,6 +193,38 @@ fn interpolate_string(s: &str, files: &HashMap<String, String>) -> Result<String
     }
 
     Ok(result)
+}
+
+/// Resolve a `file` namespace token key against the files map.
+///
+/// Supports accessors:
+///   - `NAME` or `NAME.content` → file contents
+///   - `NAME.path` → resolved absolute path
+///
+/// When the key contains a dot, we first check if the full key exists as a
+/// file entry (to avoid ambiguity with file names containing dots). If not,
+/// we split on the last dot to extract an accessor.
+fn resolve_file_token(key: &str, files: &HashMap<String, FileEntry>) -> Result<String, String> {
+    // Exact match — bare `${{ file.NAME }}` → content
+    if let Some(entry) = files.get(key) {
+        return Ok(entry.content.clone());
+    }
+
+    // Try splitting on the last dot to extract an accessor.
+    if let Some((name, accessor)) = key.rsplit_once('.')
+        && let Some(entry) = files.get(name)
+    {
+        return match accessor {
+            "content" => Ok(entry.content.clone()),
+            "path" => Ok(entry.path.clone()),
+            _ => Err(format!(
+                "unknown file accessor '.{accessor}' on '{name}' \
+                 (valid: .content, .path)"
+            )),
+        };
+    }
+
+    Err(format!("file key '{}' not found in x-plenum-files", key))
 }
 
 #[cfg(test)]
@@ -289,12 +330,56 @@ mod tests {
         assert_eq!(result.unwrap(), "");
     }
 
+    fn file_entry(path: &str, content: &str) -> FileEntry {
+        FileEntry {
+            path: path.to_string(),
+            content: content.to_string(),
+        }
+    }
+
     #[test]
     fn file_key_present() {
         let mut files = HashMap::new();
-        files.insert("MY_CERT".to_string(), "cert-contents".to_string());
+        files.insert(
+            "MY_CERT".to_string(),
+            file_entry("/certs/my.crt", "cert-contents"),
+        );
         let result = interpolate_string("${{ file.MY_CERT }}", &files);
         assert_eq!(result.unwrap(), "cert-contents");
+    }
+
+    #[test]
+    fn file_key_content_accessor() {
+        let mut files = HashMap::new();
+        files.insert(
+            "MY_CERT".to_string(),
+            file_entry("/certs/my.crt", "cert-contents"),
+        );
+        let result = interpolate_string("${{ file.MY_CERT.content }}", &files);
+        assert_eq!(result.unwrap(), "cert-contents");
+    }
+
+    #[test]
+    fn file_key_path_accessor() {
+        let mut files = HashMap::new();
+        files.insert(
+            "MY_CERT".to_string(),
+            file_entry("/certs/my.crt", "cert-contents"),
+        );
+        let result = interpolate_string("${{ file.MY_CERT.path }}", &files);
+        assert_eq!(result.unwrap(), "/certs/my.crt");
+    }
+
+    #[test]
+    fn file_key_unknown_accessor() {
+        let mut files = HashMap::new();
+        files.insert(
+            "MY_CERT".to_string(),
+            file_entry("/certs/my.crt", "cert-contents"),
+        );
+        let result = interpolate_string("${{ file.MY_CERT.unknown }}", &files);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("unknown file accessor"));
     }
 
     #[test]
@@ -308,7 +393,7 @@ mod tests {
     fn mixed_env_and_file() {
         unsafe { std::env::set_var("PLENUM_TEST_INTERP_MIX", "world") };
         let mut files = HashMap::new();
-        files.insert("GREETING".to_string(), "hello".to_string());
+        files.insert("GREETING".to_string(), file_entry("/greet.txt", "hello"));
         let result = interpolate_string(
             "${{ file.GREETING }}_${{ env.PLENUM_TEST_INTERP_MIX }}",
             &files,

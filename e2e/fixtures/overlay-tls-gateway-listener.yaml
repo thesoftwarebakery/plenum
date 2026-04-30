@@ -7,6 +7,6 @@ actions:
     update:
       x-plenum-config:
         tls:
-          cert-path: "/certs/gateway.crt"
-          key-path: "/certs/gateway.key"
+          cert: "/certs/gateway.crt"
+          key: "/certs/gateway.key"
           listen: "0.0.0.0:6189"
