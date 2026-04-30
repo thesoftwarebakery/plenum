@@ -3,7 +3,10 @@
   "release-type": "rust",
   "plugins": ["cargo-workspace"],
   "packages": {
-    "plenum-core": {}
+    ".": {
+      "component": "plenum-core",
+      "exclude-paths": ["e2e", "docs", "examples", "sdk", ".github"]
+    }
   },
   "include-component-in-tag": false
 }
