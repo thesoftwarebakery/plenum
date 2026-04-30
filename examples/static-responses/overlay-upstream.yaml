@@ -1,0 +1,31 @@
+overlay: 1.1.0
+info:
+  title: Upstream configuration
+  version: 1.0.0
+actions:
+  # Static health endpoint
+  - target: "$.paths['/health']"
+    update:
+      x-plenum-upstream:
+        kind: "static"
+        status: 200
+        headers:
+          Content-Type: application/json
+        body: '{"status": "healthy"}'
+
+  # Static redirect
+  - target: "$.paths['/old-path']"
+    update:
+      x-plenum-upstream:
+        kind: "static"
+        status: 301
+        headers:
+          Location: "http://localhost:6188/products"
+
+  # Proxied route
+  - target: "$.paths['/products']"
+    update:
+      x-plenum-upstream:
+        kind: "HTTP"
+        address: "backend"
+        port: 8080
