@@ -3,7 +3,9 @@
   "release-type": "rust",
   "plugins": ["cargo-workspace"],
   "packages": {
-    "plenum-core": {}
+    ".": {
+      "component": "plenum-core"
+    }
   },
   "include-component-in-tag": false
 }
