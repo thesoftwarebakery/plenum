@@ -1,0 +1,55 @@
+overlay: 1.1.0
+info:
+  title: Gateway configuration with shared $ref definitions
+  version: 1.0.0
+actions:
+  # Define all shared config under components
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        listen: "0.0.0.0:6188"
+      components:
+        # Shared upstream definitions
+        x-upstreams:
+          default:
+            kind: "HTTP"
+            address: "backend"
+            port: 8080
+        # Shared interceptor chains
+        x-interceptors:
+          require-api-key:
+            - module: "./interceptors/check-api-key.js"
+              hook: on_request_headers
+              function: checkApiKey
+              permissions:
+                env: ["API_KEY"]
+        # Shared CORS policies
+        x-cors-policies:
+          public:
+            origins: ["*"]
+            methods: [GET]
+            max-age: 86400
+
+  # All paths use the default upstream
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/default"
+
+  # Protected endpoints share the same auth interceptor
+  - target: "$.paths['/products'].get"
+    update:
+      x-plenum-interceptor:
+        $ref: "#/components/x-interceptors/require-api-key"
+
+  - target: "$.paths['/orders'].get"
+    update:
+      x-plenum-interceptor:
+        $ref: "#/components/x-interceptors/require-api-key"
+
+  # Public endpoint gets the public CORS policy
+  - target: "$.paths['/public/status'].get"
+    update:
+      x-plenum-cors:
+        $ref: "#/components/x-cors-policies/public"

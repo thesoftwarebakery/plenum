@@ -1,0 +1,12 @@
+{
+  "mappings": [
+    {
+      "request": { "method": "GET_OR_HEAD", "urlPath": "/products" },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "backend": "backend-3" }
+      }
+    }
+  ]
+}

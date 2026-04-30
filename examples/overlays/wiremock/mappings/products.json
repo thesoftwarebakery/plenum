@@ -12,13 +12,25 @@
         },
         "jsonBody": {
           "method": "{{request.method}}",
-          "path": "{{request.path}}",
-          "headers": {
-            "host": "{{request.headers.Host}}",
-            "user-agent": "{{request.headers.User-Agent}}"
-          }
+          "path": "{{request.path}}"
         },
         "transformers": ["response-template"]
+      }
+    },
+    {
+      "request": {
+        "method": "GET_OR_HEAD",
+        "urlPath": "/internal/debug"
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "jsonBody": {
+          "env": "dev",
+          "debug": true
+        }
       }
     }
   ]

@@ -1,0 +1,26 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "POST",
+        "urlPath": "/items"
+      },
+      "response": {
+        "status": 201,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "id": "abc-123", "created": true }
+      }
+    },
+    {
+      "request": {
+        "method": "GET_OR_HEAD",
+        "urlPath": "/items"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "items": [] }
+      }
+    }
+  ]
+}

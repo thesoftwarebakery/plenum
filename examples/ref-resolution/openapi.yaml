@@ -1,0 +1,23 @@
+openapi: 3.1.0
+info:
+  title: Ref Resolution Example
+  version: 1.0.0
+paths:
+  /products:
+    get:
+      operationId: listProducts
+      responses:
+        "200":
+          description: List of products
+  /orders:
+    get:
+      operationId: listOrders
+      responses:
+        "200":
+          description: List of orders
+  /public/status:
+    get:
+      operationId: status
+      responses:
+        "200":
+          description: Public status

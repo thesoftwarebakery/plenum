@@ -1,0 +1,103 @@
+# Interpolation
+
+Plenum supports boot-time interpolation in all `x-plenum-*` extension string values using the `${{ namespace.key }}` syntax. This lets you inject environment variables, file contents, and other values into your configuration.
+
+## Syntax
+
+All interpolation uses the same `${{ }}` template syntax:
+
+| Expression | Description |
+|------------|-------------|
+| `${{ env.VAR }}` | Value of environment variable `VAR` |
+| `${{ file.NAME }}` | Contents of a file declared in `x-plenum-files` |
+
+Whitespace inside the braces is optional — `${{env.VAR}}` and `${{ env.VAR }}` are equivalent.
+
+## Environment variables
+
+Reference environment variables with `${{ env.VAR }}`:
+
+```yaml
+x-plenum-upstream:
+  kind: "HTTP"
+  address: "${{ env.BACKEND_HOST }}"
+  port: 8080
+```
+
+If the variable is not set, Plenum fails at startup with an error. To provide defaults, set them when running the container:
+
+```bash
+docker run -e BACKEND_HOST=api.example.com ...
+```
+
+Or in Docker Compose:
+
+```yaml
+environment:
+  - BACKEND_HOST=${BACKEND_HOST:-localhost}
+```
+
+## File interpolation
+
+Inject file contents into config values using `${{ file.NAME }}`. First, declare your files in `x-plenum-files` at the spec root:
+
+```yaml
+x-plenum-files:
+  jwt-secret: /run/secrets/jwt-secret
+  ca-bundle: /etc/ssl/custom-ca.pem
+```
+
+Then reference them by name:
+
+```yaml
+x-plenum-interceptor:
+  - module: "./interceptors/auth.js"
+    hook: on_request_headers
+    function: checkJwt
+    options:
+      secret: "${{ file.jwt-secret }}"
+```
+
+Files are read at startup. Relative paths resolve against `--config-path`. Missing files cause a startup error.
+
+### Declaring files via overlay
+
+```yaml
+overlay: 1.1.0
+info:
+  title: File declarations
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-files:
+        jwt-secret: /run/secrets/jwt-secret
+```
+
+## Where interpolation works
+
+Interpolation applies to **all string values** in any `x-plenum-*` extension — universally, with no exceptions:
+
+- Upstream addresses, ports, TLS paths
+- Interceptor module paths and options
+- Plugin options and permissions
+- CORS origins and headers
+- Static response bodies
+- Backend config values
+
+## Runtime tokens
+
+The `${{ }}` syntax is also used for runtime context resolution in certain fields (e.g. `hash-key` in load balancing, queries in `x-plenum-backend`). These use different namespaces:
+
+| Namespace | Resolved at | Example |
+|-----------|------------|---------|
+| `env` | Boot time | `${{ env.API_KEY }}` |
+| `file` | Boot time | `${{ file.secret }}` |
+| `header` | Request time | `${{ header.x-user-id }}` |
+| `query` | Request time | `${{ query.page }}` |
+| `path` | Request time | `${{ path.id }}` |
+| `body` | Request time | `${{ body.name }}` |
+| `cookie` | Request time | `${{ cookie.session }}` |
+| `client-ip` | Request time | `${{ client-ip }}` |
+
+Boot-time tokens (`env`, `file`) are resolved once at startup. Runtime tokens pass through and are resolved per-request.

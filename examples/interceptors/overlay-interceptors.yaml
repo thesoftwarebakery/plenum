@@ -1,0 +1,25 @@
+overlay: 1.1.0
+info:
+  title: Interceptor configuration
+  version: 1.0.0
+actions:
+  # Chain two interceptors on /products:
+  # 1. Add a request ID header (on_request_headers)
+  # 2. Tag the response (on_response)
+  - target: "$.paths['/products'].get"
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/add-request-id.js"
+          hook: on_request_headers
+          function: addRequestId
+        - module: "./interceptors/tag-response.js"
+          hook: on_response
+          function: tagResponse
+
+  # Short-circuit /admin with 403 unless x-admin-key header is present
+  - target: "$.paths['/admin'].get"
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/require-admin.js"
+          hook: on_request_headers
+          function: requireAdmin

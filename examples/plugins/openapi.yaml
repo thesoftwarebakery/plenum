@@ -1,0 +1,33 @@
+openapi: 3.1.0
+info:
+  title: Plugins Example
+  version: 1.0.0
+paths:
+  /echo:
+    get:
+      operationId: echoGet
+      responses:
+        "200":
+          description: Echo response
+    post:
+      operationId: echoPost
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: Echo response
+  /echo/{id}:
+    get:
+      operationId: echoById
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Echo response with path param

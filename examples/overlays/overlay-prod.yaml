@@ -1,0 +1,8 @@
+overlay: 1.1.0
+info:
+  title: Production overrides
+  version: 1.0.0
+actions:
+  # Remove internal debug endpoint in production
+  - target: "$.paths['/internal/debug']"
+    remove: true

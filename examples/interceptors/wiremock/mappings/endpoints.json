@@ -3,7 +3,7 @@
     {
       "request": {
         "method": "GET_OR_HEAD",
-        "urlPathPattern": "/products(/[^/]+)?"
+        "urlPathPattern": "/(products|admin)"
       },
       "response": {
         "status": 200,
@@ -11,12 +11,8 @@
           "Content-Type": "application/json"
         },
         "jsonBody": {
-          "method": "{{request.method}}",
           "path": "{{request.path}}",
-          "headers": {
-            "host": "{{request.headers.Host}}",
-            "user-agent": "{{request.headers.User-Agent}}"
-          }
+          "requestId": "{{request.headers.x-request-id}}"
         },
         "transformers": ["response-template"]
       }

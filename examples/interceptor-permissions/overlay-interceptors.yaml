@@ -1,0 +1,13 @@
+overlay: 1.1.0
+info:
+  title: Interceptor with permissions
+  version: 1.0.0
+actions:
+  - target: "$.paths['/products'].get"
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/check-api-key.js"
+          hook: on_request_headers
+          function: checkApiKey
+          permissions:
+            env: ["API_KEY"]

@@ -1,0 +1,50 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET_OR_HEAD",
+        "urlPath": "/fast"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "speed": "fast" }
+      }
+    },
+    {
+      "request": {
+        "method": "GET_OR_HEAD",
+        "urlPath": "/slow"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "speed": "slow" },
+        "fixedDelayMilliseconds": 3000
+      }
+    },
+    {
+      "request": {
+        "method": "GET_OR_HEAD",
+        "urlPath": "/slow-with-override"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "speed": "slow but allowed" },
+        "fixedDelayMilliseconds": 3000
+      }
+    },
+    {
+      "request": {
+        "method": "POST",
+        "urlPath": "/upload"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "uploaded": true }
+      }
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+openapi: 3.1.0
+info:
+  title: Error Handling Example
+  version: 1.0.0
+paths:
+  /products:
+    get:
+      operationId: listProducts
+      responses:
+        "200":
+          description: List of products

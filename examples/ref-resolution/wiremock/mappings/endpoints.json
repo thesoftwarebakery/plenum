@@ -1,0 +1,37 @@
+{
+  "mappings": [
+    {
+      "request": {
+        "method": "GET_OR_HEAD",
+        "urlPath": "/products"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "endpoint": "products" }
+      }
+    },
+    {
+      "request": {
+        "method": "GET_OR_HEAD",
+        "urlPath": "/orders"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "endpoint": "orders" }
+      }
+    },
+    {
+      "request": {
+        "method": "GET_OR_HEAD",
+        "urlPath": "/public/status"
+      },
+      "response": {
+        "status": 200,
+        "headers": { "Content-Type": "application/json" },
+        "jsonBody": { "status": "ok" }
+      }
+    }
+  ]
+}
