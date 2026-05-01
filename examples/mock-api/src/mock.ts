@@ -1,4 +1,4 @@
-import jsf from "json-schema-faker";
+import { generate } from "json-schema-faker";
 
 interface PluginInput {
   request: {
@@ -36,7 +36,7 @@ interface PluginOutput {
 }
 
 /**
- * Simple djb2 hash — turns a string into a stable integer seed.
+ * djb2 hash — turns a string into a stable integer seed for list endpoints.
  */
 function hashCode(str: string): number {
   let hash = 5381;
@@ -46,9 +46,6 @@ function hashCode(str: string): number {
   return hash >>> 0;
 }
 
-/**
- * Extract the response schema for a given status code from the operation.
- */
 function getResponseSchema(
   operation: PluginInput["operation"],
   statusCode = "200",
@@ -57,21 +54,15 @@ function getResponseSchema(
   if (!response) return null;
   const content = response.content;
   if (!content) return null;
-  const mediaType =
-    content["application/json"] || Object.values(content)[0];
+  const mediaType = content["application/json"] || Object.values(content)[0];
   return mediaType?.schema ?? null;
 }
 
 export function init() {
-  // json-schema-faker configuration
-  jsf.option("useDefaultValue", true);
-  jsf.option("useExamplesValue", true);
-  jsf.option("minItems", 1);
-  jsf.option("maxItems", 5);
   return {};
 }
 
-export function handle(input: PluginInput): PluginOutput {
+export async function handle(input: PluginInput): Promise<PluginOutput> {
   const schema = getResponseSchema(input.operation);
 
   if (!schema) {
@@ -82,25 +73,23 @@ export function handle(input: PluginInput): PluginOutput {
     };
   }
 
-  // Determine seed from path params or page query param (for deterministic output)
-  const idParam = input.request.params["id"];
-  const pageParam = input.request.queryParams["page"];
+  // Derive a stable integer seed:
+  // - entity endpoints: id is already a typed integer (per OpenAPI schema)
+  // - list endpoints: hash path + page so each route/page combination is distinct
+  const idParam = input.request.params["id"] as number | undefined;
+  const pageParam = input.request.queryParams["page"] as number | undefined;
   const seed = idParam != null
-    ? hashCode(String(idParam))
+    ? idParam
     : hashCode(input.request.path + ":" + (pageParam ?? 0));
 
-  // LCG seeded random — same seed always produces same sequence
-  const a = 1664525;
-  const c = 1013904223;
-  const m = 2 ** 32;
-  let s = seed;
-  jsf.option("random", () => {
-    s = (a * s + c) % m;
-    return s / m;
-  });
-
   try {
-    const body = jsf.generate(schema as any);
+    const body = await generate(schema as any, {
+      seed,
+      useDefaultValue: true,
+      useExamplesValue: true,
+      minItems: 1,
+      maxItems: 5,
+    });
     return {
       status: 200,
       headers: { "content-type": "application/json" },

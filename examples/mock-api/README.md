@@ -66,15 +66,11 @@ curl http://localhost:6188/products/1
 
 The plugin reads the response schema from `input.operation.responses["200"].content["application/json"].schema` at request time. It seeds json-schema-faker with a hash of the `{id}` path parameter, producing deterministic output — the same ID always generates the same fake data.
 
-The TypeScript source in `src/mock.ts` is compiled to a single JavaScript file via esbuild. The `json-schema-faker` dependency is marked as `--external` in the build command, so it's resolved from `node_modules/` at runtime via the volume mount rather than being inlined in the bundle.
+The TypeScript source in `src/mock.ts` is compiled to a single JavaScript file via esbuild, with `json-schema-faker` bundled in. The plugin uses json-schema-faker's first-class `seed` option in `generate()` — no custom RNG needed.
 
 List endpoints accept a `page` query parameter (default `0`) that seeds the random generator, so different pages produce different but deterministic data.
 
-## Build notes
-
-This example uses `--external:json-schema-faker` in the esbuild command. This is necessary because `json-schema-faker` bundles a vendored dependency that uses a UMD wrapper — when esbuild inlines it, the wrapper's `module.exports = f()` clobbers the plugin's own exports, causing a "function 'init' not found in module exports" error at startup.
-
-For more on this and other plugin authoring patterns, see the [Writing Plugins](../../docs/writing-plugins/index.md) guide.
+For more on plugin authoring patterns, see the [Writing Plugins](../../docs/writing-plugins/index.md) guide.
 
 ## Cleanup
 
