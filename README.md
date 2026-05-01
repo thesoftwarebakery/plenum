@@ -64,8 +64,26 @@ More single-feature examples covering [CORS](examples/cors/), [interceptors](exa
 
 ## Documentation
 
-- [Quickstart guide](docs/quickstart.md) — step-by-step setup with configuration reference
-- [Writing Plugins](docs/writing-plugins/index.md) — TypeScript setup, bundling, and dependency management
+**Getting started**
+- [Quickstart](docs/quickstart.md) — step-by-step setup and configuration reference
+
+**Configuration**
+- [OpenAPI Overlays](docs/overlays.md) — keeping gateway config separate from your API spec
+- [Interpolation](docs/interpolation.md) — `${{ env.VAR }}`, `${{ file.KEY }}`, and other substitution patterns
+- [`$ref` resolution](docs/ref-resolution.md) — sharing upstream definitions across routes
+
+**Features**
+- [Interceptors](docs/interceptors.md) — lifecycle hooks for auth, header injection, and request/response transforms
+- [Interceptor permissions](docs/interceptor-permissions.md) — sandboxed access to env vars, filesystem, and network
+- [Plugins](docs/plugins.md) — JavaScript handlers for databases and custom logic
+- [Writing plugins](docs/writing-plugins/index.md) — TypeScript, bundling, and dependency management
+- [CORS](docs/cors.md) — per-operation CORS configuration with origin matching and preflight support
+- [Request validation](docs/validation.md) — automatic schema validation against your OpenAPI spec
+- [Load balancing](docs/load-balancing.md) — backend pools, health checks, and selection algorithms
+- [Static responses](docs/static-responses.md) — pre-built responses without hitting a backend
+- [TLS](docs/tls.md) — inbound termination and outbound upstream verification
+- [Timeouts and body limits](docs/timeouts.md) — protecting backends from slow or oversized requests
+- [Error handling](docs/error-handling.md) — customizing gateway-level error responses
 
 ## Contributing
 
