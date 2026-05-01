@@ -1,0 +1,13 @@
+{
+  "name": "mock-api-example",
+  "private": true,
+  "scripts": {
+    "build": "esbuild src/mock.ts --bundle --format=cjs --platform=node --target=node22 --outfile=dist/mock.js"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "dependencies": {
+    "json-schema-faker": "^0.6.1"
+  }
+}

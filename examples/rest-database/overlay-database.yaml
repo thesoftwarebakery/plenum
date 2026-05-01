@@ -1,0 +1,148 @@
+overlay: 1.1.0
+info:
+  title: Per-operation database queries
+  version: 1.0.0
+actions:
+  # ── Users ──────────────────────────────────────────────
+  - target: $.paths['/users'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, name, email, created_at FROM users ORDER BY id LIMIT $1 OFFSET $2"
+        params:
+          - "${{query.limit}}"
+          - "${{query.offset}}"
+        fields:
+          created_at: "createdAt"
+
+  - target: $.paths['/users'].post
+    update:
+      x-plenum-backend:
+        query: "INSERT INTO users (name, email) VALUES ($1, $2) RETURNING id, name, email, created_at"
+        params:
+          - "${{body.name}}"
+          - "${{body.email}}"
+        fields:
+          created_at: "createdAt"
+        returns: "/0"
+
+  - target: $.paths['/users/{id}'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, name, email, created_at FROM users WHERE id = $1"
+        params:
+          - "${{path.id}}"
+        fields:
+          created_at: "createdAt"
+        returns: "/0"
+
+  - target: $.paths['/users/{id}'].put
+    update:
+      x-plenum-backend:
+        query: "UPDATE users SET name = $1, email = $2 WHERE id = $3 RETURNING id, name, email, created_at"
+        params:
+          - "${{body.name}}"
+          - "${{body.email}}"
+          - "${{path.id}}"
+        fields:
+          created_at: "createdAt"
+        returns: "/0"
+
+  - target: $.paths['/users/{id}'].delete
+    update:
+      x-plenum-backend:
+        query: "DELETE FROM users WHERE id = $1"
+        params:
+          - "${{path.id}}"
+
+  # ── User's Posts (join) ────────────────────────────────
+  - target: $.paths['/users/{id}/posts'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, user_id, title, body, created_at FROM posts WHERE user_id = $1 ORDER BY id"
+        params:
+          - "${{path.id}}"
+        fields:
+          user_id: "userId"
+          created_at: "createdAt"
+
+  # ── Posts ───────────────────────────────────────────────
+  - target: $.paths['/posts'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, user_id, title, body, created_at FROM posts ORDER BY id LIMIT $1 OFFSET $2"
+        params:
+          - "${{query.limit}}"
+          - "${{query.offset}}"
+        fields:
+          user_id: "userId"
+          created_at: "createdAt"
+
+  - target: $.paths['/posts'].post
+    update:
+      x-plenum-backend:
+        query: "INSERT INTO posts (user_id, title, body) VALUES ($1, $2, $3) RETURNING id, user_id, title, body, created_at"
+        params:
+          - "${{body.userId}}"
+          - "${{body.title}}"
+          - "${{body.body}}"
+        fields:
+          user_id: "userId"
+          created_at: "createdAt"
+        returns: "/0"
+
+  - target: $.paths['/posts/{id}'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, user_id, title, body, created_at FROM posts WHERE id = $1"
+        params:
+          - "${{path.id}}"
+        fields:
+          user_id: "userId"
+          created_at: "createdAt"
+        returns: "/0"
+
+  - target: $.paths['/posts/{id}'].put
+    update:
+      x-plenum-backend:
+        query: "UPDATE posts SET title = $1, body = $2 WHERE id = $3 RETURNING id, user_id, title, body, created_at"
+        params:
+          - "${{body.title}}"
+          - "${{body.body}}"
+          - "${{path.id}}"
+        fields:
+          user_id: "userId"
+          created_at: "createdAt"
+        returns: "/0"
+
+  - target: $.paths['/posts/{id}'].delete
+    update:
+      x-plenum-backend:
+        query: "DELETE FROM posts WHERE id = $1"
+        params:
+          - "${{path.id}}"
+
+  # ── Comments ───────────────────────────────────────────
+  - target: $.paths['/posts/{id}/comments'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, post_id, author_name, body, created_at FROM comments WHERE post_id = $1 ORDER BY id"
+        params:
+          - "${{path.id}}"
+        fields:
+          post_id: "postId"
+          author_name: "authorName"
+          created_at: "createdAt"
+
+  - target: $.paths['/posts/{id}/comments'].post
+    update:
+      x-plenum-backend:
+        query: "INSERT INTO comments (post_id, author_name, body) VALUES ($1, $2, $3) RETURNING id, post_id, author_name, body, created_at"
+        params:
+          - "${{path.id}}"
+          - "${{body.authorName}}"
+          - "${{body.body}}"
+        fields:
+          post_id: "postId"
+          author_name: "authorName"
+          created_at: "createdAt"
+        returns: "/0"

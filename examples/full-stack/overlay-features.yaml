@@ -1,0 +1,143 @@
+overlay: 1.1.0
+info:
+  title: Per-operation feature configuration
+  version: 1.0.0
+actions:
+  # ── Static responses ───────────────────────────────────
+  - target: $.paths['/health']
+    update:
+      x-plenum-upstream:
+        kind: "static"
+        status: 200
+        headers:
+          content-type: "application/json"
+        body: '{"status":"healthy"}'
+
+  - target: $.paths['/public/info']
+    update:
+      x-plenum-upstream:
+        kind: "static"
+        status: 200
+        headers:
+          content-type: "application/json"
+        body: '{"name":"Full Stack API","version":"1.0.0"}'
+
+  # ── CORS ───────────────────────────────────────────────
+  - target: $.paths['/public/info'].get
+    update:
+      x-plenum-cors:
+        origins: ["*"]
+        methods: ["GET"]
+        headers: ["Content-Type"]
+        max-age: 3600
+
+  - target: $.paths['/products'].get
+    update:
+      x-plenum-cors:
+        origins: ["https://example.com", "*.example.com"]
+        methods: ["GET"]
+        headers: ["Content-Type", "Authorization"]
+        allow-credentials: true
+        max-age: 3600
+
+  # ── Rate limiting on write operations ──────────────────
+  - target: $.paths['/products'].post
+    update:
+      x-plenum-rate-limit:
+        identifier: "${{ header.x-api-key }}"
+        window: "60s"
+        limit: 5
+        enforce: true
+      x-plenum-max-request-body-bytes: 10240
+
+  - target: $.paths['/products/{id}'].put
+    update:
+      x-plenum-rate-limit:
+        identifier: "${{ header.x-api-key }}"
+        window: "60s"
+        limit: 5
+        enforce: true
+
+  # ── Auth + validation on write operations ──────────────
+  - target: $.paths['/products'].post
+    update:
+      x-plenum-interceptor:
+        - module: "internal:auth-apikey"
+          hook: on_request_headers
+          function: checkApiKey
+          options:
+            envVar: "API_KEY"
+            header: "x-api-key"
+          permissions:
+            env: ["API_KEY"]
+        - module: "internal:validate-request"
+          hook: on_request
+          function: validateRequest
+
+  - target: $.paths['/products/{id}'].put
+    update:
+      x-plenum-interceptor:
+        - module: "internal:auth-apikey"
+          hook: on_request_headers
+          function: checkApiKey
+          options:
+            envVar: "API_KEY"
+            header: "x-api-key"
+          permissions:
+            env: ["API_KEY"]
+        - module: "internal:validate-request"
+          hook: on_request
+          function: validateRequest
+
+  # ── Request timeout on product detail ──────────────────
+  - target: $.paths['/products/{id}'].get
+    update:
+      x-plenum-request-timeout: 3000
+
+  # ── Database routes ────────────────────────────────────
+  - target: $.paths['/items']
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/db"
+  - target: $.paths['/items/{id}']
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/db"
+
+  - target: $.paths['/items'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, name, description, created_at FROM items ORDER BY id"
+        fields:
+          created_at: "createdAt"
+
+  - target: $.paths['/items'].post
+    update:
+      x-plenum-backend:
+        query: "INSERT INTO items (name, description) VALUES ($1, $2) RETURNING id, name, description, created_at"
+        params:
+          - "${{body.name}}"
+          - "${{body.description}}"
+        fields:
+          created_at: "createdAt"
+        returns: "/0"
+      x-plenum-interceptor:
+        - module: "internal:validate-request"
+          hook: on_request
+          function: validateRequest
+
+  - target: $.paths['/items/{id}'].get
+    update:
+      x-plenum-backend:
+        query: "SELECT id, name, description, created_at FROM items WHERE id = $1"
+        params:
+          - "${{path.id}}"
+        fields:
+          created_at: "createdAt"
+        returns: "/0"
+
+  # ── Load-balanced pool ─────────────────────────────────
+  - target: $.paths['/pool/status']
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/pool"

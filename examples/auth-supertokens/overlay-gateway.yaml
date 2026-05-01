@@ -1,0 +1,25 @@
+overlay: 1.1.0
+info:
+  title: Gateway configuration
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        listen: "0.0.0.0:6188"
+      components:
+        x-upstreams:
+          auth:
+            kind: "plugin"
+            plugin: "./dist/auth-plugin.js"
+            options:
+              supertokensUri: "${{ env.SUPERTOKENS_URI }}"
+              apiKey: "${{ env.API_KEY }}"
+            permissions:
+              net: ["supertokens"]
+              env: ["SUPERTOKENS_URI", "API_KEY"]
+          backend:
+            kind: "HTTP"
+            address: "backend"
+            port: 8080

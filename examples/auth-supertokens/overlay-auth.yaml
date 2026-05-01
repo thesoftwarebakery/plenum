@@ -1,0 +1,51 @@
+overlay: 1.1.0
+info:
+  title: Auth routes and interceptors
+  version: 1.0.0
+actions:
+  # Auth routes use the auth plugin
+  - target: $.paths['/auth/signup']
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/auth"
+  - target: $.paths['/auth/signup'].post
+    update:
+      x-plenum-backend:
+        action: "signup"
+
+  - target: $.paths['/auth/signin']
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/auth"
+  - target: $.paths['/auth/signin'].post
+    update:
+      x-plenum-backend:
+        action: "signin"
+
+  # Protected route — verify session interceptor + HTTP backend
+  - target: $.paths['/protected/profile']
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/backend"
+  - target: $.paths['/protected/profile'].get
+    update:
+      x-plenum-interceptor:
+        - module: "./dist/verify-session.js"
+          hook: on_request_headers
+          function: verifySession
+          options:
+            supertokensUri: "${{ env.SUPERTOKENS_URI }}"
+            apiKey: "${{ env.API_KEY }}"
+          permissions:
+            net: ["supertokens"]
+            env: ["SUPERTOKENS_URI", "API_KEY"]
+
+  # Public health endpoint — static response, no auth
+  - target: $.paths['/public/health']
+    update:
+      x-plenum-upstream:
+        kind: "static"
+        status: 200
+        headers:
+          content-type: "application/json"
+        body: '{"status":"healthy"}'

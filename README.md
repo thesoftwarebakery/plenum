@@ -48,11 +48,42 @@ docker run -d \
   ghcr.io/thesoftwarebakery/plenum
 ```
 
+## Examples
+
+Complete, runnable examples — each with its own `docker-compose.yaml` and README:
+
+| Example | Description |
+|---------|-------------|
+| [Getting Started](examples/getting-started/) | Basic gateway setup with a WireMock backend |
+| [Mock API](examples/mock-api/) | Schema-driven mock responses using json-schema-faker — no backend needed |
+| [Auth with SuperTokens](examples/auth-supertokens/) | Authentication flow with session verification, protected routes, and user context propagation |
+| [REST Database](examples/rest-database/) | Full CRUD REST API backed by PostgreSQL with pagination, joins, and field mapping |
+| [Full Stack](examples/full-stack/) | All features composed: CORS, rate limiting, auth, validation, load balancing, database, static responses |
+
+More single-feature examples covering [CORS](examples/cors/), [interceptors](examples/interceptors/), [load balancing](examples/load-balancing/), [plugins](examples/plugins/), [static responses](examples/static-responses/), [validation](examples/validation/), and others are in the [`examples/`](examples/) directory.
+
 ## Documentation
 
-- [Quickstart guide](docs/quickstart.md) — step-by-step setup with configuration reference
+**Getting started**
+- [Quickstart](docs/quickstart.md) — step-by-step setup and configuration reference
 
-More documentation coming soon.
+**Configuration**
+- [OpenAPI Overlays](docs/overlays.md) — keeping gateway config separate from your API spec
+- [Interpolation](docs/interpolation.md) — `${{ env.VAR }}`, `${{ file.KEY }}`, and other substitution patterns
+- [`$ref` resolution](docs/ref-resolution.md) — sharing upstream definitions across routes
+
+**Features**
+- [Interceptors](docs/interceptors.md) — lifecycle hooks for auth, header injection, and request/response transforms
+- [Interceptor permissions](docs/interceptor-permissions.md) — sandboxed access to env vars, filesystem, and network
+- [Plugins](docs/plugins.md) — JavaScript handlers for databases and custom logic
+- [Writing plugins](docs/writing-plugins/index.md) — TypeScript, bundling, and dependency management
+- [CORS](docs/cors.md) — per-operation CORS configuration with origin matching and preflight support
+- [Request validation](docs/validation.md) — automatic schema validation against your OpenAPI spec
+- [Load balancing](docs/load-balancing.md) — backend pools, health checks, and selection algorithms
+- [Static responses](docs/static-responses.md) — pre-built responses without hitting a backend
+- [TLS](docs/tls.md) — inbound termination and outbound upstream verification
+- [Timeouts and body limits](docs/timeouts.md) — protecting backends from slow or oversized requests
+- [Error handling](docs/error-handling.md) — customizing gateway-level error responses
 
 ## Contributing
 
