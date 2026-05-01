@@ -47,7 +47,14 @@ Tell esbuild to skip bundling the problematic package:
 }
 ```
 
-The compiled output will contain `require("problematic-package")` instead of inlining the package code. Node.js resolves this from `node_modules/` at runtime, which works because the example directory (including `node_modules/`) is volume-mounted into the container.
+The compiled output will contain `require("problematic-package")` instead of inlining the package code. Node.js resolves this `require()` from `node_modules/` at runtime — so you must ensure `node_modules/` is available inside the container. The simplest way is to volume-mount your project directory (which includes `node_modules/`) into the container, the same way the examples mount their config directory:
+
+```yaml
+volumes:
+  - ./:/config   # mounts your project root, including node_modules/
+```
+
+If you don't want to mount `node_modules/` (e.g. in a production image), bundle the dependency instead of marking it external — or copy `node_modules/` explicitly into your image.
 
 ### How to tell if a package needs `--external`
 
