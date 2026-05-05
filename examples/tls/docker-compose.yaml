@@ -1,0 +1,20 @@
+services:
+  gateway:
+    image: ghcr.io/thesoftwarebakery/plenum
+    ports:
+      - "6188:6188"
+      - "6189:6189"
+    volumes:
+      - ./:/config
+      - ./certs:/certs:ro
+    command:
+      - --config-path=/config
+      - --openapi-schema=openapi.yaml
+      - --openapi-overlay=overlay-gateway.yaml
+    depends_on:
+      - backend
+
+  backend:
+    image: wiremock/wiremock:3x
+    volumes:
+      - ./wiremock:/home/wiremock

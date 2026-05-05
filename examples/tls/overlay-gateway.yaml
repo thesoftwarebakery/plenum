@@ -1,0 +1,27 @@
+overlay: 1.1.0
+info:
+  title: Gateway configuration with TLS
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-files:
+        gateway-cert: /certs/gateway.crt
+        gateway-key: /certs/gateway.key
+      x-plenum-config:
+        threads: 1
+        listen: "0.0.0.0:6188"
+        tls:
+          cert: "${{ file.gateway-cert.path }}"
+          key: "${{ file.gateway-key.path }}"
+          listen: "0.0.0.0:6189"
+      components:
+        x-upstreams:
+          default:
+            kind: "HTTP"
+            address: "backend"
+            port: 8080
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        $ref: "#/components/x-upstreams/default"
