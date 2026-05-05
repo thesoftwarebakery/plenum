@@ -60,7 +60,7 @@ Complete, runnable examples — each with its own `docker-compose.yaml` and READ
 | [REST Database](examples/rest-database/) | Full CRUD REST API backed by PostgreSQL with pagination, joins, and field mapping |
 | [Full Stack](examples/full-stack/) | All features composed: CORS, rate limiting, auth, validation, load balancing, database, static responses |
 
-More single-feature examples covering [CORS](examples/cors/), [interceptors](examples/interceptors/), [load balancing](examples/load-balancing/), [plugins](examples/plugins/), [static responses](examples/static-responses/), [validation](examples/validation/), and others are in the [`examples/`](examples/) directory.
+More single-feature examples covering [CORS](examples/cors/), [interceptors](examples/interceptors/), [load balancing](examples/load-balancing/), [plugins](examples/plugins/), [static responses](examples/static-responses/), [TLS](examples/tls/), [validation](examples/validation/), and others are in the [`examples/`](examples/) directory.
 
 ## Documentation
 
