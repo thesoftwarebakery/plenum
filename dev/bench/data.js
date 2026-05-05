@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777637384253,
+  "lastUpdate": 1777998625113,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -2808,6 +2808,78 @@ window.BENCHMARK_DATA = {
             "value": 3.803,
             "unit": "ms",
             "extra": "n=8499"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "627a6545a7ab265b8b3f20e15af87a4575b9fce2",
+          "message": "Merge pull request #161 from thesoftwarebakery/worktree-issue-129-docs-readmes\n\ndocs: add README to all examples and create TLS example",
+          "timestamp": "2026-05-05T17:26:50+01:00",
+          "tree_id": "c5fb7c6ccb4d922f5a24aeb0a101acd46c80881f",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/627a6545a7ab265b8b3f20e15af87a4575b9fce2"
+        },
+        "date": 1777998624545,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.763,
+            "unit": "ms",
+            "extra": "n=13102"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 2.698,
+            "unit": "ms",
+            "extra": "n=13102"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.862,
+            "unit": "ms",
+            "extra": "n=11606"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.673,
+            "unit": "ms",
+            "extra": "n=11606"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.237,
+            "unit": "ms",
+            "extra": "n=8088"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 2.446,
+            "unit": "ms",
+            "extra": "n=8088"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.196,
+            "unit": "ms",
+            "extra": "n=8361"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.828,
+            "unit": "ms",
+            "extra": "n=8361"
           }
         ]
       }
