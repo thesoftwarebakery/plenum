@@ -1,6 +1,6 @@
 pub(crate) mod module_resolver;
 
-use crate::request_context::config_value::ConfigValue;
+use crate::request_context::ConfigValue;
 use oas_query::ParameterDef;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;

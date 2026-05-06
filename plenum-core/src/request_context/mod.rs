@@ -4,8 +4,7 @@
 //! [`ExtractionCtx`] type alias bound to a newtype wrapper around
 //! [`pingora_http::RequestHeader`].
 
-pub mod config_value;
-
+pub use plenum_config::config_value::ConfigValue;
 pub use plenum_config::context_ref::ContextRef;
 pub use plenum_config::context_template::ContextTemplate;
 
