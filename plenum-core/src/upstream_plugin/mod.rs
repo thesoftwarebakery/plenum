@@ -10,7 +10,7 @@ use crate::path_match::{OperationSchemas, PluginHandle};
 use crate::proxy_utils::{
     call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_ctx, merge_options,
 };
-use crate::request_context::{ExtractionCtx, config_value::ConfigValue};
+use crate::request_context::{ExtractionCtx, PingoraRequest, config_value::ConfigValue};
 use pingora_proxy::Session;
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
@@ -267,7 +267,7 @@ pub(crate) async fn dispatch(
     // request_context machinery — compiled at boot, cheap at request time.
     let body_json: Option<serde_json::Value> = serde_json::from_slice(&final_buf).ok();
     let cx = ExtractionCtx {
-        req: session.req_header(),
+        req: &PingoraRequest(session.req_header()),
         path_params: &ctx.path_params,
         user_ctx: Some(&ctx.user_ctx),
         peer_addr: None,

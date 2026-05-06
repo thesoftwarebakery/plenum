@@ -7,7 +7,7 @@ use ts_rs::TS;
 
 use crate::config::RateLimitConfig;
 use crate::ctx::GatewayCtx;
-use crate::request_context::ExtractionCtx;
+use crate::request_context::{ExtractionCtx, PingoraRequest};
 
 /// Gateway-populated rate limit state for the current request.
 /// Serialized as `rateLimits` on interceptor/plugin input objects — read-only
@@ -53,7 +53,7 @@ pub(crate) fn evaluate(
         .map(|a| a.ip());
 
     let cx = ExtractionCtx {
-        req: session.req_header(),
+        req: &PingoraRequest(session.req_header()),
         path_params: &ctx.path_params,
         user_ctx: Some(&ctx.user_ctx),
         peer_addr,

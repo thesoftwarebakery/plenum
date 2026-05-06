@@ -561,13 +561,13 @@ pub fn build_router(
             for (method, op_schemas) in &operations {
                 let validate_arg = match &op_schemas.backend_config {
                     Some(config) => {
-                        use crate::request_context::ExtractionCtx;
+                        use crate::request_context::{ExtractionCtx, PingoraRequest};
                         let empty_req = pingora_http::RequestHeader::build("GET", b"/", None)
                             .expect("valid request");
                         let empty_params: std::collections::HashMap<String, serde_json::Value> =
                             std::collections::HashMap::new();
                         let empty_cx = ExtractionCtx {
-                            req: &empty_req,
+                            req: &PingoraRequest(&empty_req),
                             path_params: &empty_params,
                             user_ctx: None,
                             peer_addr: None,
@@ -1210,11 +1210,11 @@ mod tests {
         let get = matched.value.operations.get(&Method::GET).unwrap();
         let backend_cv = get.backend_config.as_ref().unwrap();
         // Resolve with an empty context to get a serde_json::Value for assertions.
-        use crate::request_context::ExtractionCtx;
+        use crate::request_context::{ExtractionCtx, PingoraRequest};
         let empty_req = pingora_http::RequestHeader::build("GET", b"/", None).unwrap();
         let empty_params = std::collections::HashMap::new();
         let empty_cx = ExtractionCtx {
-            req: &empty_req,
+            req: &PingoraRequest(&empty_req),
             path_params: &empty_params,
             user_ctx: None,
             peer_addr: None,

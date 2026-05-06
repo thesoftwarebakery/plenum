@@ -2292,6 +2292,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
+name = "plenum-config"
+version = "0.1.0"
+dependencies = [
+ "form_urlencoded",
+ "oapi-overlay",
+ "oas3",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+]
+
+[[package]]
 name = "plenum-core"
 version = "0.15.0"
 dependencies = [
@@ -2314,6 +2326,7 @@ dependencies = [
  "pingora-load-balancing",
  "pingora-proxy",
  "pingora-timeout",
+ "plenum-config",
  "plenum-js-runtime",
  "reqwest",
  "serde",
