@@ -18,6 +18,7 @@ WORKDIR /usr/src/plenum
 FROM chef AS planner
 
 COPY Cargo.toml Cargo.lock ./
+COPY plenum-config/ plenum-config/
 COPY plenum-core/ plenum-core/
 COPY oas-query/ oas-query/
 COPY openapi-overlay/ openapi-overlay/
@@ -33,6 +34,7 @@ COPY --from=planner /usr/src/plenum/recipe.json recipe.json
 RUN cargo chef cook --release --recipe-path recipe.json -p plenum-core
 
 COPY Cargo.toml Cargo.lock ./
+COPY plenum-config/ plenum-config/
 COPY plenum-core/ plenum-core/
 COPY oas-query/ oas-query/
 COPY openapi-overlay/ openapi-overlay/
