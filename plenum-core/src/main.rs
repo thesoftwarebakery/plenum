@@ -35,7 +35,6 @@ struct Args {
 }
 
 fn main() {
-    env_logger::init();
     let args = Args::parse();
 
     let config = Config::parse(
@@ -59,10 +58,26 @@ fn main() {
             std::process::exit(1);
         });
 
-    let build_result = build_gateway(&config, &args.config_path).unwrap_or_else(|err| {
-        eprintln!("Error building gateway: {}", err);
-        std::process::exit(1);
+    // Initialize tracing subscriber (replaces env_logger). Must be called after
+    // config parsing so the OTel endpoint is available. Pre-tracing errors use
+    // eprintln! so no log output is lost.
+    let _otel_guard = plenum_core::tracing_setup::init(server_config.tracing.as_ref());
+
+    // Parse access log template (if configured).
+    let access_log = server_config.access_log.as_ref().map(|al| {
+        let template = plenum_core::access_log::AccessLogTemplate::parse(&al.format)
+            .unwrap_or_else(|err| {
+                eprintln!("Error parsing access-log format: {}", err);
+                std::process::exit(1);
+            });
+        std::sync::Arc::new(template)
     });
+
+    let build_result =
+        build_gateway(&config, &args.config_path, access_log).unwrap_or_else(|err| {
+            eprintln!("Error building gateway: {}", err);
+            std::process::exit(1);
+        });
     let gateway = build_result.gateway;
     let bg_services = build_result.background_services;
 

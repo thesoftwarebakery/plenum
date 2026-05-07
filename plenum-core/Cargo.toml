@@ -19,8 +19,12 @@ pingora-timeout = "0.8"
 pingora-limits = "0.8"
 pingora-load-balancing = { version = "0.8", features = ["rustls"] }
 log = "0.4.29"
-env_logger = "0.11.9"
 tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
+tracing-opentelemetry = { version = "0.32", optional = true }
+opentelemetry = { version = "0.31", optional = true }
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"], optional = true }
+opentelemetry-otlp = { version = "0.31", features = ["grpc-tonic"], optional = true }
 matchit = "0.9.1"
 http = "1.4.0"
 bytes = "1"
@@ -36,6 +40,10 @@ wiremock = "0.6"
 reqwest = { version = "0.12", features = ["json"] }
 tokio = { version = "1", features = ["full"] }
 criterion = { version = "0.5", features = ["html_reports"] }
+
+[features]
+default = ["otel"]
+otel = ["dep:tracing-opentelemetry", "dep:opentelemetry", "dep:opentelemetry_sdk", "dep:opentelemetry-otlp"]
 
 [[bench]]
 name = "gateway"

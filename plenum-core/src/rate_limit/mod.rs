@@ -150,6 +150,9 @@ mod tests {
             selected_backend_addr: None,
             error_hook: None,
             rate_limit_state: None,
+            request_span: None,
+            #[cfg(feature = "otel")]
+            otel_context: None,
         }
     }
 
