@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778146176555,
+  "lastUpdate": 1778172129130,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -2952,6 +2952,78 @@ window.BENCHMARK_DATA = {
             "value": 3.614,
             "unit": "ms",
             "extra": "n=7715"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "36dc41b478cb63836a1bcb2d9889f27e6fab8fec",
+          "message": "Merge pull request #165 from thesoftwarebakery/worktree-issue-37-otel-tracing\n\nfeat: OpenTelemetry tracing and configurable access logs",
+          "timestamp": "2026-05-07T17:33:19+01:00",
+          "tree_id": "4ef36772afeccb2455f390b76326b81c8e833037",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/36dc41b478cb63836a1bcb2d9889f27e6fab8fec"
+        },
+        "date": 1778172128450,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.776,
+            "unit": "ms",
+            "extra": "n=12879"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 2.235,
+            "unit": "ms",
+            "extra": "n=12879"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.871,
+            "unit": "ms",
+            "extra": "n=11476"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.655,
+            "unit": "ms",
+            "extra": "n=11476"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.235,
+            "unit": "ms",
+            "extra": "n=8097"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 1.596,
+            "unit": "ms",
+            "extra": "n=8097"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.197,
+            "unit": "ms",
+            "extra": "n=8357"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.345,
+            "unit": "ms",
+            "extra": "n=8357"
           }
         ]
       }
