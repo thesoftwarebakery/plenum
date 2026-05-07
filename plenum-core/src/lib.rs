@@ -47,6 +47,9 @@ pub struct Plenum {
     rate_limiters: HashMap<u64, pingora_limits::rate::Rate>,
     /// Access log template, parsed at boot time. `None` when not configured.
     access_log: access_log::SharedAccessLog,
+    /// Whether OTel tracing is enabled at runtime. Gates trace context
+    /// extraction/injection and span parenting on the hot path.
+    tracing_enabled: bool,
 }
 
 /// Compute effective interceptor timeout from remaining request budget.
@@ -124,10 +127,13 @@ impl ProxyHttp for Plenum {
             otel.kind = "server",
         );
 
+        // Extract incoming W3C trace context and link it as the span's parent.
+        // Skipped entirely when tracing is not enabled at runtime to avoid
+        // unnecessary header iteration and OTel context allocation.
         // set_parent must be called before the span is entered, otherwise
         // the OTel layer considers it already started and rejects the parent.
         #[cfg(feature = "otel")]
-        {
+        if self.tracing_enabled {
             let parent_cx = tracing_setup::extract_context(session.req_header());
             use tracing_opentelemetry::OpenTelemetrySpanExt;
             if let Err(e) = request_span.set_parent(parent_cx.clone()) {
@@ -559,6 +565,7 @@ pub fn build_gateway(
     config: &Config,
     config_path: &str,
     access_log_template: access_log::SharedAccessLog,
+    tracing_enabled: bool,
 ) -> Result<GatewayBuildResult, Box<dyn Error>> {
     let empty = BTreeMap::new();
     let paths = config.spec.paths.as_ref().unwrap_or(&empty);
@@ -574,6 +581,7 @@ pub fn build_gateway(
             error_hook: result.error_hook.map(Arc::new),
             rate_limiters,
             access_log: access_log_template,
+            tracing_enabled,
         },
         background_services: result.background_services,
     })

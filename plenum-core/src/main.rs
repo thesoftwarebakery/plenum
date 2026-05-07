@@ -74,8 +74,8 @@ fn main() {
         std::process::exit(1);
     });
 
-    let build_result =
-        build_gateway(&config, &args.config_path, access_log).unwrap_or_else(|err| {
+    let build_result = build_gateway(&config, &args.config_path, access_log, tracing_enabled)
+        .unwrap_or_else(|err| {
             eprintln!("Error building gateway: {}", err);
             std::process::exit(1);
         });
