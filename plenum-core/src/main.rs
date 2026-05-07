@@ -83,7 +83,6 @@ fn main() {
 
     let conf = ServerConf {
         threads: server_config.threads,
-        daemon: server_config.daemon,
         ca_file: server_config.ca.clone(),
         ..ServerConf::default()
     };

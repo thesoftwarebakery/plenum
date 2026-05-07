@@ -61,12 +61,6 @@ pub struct TlsListenerConfig {
 ///   so downstream services can continue the trace.
 /// - When no incoming trace context is present, a new trace is started.
 ///
-/// ## Compatibility
-///
-/// Not compatible with `daemon: true` — the `fork()` call used for
-/// daemonization kills the background export thread. Use a process
-/// manager (systemd, Docker, Kubernetes) instead.
-///
 /// ## Example
 ///
 /// ```yaml
@@ -163,8 +157,6 @@ pub struct AccessLogConfig {
 pub struct ServerConfig {
     #[serde(default = "default_threads")]
     pub threads: usize,
-    #[serde(default)]
-    pub daemon: bool,
     #[serde(default = "default_listen")]
     pub listen: String,
     #[serde(
@@ -207,7 +199,6 @@ impl Default for ServerConfig {
     fn default() -> Self {
         ServerConfig {
             threads: default_threads(),
-            daemon: false,
             listen: default_listen(),
             interceptor_default_timeout_ms: default_timeout_ms(),
             plugin_default_timeout_ms: default_timeout_ms(),
@@ -271,12 +262,10 @@ mod tests {
     fn deserializes_full_config() {
         let json = serde_json::json!({
             "threads": 4,
-            "daemon": true,
             "listen": "127.0.0.1:8080",
         });
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.threads, 4);
-        assert!(config.daemon);
         assert_eq!(config.listen, "127.0.0.1:8080");
     }
 
@@ -285,7 +274,6 @@ mod tests {
         let json = serde_json::json!({});
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.threads, 1);
-        assert!(!config.daemon);
         assert_eq!(config.listen, "0.0.0.0:6188");
     }
 
@@ -293,7 +281,6 @@ mod tests {
     fn default_trait_matches_serde_defaults() {
         let config = ServerConfig::default();
         assert_eq!(config.threads, 1);
-        assert!(!config.daemon);
         assert_eq!(config.listen, "0.0.0.0:6188");
     }
 

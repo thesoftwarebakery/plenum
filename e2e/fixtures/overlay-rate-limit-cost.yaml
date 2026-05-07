@@ -7,7 +7,6 @@ actions:
     update:
       x-plenum-config:
         listen: "0.0.0.0:6188"
-        daemon: false
         threads: 1
       components:
         x-upstreams:
