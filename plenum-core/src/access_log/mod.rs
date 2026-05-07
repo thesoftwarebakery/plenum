@@ -43,9 +43,9 @@
 
 use std::sync::Arc;
 
-use crate::config::interpolation::{Template, TemplatePart, Token};
 use crate::ctx::GatewayCtx;
-use crate::request_context::{ContextRef, ExtractionCtx};
+use crate::request_context::{ExtractionCtx, PingoraRequest};
+use plenum_config::{ContextRef, Template, TemplatePart, Token};
 
 /// A segment of the access log template, pre-parsed at boot time.
 #[derive(Debug)]
@@ -127,7 +127,7 @@ impl AccessLogTemplate {
     pub fn emit(&self, session: &pingora_proxy::Session, ctx: &GatewayCtx) {
         let req_header = session.req_header();
         let extraction_ctx = ExtractionCtx {
-            req: req_header,
+            req: PingoraRequest(req_header),
             path_params: &ctx.path_params,
             user_ctx: Some(&ctx.user_ctx),
             peer_addr: session
