@@ -8,6 +8,7 @@ async-trait="0.1"
 pingora-core = { version = "0.8", features = ["rustls"] }
 oas3={ version="0.20.1", features=["yaml-spec"] }
 oapi-overlay={ version="0.2.0", path="../openapi-overlay", features=["yaml"] }
+plenum-config = { path = "../plenum-config" }
 serde="1.0"
 ts-rs = { version = "10", features = ["serde-compat"] }
 serde_yaml_ng="0.9"

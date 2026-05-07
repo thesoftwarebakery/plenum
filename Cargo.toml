@@ -2,6 +2,7 @@
 resolver="3"
 members = [
 	"plenum-core",
+	"plenum-config",
 	"openapi-overlay",
 	"plenum-js-runtime",
 	"plenum-sandbox",

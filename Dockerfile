@@ -17,12 +17,7 @@ WORKDIR /usr/src/plenum
 
 FROM chef AS planner
 
-COPY Cargo.toml Cargo.lock ./
-COPY plenum-core/ plenum-core/
-COPY oas-query/ oas-query/
-COPY openapi-overlay/ openapi-overlay/
-COPY plenum-js-runtime/ plenum-js-runtime/
-COPY plenum-sandbox/ plenum-sandbox/
+COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
@@ -32,12 +27,7 @@ COPY --from=planner /usr/src/plenum/recipe.json recipe.json
 # Cook dependencies only -- this layer is cached until Cargo.toml/Cargo.lock change.
 RUN cargo chef cook --release --recipe-path recipe.json -p plenum-core
 
-COPY Cargo.toml Cargo.lock ./
-COPY plenum-core/ plenum-core/
-COPY oas-query/ oas-query/
-COPY openapi-overlay/ openapi-overlay/
-COPY plenum-js-runtime/ plenum-js-runtime/
-COPY plenum-sandbox/ plenum-sandbox/
+COPY . .
 
 RUN cargo build --release --locked -p plenum-core
 

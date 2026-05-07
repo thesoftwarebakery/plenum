@@ -7,8 +7,8 @@ use std::error::Error;
 use std::fs::{canonicalize, read_to_string};
 use std::path::{Path, PathBuf};
 
-use super::interpolation;
-use super::interpolation::FileEntry;
+use crate::interpolation;
+use crate::interpolation::FileEntry;
 
 #[derive(Debug)]
 pub struct Config {
@@ -33,6 +33,27 @@ impl Config {
             .get(key)
             .ok_or_else(|| format!("extension '{}' not found", key))?;
         self.resolve(value)
+    }
+
+    /// Try multiple extension levels in order, returning the first match.
+    ///
+    /// This implements the cascade pattern where operation-level extensions
+    /// override path-level, which override root-level. Each level is a
+    /// `BTreeMap` of extensions (e.g. `operation.extensions`, `path_item.extensions`,
+    /// `spec.extensions`).
+    ///
+    /// Returns `Ok(None)` if the key is absent at all levels.
+    pub fn extension_cascade<T: DeserializeOwned>(
+        &self,
+        levels: &[&BTreeMap<String, Value>],
+        key: &str,
+    ) -> Result<Option<T>, Box<dyn Error>> {
+        for extensions in levels {
+            if let Some(value) = extensions.get(key) {
+                return self.resolve(value).map(Some);
+            }
+        }
+        Ok(None)
     }
 
     /// Deserialize a raw extension `Value` with `$ref` resolution and
@@ -367,6 +388,125 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("PLENUM_TEST_PARSER_MISSING")
+        );
+    }
+
+    // ── extension_cascade tests ──────────────────────────────────────────────
+
+    #[test]
+    fn cascade_returns_first_match() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        });
+        let config = make_config(doc);
+
+        let mut root = BTreeMap::new();
+        root.insert("plenum-timeout".to_string(), json!(5000));
+
+        let mut path_level = BTreeMap::new();
+        path_level.insert("plenum-timeout".to_string(), json!(2000));
+
+        let mut op_level = BTreeMap::new();
+        op_level.insert("plenum-timeout".to_string(), json!(1000));
+
+        // Operation wins
+        let result: Option<u64> = config
+            .extension_cascade(&[&op_level, &path_level, &root], "plenum-timeout")
+            .unwrap();
+        assert_eq!(result, Some(1000));
+    }
+
+    #[test]
+    fn cascade_falls_through_to_path() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        });
+        let config = make_config(doc);
+
+        let mut root = BTreeMap::new();
+        root.insert("plenum-timeout".to_string(), json!(5000));
+
+        let mut path_level = BTreeMap::new();
+        path_level.insert("plenum-timeout".to_string(), json!(2000));
+
+        let op_level = BTreeMap::new(); // empty
+
+        let result: Option<u64> = config
+            .extension_cascade(&[&op_level, &path_level, &root], "plenum-timeout")
+            .unwrap();
+        assert_eq!(result, Some(2000));
+    }
+
+    #[test]
+    fn cascade_falls_through_to_root() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        });
+        let config = make_config(doc);
+
+        let mut root = BTreeMap::new();
+        root.insert("plenum-timeout".to_string(), json!(5000));
+
+        let result: Option<u64> = config
+            .extension_cascade(
+                &[&BTreeMap::new(), &BTreeMap::new(), &root],
+                "plenum-timeout",
+            )
+            .unwrap();
+        assert_eq!(result, Some(5000));
+    }
+
+    #[test]
+    fn cascade_returns_none_when_absent_at_all_levels() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {}
+        });
+        let config = make_config(doc);
+
+        let result: Option<u64> = config
+            .extension_cascade(&[&BTreeMap::new(), &BTreeMap::new()], "plenum-timeout")
+            .unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn cascade_resolves_ref() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {},
+            "components": { "x-upstreams": {
+                "my-api": {
+                    "address": "api.example.com",
+                    "port": 8080
+                }
+            }}
+        });
+        let config = make_config(doc);
+
+        let mut level = BTreeMap::new();
+        level.insert(
+            "plenum-upstream".to_string(),
+            json!({ "$ref": "#/components/x-upstreams/my-api" }),
+        );
+
+        let result: Option<TestUpstream> = config
+            .extension_cascade(&[&level], "plenum-upstream")
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(TestUpstream {
+                address: "api.example.com".into(),
+                port: 8080,
+            })
         );
     }
 }

@@ -1,4 +1,8 @@
 target/
 .git/
+.claude/
+docs/
 e2e/
-gateway-core/target/
+examples/
+sdk/
+node_modules/

@@ -2,8 +2,10 @@
 //! compiled to [`ContextRef`]s at load time, enabling cheap per-request
 //! resolution with no string parsing.
 
-use crate::config::interpolation::{Template, TemplatePart};
-use crate::request_context::{ContextRef, ContextTemplate, ExtractionCtx};
+use crate::context_ref::{ContextRef, ExtractionCtx};
+use crate::context_template::ContextTemplate;
+use crate::interpolation::{Template, TemplatePart};
+use crate::request_data::RequestData;
 
 /// A pre-compiled form of [`serde_json::Value`] where bare `${{...}}` strings
 /// are compiled to [`ContextRef`]s at config-load time.
@@ -77,7 +79,7 @@ impl ConfigValue {
     ///
     /// Missing values (absent header, body not buffered, etc.) resolve to
     /// [`serde_json::Value::Null`] — this method never panics.
-    pub fn resolve(&self, cx: &ExtractionCtx<'_>) -> serde_json::Value {
+    pub fn resolve<R: RequestData>(&self, cx: &ExtractionCtx<'_, R>) -> serde_json::Value {
         match self {
             Self::Null => serde_json::Value::Null,
             Self::Bool(b) => serde_json::Value::Bool(*b),
