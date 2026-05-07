@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777998625113,
+  "lastUpdate": 1778146176555,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -2880,6 +2880,78 @@ window.BENCHMARK_DATA = {
             "value": 3.828,
             "unit": "ms",
             "extra": "n=8361"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "13577dcb58fb00c57732f2deff2f759b3a3e087d",
+          "message": "Merge pull request #163 from thesoftwarebakery/worktree-issue-141-plenum-config\n\nrefactor: extract OpenAPI config parsing into plenum-config crate",
+          "timestamp": "2026-05-07T10:21:02+01:00",
+          "tree_id": "0ee2ed544bc547d4983ba1ca451ff75dcaa2902c",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/13577dcb58fb00c57732f2deff2f759b3a3e087d"
+        },
+        "date": 1778146175890,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.833,
+            "unit": "ms",
+            "extra": "n=12006"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 1.991,
+            "unit": "ms",
+            "extra": "n=12006"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.926,
+            "unit": "ms",
+            "extra": "n=10803"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.655,
+            "unit": "ms",
+            "extra": "n=10803"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.392,
+            "unit": "ms",
+            "extra": "n=7186"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 2.739,
+            "unit": "ms",
+            "extra": "n=7186"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.296,
+            "unit": "ms",
+            "extra": "n=7715"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.614,
+            "unit": "ms",
+            "extra": "n=7715"
           }
         ]
       }
