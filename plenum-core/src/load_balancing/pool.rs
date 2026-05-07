@@ -9,7 +9,9 @@ use pingora_load_balancing::LoadBalancer;
 use pingora_load_balancing::selection;
 
 use crate::health_check::PassiveHealthTracker;
-use crate::request_context::{ContextRef, ExtractionCtx, PingoraRequest};
+use plenum_config::ContextRef;
+
+use crate::request_context::{ExtractionCtx, PingoraRequest};
 
 /// Maps a resolved `SocketAddr` back to the original hostname configured for that
 /// backend. Used to set TLS SNI correctly (SNI must be the hostname, not the IP).

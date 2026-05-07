@@ -1,12 +1,8 @@
-//! Request context token extraction.
+//! Pingora-specific request context bindings.
 //!
-//! Re-exports the core types from [`plenum_config`] and provides a concrete
-//! [`ExtractionCtx`] type alias bound to a newtype wrapper around
-//! [`pingora_http::RequestHeader`].
-
-pub use plenum_config::config_value::ConfigValue;
-pub use plenum_config::context_ref::ContextRef;
-pub use plenum_config::context_template::ContextTemplate;
+//! Provides [`PingoraRequest`] (a newtype implementing
+//! [`plenum_config::RequestData`]) and a concrete [`ExtractionCtx`] type alias
+//! for use throughout `plenum-core`.
 
 use plenum_config::RequestData;
 

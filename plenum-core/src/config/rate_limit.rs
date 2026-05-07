@@ -1,7 +1,7 @@
 use serde::Deserialize;
 use std::time::Duration;
 
-use crate::request_context::ContextTemplate;
+use plenum_config::ContextTemplate;
 
 fn default_true() -> bool {
     true

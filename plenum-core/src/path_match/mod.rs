@@ -1,7 +1,7 @@
 pub(crate) mod module_resolver;
 
-use crate::request_context::ConfigValue;
 use oas_query::ParameterDef;
+use plenum_config::ConfigValue;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::path::Path;
@@ -442,49 +442,31 @@ pub fn build_router(
             }
         };
 
-        // Path-level request timeout override
-        let path_request_timeout: Option<Duration> = config
-            .extension::<u64>(&path_item.extensions, "plenum-timeout")
-            .ok()
-            .map(Duration::from_millis);
-
-        // Path-level body size limit override
-        let path_max_body_bytes: Option<u64> = config
-            .extension::<u64>(&path_item.extensions, "plenum-body-limit")
-            .ok();
-
-        // Path-level rate limit config (can be overridden per operation)
-        let path_rate_limit: Option<RateLimitConfig> = path_item
-            .extensions
-            .get("plenum-rate-limit")
-            .map(|v| {
-                config
-                    .resolve::<RateLimitConfig>(v)
-                    .map_err(|e| format!("path '{}': x-plenum-rate-limit: {}", path, e))
-            })
-            .transpose()?;
-        if let Some(ref rl) = path_rate_limit {
-            validate_rate_limit_config(rl, path).map_err(|e| -> Box<dyn Error> { e.into() })?;
-        }
-
         // Build operation metadata for each method on this path
         let mut operations = HashMap::new();
         for (method, operation) in path_item.methods() {
-            // Operation-level request timeout override (op > path > global)
-            let request_timeout = operation
-                .extensions
-                .get("plenum-timeout")
-                .and_then(|v| config.resolve::<u64>(v).ok())
+            // Request timeout (op > path > global)
+            let request_timeout = config
+                .extension_cascade::<u64>(
+                    &[&operation.extensions, &path_item.extensions],
+                    "plenum-timeout",
+                )
+                .map_err(|e| format!("path '{}' method {}: x-plenum-timeout: {}", path, method, e))?
                 .map(Duration::from_millis)
-                .or(path_request_timeout)
                 .unwrap_or(default_request_timeout);
 
-            // Operation-level body size limit override (op > path > global)
-            let max_request_body_bytes = operation
-                .extensions
-                .get("plenum-body-limit")
-                .and_then(|v| config.resolve::<u64>(v).ok())
-                .or(path_max_body_bytes)
+            // Body size limit (op > path > global)
+            let max_request_body_bytes = config
+                .extension_cascade::<u64>(
+                    &[&operation.extensions, &path_item.extensions],
+                    "plenum-body-limit",
+                )
+                .map_err(|e| {
+                    format!(
+                        "path '{}' method {}: x-plenum-body-limit: {}",
+                        path, method, e
+                    )
+                })?
                 .unwrap_or(default_max_body_bytes);
 
             // Operation-level interceptors
@@ -517,20 +499,18 @@ pub fn build_router(
                     .map_err(|e| format!("path '{}' method {}: {}", path, method, e))?;
             }
 
-            // Operation-level rate limit config (op > path, absent = None)
-            let rate_limit: Option<RateLimitConfig> = operation
-                .extensions
-                .get("plenum-rate-limit")
-                .map(|v| {
-                    config.resolve::<RateLimitConfig>(v).map_err(|e| {
-                        format!(
-                            "path '{}' method {}: x-plenum-rate-limit: {}",
-                            path, method, e
-                        )
-                    })
-                })
-                .transpose()?
-                .or_else(|| path_rate_limit.clone());
+            // Rate limit config (op > path, absent = None)
+            let rate_limit: Option<RateLimitConfig> = config
+                .extension_cascade(
+                    &[&operation.extensions, &path_item.extensions],
+                    "plenum-rate-limit",
+                )
+                .map_err(|e| {
+                    format!(
+                        "path '{}' method {}: x-plenum-rate-limit: {}",
+                        path, method, e
+                    )
+                })?;
             if let Some(ref rl) = rate_limit {
                 validate_rate_limit_config(rl, path).map_err(|e| -> Box<dyn Error> { e.into() })?;
                 let window =

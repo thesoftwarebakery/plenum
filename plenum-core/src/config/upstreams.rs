@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::request_context::ContextRef;
+use plenum_config::ContextRef;
 
 // ---------------------------------------------------------------------------
 // Selection algorithm
