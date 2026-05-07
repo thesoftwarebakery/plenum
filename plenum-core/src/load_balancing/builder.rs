@@ -11,7 +11,7 @@ use pingora_load_balancing::selection;
 use pingora_load_balancing::{Backend, Backends, LoadBalancer};
 
 use crate::config::{BackendEntry, HealthCheckConfig, SelectionAlgorithm};
-use crate::request_context::ContextRef;
+use plenum_config::ContextRef;
 
 use super::pool::{PoolInner, UpstreamPool};
 
