@@ -40,7 +40,7 @@ use crate::request_data::RequestData;
 /// Build one at the call site and pass it to [`ContextRef::extract`] /
 /// [`ContextTemplate::resolve`](crate::ContextTemplate::resolve).
 pub struct ExtractionCtx<'a, R: RequestData> {
-    pub req: &'a R,
+    pub req: R,
     pub path_params: &'a HashMap<String, serde_json::Value>,
     /// The request-scoped user ctx bag written by interceptors.
     /// Required for `${{ctx.*}}` expressions; absent or `None` → `None`.
@@ -374,7 +374,7 @@ mod tests {
     fn cx<'a>(
         req: &'a TestRequest,
         path_params: &'a HashMap<String, serde_json::Value>,
-    ) -> ExtractionCtx<'a, TestRequest> {
+    ) -> ExtractionCtx<'a, &'a TestRequest> {
         ExtractionCtx {
             req,
             path_params,
@@ -389,7 +389,7 @@ mod tests {
         req: &'a TestRequest,
         path_params: &'a HashMap<String, serde_json::Value>,
         user_ctx: &'a serde_json::Map<String, serde_json::Value>,
-    ) -> ExtractionCtx<'a, TestRequest> {
+    ) -> ExtractionCtx<'a, &'a TestRequest> {
         ExtractionCtx {
             req,
             path_params,

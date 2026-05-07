@@ -10,6 +10,7 @@ use plenum_config::RequestData;
 
 /// Newtype around [`pingora_http::RequestHeader`] to implement
 /// [`RequestData`] without violating the orphan rule.
+#[derive(Clone, Copy)]
 pub struct PingoraRequest<'a>(pub &'a pingora_http::RequestHeader);
 
 impl RequestData for PingoraRequest<'_> {

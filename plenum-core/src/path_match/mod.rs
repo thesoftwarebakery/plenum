@@ -547,7 +547,7 @@ pub fn build_router(
                         let empty_params: std::collections::HashMap<String, serde_json::Value> =
                             std::collections::HashMap::new();
                         let empty_cx = ExtractionCtx {
-                            req: &PingoraRequest(&empty_req),
+                            req: PingoraRequest(&empty_req),
                             path_params: &empty_params,
                             user_ctx: None,
                             peer_addr: None,
@@ -1194,7 +1194,7 @@ mod tests {
         let empty_req = pingora_http::RequestHeader::build("GET", b"/", None).unwrap();
         let empty_params = std::collections::HashMap::new();
         let empty_cx = ExtractionCtx {
-            req: &PingoraRequest(&empty_req),
+            req: PingoraRequest(&empty_req),
             path_params: &empty_params,
             user_ctx: None,
             peer_addr: None,

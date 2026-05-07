@@ -151,7 +151,7 @@ mod tests {
     fn cx<'a>(
         req: &'a TestRequest,
         path_params: &'a HashMap<String, serde_json::Value>,
-    ) -> ExtractionCtx<'a, TestRequest> {
+    ) -> ExtractionCtx<'a, &'a TestRequest> {
         ExtractionCtx {
             req,
             path_params,
@@ -166,7 +166,7 @@ mod tests {
         req: &'a TestRequest,
         path_params: &'a HashMap<String, serde_json::Value>,
         user_ctx: &'a serde_json::Map<String, serde_json::Value>,
-    ) -> ExtractionCtx<'a, TestRequest> {
+    ) -> ExtractionCtx<'a, &'a TestRequest> {
         ExtractionCtx {
             req,
             path_params,

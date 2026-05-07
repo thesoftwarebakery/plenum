@@ -53,7 +53,7 @@ pub(crate) fn evaluate(
         .map(|a| a.ip());
 
     let cx = ExtractionCtx {
-        req: &PingoraRequest(session.req_header()),
+        req: PingoraRequest(session.req_header()),
         path_params: &ctx.path_params,
         user_ctx: Some(&ctx.user_ctx),
         peer_addr,

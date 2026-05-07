@@ -269,7 +269,7 @@ pub(crate) async fn dispatch(
     // request_context machinery — compiled at boot, cheap at request time.
     let body_json: Option<serde_json::Value> = serde_json::from_slice(&final_buf).ok();
     let cx = ExtractionCtx {
-        req: &PingoraRequest(session.req_header()),
+        req: PingoraRequest(session.req_header()),
         path_params: &ctx.path_params,
         user_ctx: Some(&ctx.user_ctx),
         peer_addr: None,

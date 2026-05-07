@@ -17,3 +17,18 @@ pub trait RequestData {
     /// Return the HTTP method (e.g. `"GET"`, `"POST"`).
     fn method(&self) -> &str;
 }
+
+impl<T: RequestData> RequestData for &T {
+    fn header(&self, name: &str) -> Option<&str> {
+        (**self).header(name)
+    }
+    fn uri_path(&self) -> &str {
+        (**self).uri_path()
+    }
+    fn uri_query(&self) -> Option<&str> {
+        (**self).uri_query()
+    }
+    fn method(&self) -> &str {
+        (**self).method()
+    }
+}

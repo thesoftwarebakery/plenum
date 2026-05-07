@@ -90,7 +90,7 @@ impl UpstreamPool {
         let key = match &self.hash_key_source {
             Some(ctx_ref) => ctx_ref
                 .extract(&ExtractionCtx {
-                    req: &PingoraRequest(req),
+                    req: PingoraRequest(req),
                     path_params,
                     user_ctx: None,
                     peer_addr: None,
