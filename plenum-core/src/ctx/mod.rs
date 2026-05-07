@@ -45,4 +45,16 @@ pub struct GatewayCtx {
     /// interceptors run. `None` when no `x-plenum-rate-limit` is configured on
     /// the matched operation. Serialized as `rateLimits` on interceptor input objects.
     pub(crate) rate_limit_state: Option<RateLimitState>,
+    /// Top-level `http.request` tracing span for this request. Created in
+    /// `request_filter` and entered (via `.enter()`) in every subsequent
+    /// `ProxyHttp` method so that child spans (route_match, interceptor_call)
+    /// nest correctly. Also used directly by `before_upstream` to extract the
+    /// OTel context for `traceparent` injection into upstream requests.
+    pub(crate) request_span: Option<tracing::Span>,
+    /// OpenTelemetry context extracted from incoming `traceparent` /
+    /// `tracestate` request headers. Set as the parent of `request_span` so
+    /// the gateway joins the caller's distributed trace. Also used by the
+    /// access log to resolve the `${{ trace_id }}` token.
+    #[cfg(feature = "otel")]
+    pub(crate) otel_context: Option<opentelemetry::Context>,
 }

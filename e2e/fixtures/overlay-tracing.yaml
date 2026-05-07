@@ -1,0 +1,17 @@
+overlay: 1.1.0
+info:
+  title: Tracing and access log configuration
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        listen: "0.0.0.0:6188"
+        tracing:
+          enabled: true
+          endpoint: "http://localhost:4317"
+          sample-rate: 1.0
+        access-log:
+          enabled: true
+          format: '{"method":"${{ method }}","path":"${{ path }}","status":${{ status }},"route":"${{ route }}"}'

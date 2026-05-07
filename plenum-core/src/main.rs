@@ -35,7 +35,6 @@ struct Args {
 }
 
 fn main() {
-    env_logger::init();
     let args = Args::parse();
 
     let config = Config::parse(
@@ -59,16 +58,32 @@ fn main() {
             std::process::exit(1);
         });
 
-    let build_result = build_gateway(&config, &args.config_path).unwrap_or_else(|err| {
-        eprintln!("Error building gateway: {}", err);
+    // Initialize tracing subscriber for system logs (stderr). Must be called
+    // after config parsing so the log level and OTel endpoint are available.
+    // Pre-tracing errors use eprintln! so no log output is lost.
+    let tracing_enabled = server_config.tracing.as_ref().is_some_and(|t| t.enabled);
+    let _otel_guard =
+        plenum_core::tracing_setup::init(&server_config.log_level, server_config.tracing.as_ref());
+
+    let access_log = plenum_core::access_log::AccessLogTemplate::from_config(
+        server_config.access_log.as_ref(),
+        tracing_enabled,
+    )
+    .unwrap_or_else(|err| {
+        eprintln!("Error parsing access-log format: {}", err);
         std::process::exit(1);
     });
+
+    let build_result = build_gateway(&config, &args.config_path, access_log, tracing_enabled)
+        .unwrap_or_else(|err| {
+            eprintln!("Error building gateway: {}", err);
+            std::process::exit(1);
+        });
     let gateway = build_result.gateway;
     let bg_services = build_result.background_services;
 
     let conf = ServerConf {
         threads: server_config.threads,
-        daemon: server_config.daemon,
         ca_file: server_config.ca.clone(),
         ..ServerConf::default()
     };

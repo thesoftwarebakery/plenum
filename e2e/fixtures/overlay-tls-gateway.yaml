@@ -7,5 +7,4 @@ actions:
     update:
       x-plenum-config:
         threads: 1
-        daemon: false
         listen: "0.0.0.0:6188"

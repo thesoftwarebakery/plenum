@@ -115,7 +115,7 @@ impl ContextRef {
     /// Convert a parsed [`Token`] into a [`ContextRef`] by validating
     /// the namespace and key. This is used by both [`ContextRef::parse`]
     /// and [`ContextTemplate::parse`](crate::ContextTemplate::parse).
-    pub(crate) fn from_token(token: &Token) -> Result<Self, String> {
+    pub fn from_token(token: &Token) -> Result<Self, String> {
         let key = if token.key.is_empty() {
             None
         } else {

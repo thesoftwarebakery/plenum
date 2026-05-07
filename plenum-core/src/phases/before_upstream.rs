@@ -105,5 +105,20 @@ pub(crate) async fn run(
         }
     }
 
+    // Inject W3C trace context (traceparent / tracestate) into upstream request
+    // headers so downstream services can continue the distributed trace.
+    // Only runs when tracing is enabled (otel_context is populated in
+    // request_filter). Uses the request_span stored on ctx rather than
+    // Span::current() because Span::enter() guards are thread-local and
+    // unreliable across async/await boundaries in pingora's multi-threaded runtime.
+    #[cfg(feature = "otel")]
+    if ctx.otel_context.is_some()
+        && let Some(ref request_span) = ctx.request_span
+    {
+        use tracing_opentelemetry::OpenTelemetrySpanExt;
+        let cx = request_span.context();
+        crate::tracing_setup::inject_context(upstream_request, &cx);
+    }
+
     Ok(())
 }

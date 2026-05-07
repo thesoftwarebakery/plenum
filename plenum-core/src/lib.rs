@@ -14,6 +14,7 @@ use pingora_limits::rate::Rate;
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use tokio_util::sync::CancellationToken;
 
+pub mod access_log;
 pub mod config;
 mod cors;
 mod ctx;
@@ -30,6 +31,7 @@ pub mod rate_limit;
 pub mod request_context;
 pub mod request_timeout;
 mod runtime_builder;
+pub mod tracing_setup;
 pub mod upstream_peer;
 pub mod upstream_plugin;
 
@@ -43,6 +45,11 @@ pub struct Plenum {
     /// Populated at boot time from all `x-plenum-rate-limit` configs found across
     /// all routes. One `Rate` per distinct window duration.
     rate_limiters: HashMap<u64, pingora_limits::rate::Rate>,
+    /// Access log template, parsed at boot time. `None` when not configured.
+    access_log: access_log::SharedAccessLog,
+    /// Whether OTel tracing is enabled at runtime. Gates trace context
+    /// extraction/injection and span parenting on the hot path.
+    tracing_enabled: bool,
 }
 
 /// Compute effective interceptor timeout from remaining request budget.
@@ -86,6 +93,9 @@ impl ProxyHttp for Plenum {
             selected_backend_addr: None,
             error_hook: self.error_hook.clone(),
             rate_limit_state: None,
+            request_span: None,
+            #[cfg(feature = "otel")]
+            otel_context: None,
         }
     }
 
@@ -98,6 +108,43 @@ impl ProxyHttp for Plenum {
         Self::CTX: Send + Sync,
     {
         let path = session.req_header().uri.path().to_string();
+        let method_str = session.req_header().method.as_str().to_string();
+
+        // Create the top-level request span. This is the root of the span
+        // hierarchy for this request — all interceptor_call and route_match
+        // child spans nest under it automatically.
+        //
+        // Fields:
+        //   http.method      — set now (e.g. "GET")
+        //   http.route       — set after route matching (e.g. "/products/{id}")
+        //   http.status_code — set in response_filter or fail_to_proxy
+        //   otel.kind        — "server" (OTel semantic convention)
+        let request_span = tracing::info_span!(
+            "http.request",
+            http.method = method_str.as_str(),
+            http.route = tracing::field::Empty,
+            http.status_code = tracing::field::Empty,
+            otel.kind = "server",
+        );
+
+        // Extract incoming W3C trace context and link it as the span's parent.
+        // Skipped entirely when tracing is not enabled at runtime to avoid
+        // unnecessary header iteration and OTel context allocation.
+        // set_parent must be called before the span is entered, otherwise
+        // the OTel layer considers it already started and rejects the parent.
+        #[cfg(feature = "otel")]
+        if self.tracing_enabled {
+            let parent_cx = tracing_setup::extract_context(session.req_header());
+            use tracing_opentelemetry::OpenTelemetrySpanExt;
+            if let Err(e) = request_span.set_parent(parent_cx.clone()) {
+                log::debug!("failed to set OTel parent context: {e:?}");
+            }
+            ctx.otel_context = Some(parent_cx);
+        }
+
+        ctx.request_span = Some(request_span.clone());
+        let _request_guard = request_span.enter();
+
         let route_result = {
             let _span = tracing::debug_span!("route_match", path = path.as_str()).entered();
             self.router.at(&path).ok()
@@ -117,6 +164,7 @@ impl ProxyHttp for Plenum {
         let method = session.req_header().method.clone();
         ctx.matched_route = Some(route_arc.clone());
         ctx.matched_method = Some(method.clone());
+        request_span.record("http.route", route_arc.path.as_str());
         let raw_path_params: Vec<(&str, &str)> = matched.params.iter().collect();
         ctx.path_params =
             oas_query::parse_path_params(&raw_path_params, &route_arc.path_param_schemas);
@@ -287,6 +335,8 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
+        let span = ctx.request_span.clone();
+        let _guard = span.as_ref().map(|s| s.enter());
         // Clone the Arc so `op` doesn't borrow from `ctx`, allowing ctx to be
         // passed mutably to the phase handler.
         let Some(route_arc) = ctx.matched_route.clone() else {
@@ -311,6 +361,8 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
+        let span = ctx.request_span.clone();
+        let _guard = span.as_ref().map(|s| s.enter());
         // Clone the Arc so `op` doesn't borrow from `ctx`, allowing ctx to be
         // passed mutably to the phase handler.
         let Some(route_arc) = ctx.matched_route.clone() else {
@@ -334,6 +386,11 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
+        let span = ctx.request_span.clone();
+        let _guard = span.as_ref().map(|s| s.enter());
+        if let Some(ref s) = span {
+            s.record("http.status_code", upstream_response.status.as_u16());
+        }
         // Clone the Arc so `op` doesn't borrow from `ctx`, allowing ctx to be
         // passed mutably to the phase handler.
         let Some(route_arc) = ctx.matched_route.clone() else {
@@ -353,16 +410,23 @@ impl ProxyHttp for Plenum {
             cors::add_cors_headers_to_response(upstream_response, cors_config, _session);
         }
 
+        // Always store the response status for access log and tracing.
+        ctx.upstream_response_status = Some(upstream_response.status);
+
         // When on_response_body is configured, strip Content-Length (body size may change)
         // and store metadata in ctx for use in upstream_response_body_filter.
         if !op.interceptors.on_response_body.is_empty() {
             upstream_response.remove_header(&http::header::CONTENT_LENGTH);
-            ctx.upstream_response_status = Some(upstream_response.status);
             ctx.upstream_response_content_type = upstream_response
                 .headers
                 .get(http::header::CONTENT_TYPE)
                 .and_then(|v| v.to_str().ok())
                 .map(|s| s.to_string());
+        }
+
+        // Emit access log line.
+        if let Some(ref access_log) = self.access_log {
+            access_log.emit(_session, ctx);
         }
 
         Ok(())
@@ -378,6 +442,8 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
+        let span = ctx.request_span.clone();
+        let _guard = span.as_ref().map(|s| s.enter());
         // Clone the Arc so `op` doesn't borrow from `ctx`, allowing ctx to be
         // passed mutably to the phase handler.
         let Some(route_arc) = ctx.matched_route.clone() else {
@@ -424,6 +490,8 @@ impl ProxyHttp for Plenum {
         session: &mut Session,
         ctx: &mut Self::CTX,
     ) -> pingora_core::Result<Box<HttpPeer>> {
+        let span = ctx.request_span.clone();
+        let _guard = span.as_ref().map(|s| s.enter());
         phases::upstream_peer::resolve(ctx, session)
     }
 
@@ -436,6 +504,8 @@ impl ProxyHttp for Plenum {
     where
         Self::CTX: Send + Sync,
     {
+        let span = ctx.request_span.clone();
+        let _guard = span.as_ref().map(|s| s.enter());
         // Report failure to load balancer pool for passive health tracking.
         if let (Some(addr), Some(route)) = (&ctx.selected_backend_addr, &ctx.matched_route)
             && let Upstream::HttpPool(pool) = &route.upstream
@@ -444,6 +514,10 @@ impl ProxyHttp for Plenum {
         }
 
         if ctx.request_start.is_some() && request_timeout::is_timeout_error(e) {
+            if let Some(ref s) = span {
+                s.record("http.status_code", 504_u16);
+            }
+            ctx.upstream_response_status = Some(http::StatusCode::GATEWAY_TIMEOUT);
             phases::gateway_error::respond(
                 session,
                 ctx,
@@ -451,12 +525,19 @@ impl ProxyHttp for Plenum {
                 ctx.error_hook.clone().as_deref(),
             )
             .await;
+            if let Some(ref access_log) = self.access_log {
+                access_log.emit(session, ctx);
+            }
             return FailToProxy {
                 error_code: 504,
                 can_reuse_downstream: false,
             };
         }
 
+        if let Some(ref s) = span {
+            s.record("http.status_code", 502_u16);
+        }
+        ctx.upstream_response_status = Some(http::StatusCode::BAD_GATEWAY);
         phases::gateway_error::respond(
             session,
             ctx,
@@ -464,6 +545,9 @@ impl ProxyHttp for Plenum {
             ctx.error_hook.clone().as_deref(),
         )
         .await;
+        if let Some(ref access_log) = self.access_log {
+            access_log.emit(session, ctx);
+        }
         FailToProxy {
             error_code: 502,
             can_reuse_downstream: false,
@@ -480,6 +564,8 @@ pub struct GatewayBuildResult {
 pub fn build_gateway(
     config: &Config,
     config_path: &str,
+    access_log_template: access_log::SharedAccessLog,
+    tracing_enabled: bool,
 ) -> Result<GatewayBuildResult, Box<dyn Error>> {
     let empty = BTreeMap::new();
     let paths = config.spec.paths.as_ref().unwrap_or(&empty);
@@ -494,6 +580,8 @@ pub fn build_gateway(
             router: result.router,
             error_hook: result.error_hook.map(Arc::new),
             rate_limiters,
+            access_log: access_log_template,
+            tracing_enabled,
         },
         background_services: result.background_services,
     })
