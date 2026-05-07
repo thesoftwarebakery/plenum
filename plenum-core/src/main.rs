@@ -65,25 +65,14 @@ fn main() {
     let _otel_guard =
         plenum_core::tracing_setup::init(&server_config.log_level, server_config.tracing.as_ref());
 
-    // Parse access log template (if enabled). Uses a built-in default format
-    // when no custom format is specified; the default conditionally includes
-    // trace_id when tracing is enabled.
-    let access_log = server_config
-        .access_log
-        .as_ref()
-        .filter(|al| al.enabled)
-        .map(|al| {
-            let format_str = al
-                .format
-                .as_deref()
-                .unwrap_or_else(|| plenum_core::access_log::default_format(tracing_enabled));
-            let template = plenum_core::access_log::AccessLogTemplate::parse(format_str)
-                .unwrap_or_else(|err| {
-                    eprintln!("Error parsing access-log format: {}", err);
-                    std::process::exit(1);
-                });
-            std::sync::Arc::new(template)
-        });
+    let access_log = plenum_core::access_log::AccessLogTemplate::from_config(
+        server_config.access_log.as_ref(),
+        tracing_enabled,
+    )
+    .unwrap_or_else(|err| {
+        eprintln!("Error parsing access-log format: {}", err);
+        std::process::exit(1);
+    });
 
     let build_result =
         build_gateway(&config, &args.config_path, access_log).unwrap_or_else(|err| {

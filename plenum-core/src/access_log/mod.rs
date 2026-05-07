@@ -46,6 +46,7 @@
 use std::io::Write;
 use std::sync::Arc;
 
+use crate::config::AccessLogConfig;
 use crate::ctx::GatewayCtx;
 use crate::request_context::{ExtractionCtx, PingoraRequest};
 use plenum_config::{ContextRef, Template, TemplatePart, Token};
@@ -55,15 +56,6 @@ const DEFAULT_FORMAT: &str = r#"{"method":"${{ method }}","path":"${{ path }}","
 
 /// Built-in default access log format (with trace_id, used when tracing is enabled).
 const DEFAULT_FORMAT_WITH_TRACING: &str = r#"{"method":"${{ method }}","path":"${{ path }}","status":${{ status }},"latency_ms":${{ latency_ms }},"client_ip":"${{ client-ip }}","route":"${{ route }}","trace_id":"${{ trace_id }}"}"#;
-
-/// Return the appropriate default format string based on whether tracing is enabled.
-pub fn default_format(tracing_enabled: bool) -> &'static str {
-    if tracing_enabled {
-        DEFAULT_FORMAT_WITH_TRACING
-    } else {
-        DEFAULT_FORMAT
-    }
-}
 
 /// A segment of the access log template, pre-parsed at boot time.
 #[derive(Debug)]
@@ -97,6 +89,26 @@ pub struct AccessLogTemplate {
 }
 
 impl AccessLogTemplate {
+    /// Build an access log template from the config, if enabled.
+    ///
+    /// Returns `None` when access logging is not configured or not enabled.
+    /// When no custom format is provided, uses a built-in default that
+    /// conditionally includes `trace_id` when `tracing_enabled` is `true`.
+    pub fn from_config(
+        config: Option<&AccessLogConfig>,
+        tracing_enabled: bool,
+    ) -> Result<SharedAccessLog, String> {
+        let Some(al) = config.filter(|al| al.enabled) else {
+            return Ok(None);
+        };
+        let format_str = al.format.as_deref().unwrap_or(if tracing_enabled {
+            DEFAULT_FORMAT_WITH_TRACING
+        } else {
+            DEFAULT_FORMAT
+        });
+        Self::parse(format_str).map(|t| Some(Arc::new(t)))
+    }
+
     /// Parse a format string into an [`AccessLogTemplate`].
     ///
     /// Tokens are validated against both the request-context namespace and
