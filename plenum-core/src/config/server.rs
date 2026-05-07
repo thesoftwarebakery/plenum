@@ -22,6 +22,9 @@ fn default_sample_rate() -> f64 {
 fn default_service_name() -> String {
     "plenum".to_string()
 }
+fn default_log_level() -> String {
+    "info".to_string()
+}
 
 /// TLS termination configuration for the inbound listener.
 #[derive(Debug, Deserialize)]
@@ -93,8 +96,12 @@ pub struct TracingConfig {
     pub service_name: String,
 }
 
-/// Access log configuration. When present, one structured log line is emitted
-/// per completed request using the provided format template.
+/// Access log configuration. When enabled, one structured log line is written
+/// directly to **stdout** per completed request. Access logs are independent
+/// of the system log level — they are either on or off.
+///
+/// When no custom `format` is provided, a built-in default is used. The
+/// default includes `trace_id` automatically when `tracing.enabled` is `true`.
 ///
 /// The format string uses Plenum's standard `${{ }}` interpolation syntax.
 /// String token values are automatically JSON-escaped (quotes, backslashes,
@@ -124,32 +131,33 @@ pub struct TracingConfig {
 /// | `${{ status }}` | number | HTTP response status code |
 /// | `${{ latency_ms }}` | number | Request duration in milliseconds |
 /// | `${{ route }}` | string | Matched OpenAPI route pattern (e.g. `/products/{id}`) |
-/// | `${{ trace_id }}` | string | OpenTelemetry trace ID (empty when tracing is disabled) |
+/// | `${{ trace_id }}` | string | OpenTelemetry trace ID (only available when tracing is enabled) |
 /// | `${{ upstream }}` | string | Selected upstream backend address (`ip:port`) |
 ///
-/// ## Example
+/// ## Examples
 ///
 /// ```yaml
+/// # Enable with built-in default format
 /// x-plenum-config:
 ///   access-log:
-///     format: '{"method":"${{ method }}","path":"${{ path }}","status":${{ status }},"latency_ms":${{ latency_ms }},"trace_id":"${{ trace_id }}"}'
-/// ```
+///     enabled: true
 ///
-/// Produces log lines like:
-/// ```text
-/// {"method":"GET","path":"/products","status":200,"latency_ms":12,"trace_id":"0af7651916cd43dd8448eb211c80319c"}
+/// # Enable with custom format
+/// x-plenum-config:
+///   access-log:
+///     enabled: true
+///     format: '{"method":"${{ method }}","path":"${{ path }}","status":${{ status }}}'
 /// ```
-///
-/// The log line is emitted at `info` level with the `access_log` target,
-/// so it can be filtered independently via `RUST_LOG` (e.g.
-/// `RUST_LOG=warn,access_log=info` to suppress other info logs but keep
-/// access logs).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AccessLogConfig {
-    /// Template string using `${{ }}` interpolation tokens.
-    /// See the struct-level documentation for the full list of available tokens.
-    pub format: String,
+    /// Whether access log output is enabled. Default `false`.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Custom format template. When absent, a built-in default is used that
+    /// includes method, path, status, latency, client IP, route, and
+    /// (when tracing is enabled) trace ID.
+    pub format: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -185,12 +193,18 @@ pub struct ServerConfig {
     /// error responses pass through this interceptor before being written to the client.
     #[serde(default, rename = "on-gateway-error")]
     pub on_gateway_error: Option<GlobalInterceptorConfig>,
+    /// System log level for gateway operational messages (boot, errors,
+    /// warnings, debug info). Access logs are independent of this setting.
+    /// Valid values: `"error"`, `"warn"`, `"info"`, `"debug"`, `"trace"`.
+    /// Default `"info"`.
+    #[serde(default = "default_log_level", rename = "log-level")]
+    pub log_level: String,
     /// OpenTelemetry tracing configuration. When present and enabled, spans
     /// are exported via OTLP gRPC to the configured collector endpoint.
     #[serde(default)]
     pub tracing: Option<TracingConfig>,
-    /// Access log configuration. When present, one structured log line is
-    /// emitted per completed request using the provided format template.
+    /// Access log configuration. When enabled, one structured log line is
+    /// written to stdout per completed request.
     #[serde(default, rename = "access-log")]
     pub access_log: Option<AccessLogConfig>,
 }
@@ -207,6 +221,7 @@ impl Default for ServerConfig {
             tls: None,
             ca: None,
             on_gateway_error: None,
+            log_level: default_log_level(),
             tracing: None,
             access_log: None,
         }
@@ -505,26 +520,70 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_access_log_config() {
+    fn deserializes_access_log_config_with_format() {
         let json = serde_json::json!({
             "access-log": {
+                "enabled": true,
                 "format": "{\"method\": \"${{ method }}\"}"
             }
         });
         let config: ServerConfig = serde_json::from_value(json).unwrap();
         let access_log = config.access_log.unwrap();
-        assert_eq!(access_log.format, "{\"method\": \"${{ method }}\"}");
+        assert!(access_log.enabled);
+        assert_eq!(
+            access_log.format.unwrap(),
+            "{\"method\": \"${{ method }}\"}"
+        );
+    }
+
+    #[test]
+    fn access_log_enabled_without_format_uses_default() {
+        let json = serde_json::json!({
+            "access-log": {
+                "enabled": true
+            }
+        });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        let access_log = config.access_log.unwrap();
+        assert!(access_log.enabled);
+        assert!(access_log.format.is_none());
+    }
+
+    #[test]
+    fn access_log_enabled_defaults_to_false() {
+        let json = serde_json::json!({
+            "access-log": {}
+        });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        let access_log = config.access_log.unwrap();
+        assert!(!access_log.enabled);
     }
 
     #[test]
     fn access_log_config_rejects_unknown_field() {
         let json = serde_json::json!({
             "access-log": {
-                "format": "{}",
+                "enabled": true,
                 "unknown": true
             }
         });
         let result: Result<ServerConfig, _> = serde_json::from_value(json);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn log_level_defaults_to_info() {
+        let json = serde_json::json!({});
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.log_level, "info");
+    }
+
+    #[test]
+    fn deserializes_log_level() {
+        let json = serde_json::json!({
+            "log-level": "warn"
+        });
+        let config: ServerConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(config.log_level, "warn");
     }
 }

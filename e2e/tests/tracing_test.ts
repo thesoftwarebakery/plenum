@@ -33,7 +33,6 @@ describe("tracing", () => {
     wiremock = await startWiremock({ network, alias: "wiremock" });
     gateway = await startGateway({
       network,
-      environment: { RUST_LOG: "info" },
       fixtures: {
         openapi: "openapi.yaml",
         overlays: ["overlay-tracing.yaml", "overlay-upstream.yaml"],
@@ -134,15 +133,12 @@ describe("tracing", () => {
     await new Promise((r) => setTimeout(r, 500));
     const logs = await containerLogs(gateway.container);
 
-    // The access log format is:
-    // {"method":"GET","path":"/products","status":200,"route":"/products"}
-    // Find the JSON line in the logs.
+    // Access logs go directly to stdout as raw JSON lines (no
+    // tracing-subscriber prefix). Find the line for our request.
     const lines = logs.split('\n');
     const accessLogLine = lines.find((l) => l.includes('"method":"GET"') && l.includes('"path":"/products"'));
     expect(accessLogLine).toBeDefined();
 
-    // Parse the JSON portion — use a non-greedy match starting from {"method"
-    // to avoid capturing tracing-subscriber span context that precedes it.
     const jsonMatch = accessLogLine!.match(/\{"method".*\}/);
     expect(jsonMatch).not.toBeNull();
     const parsed = JSON.parse(jsonMatch![0]);

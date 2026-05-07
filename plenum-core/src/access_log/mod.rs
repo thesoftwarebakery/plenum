@@ -29,23 +29,41 @@
 //!
 //! ## Log output
 //!
-//! Lines are emitted at `info` level with the `access_log` target via
-//! `log::info!`, which flows through the tracing-subscriber `fmt` layer.
-//! This means access logs can be independently filtered via `RUST_LOG`:
+//! Access log lines are written directly to **stdout**, bypassing the
+//! tracing-subscriber system log pipeline entirely. This keeps access logs
+//! independent of the `log-level` setting — they are either on (when
+//! `access-log.enabled` is `true`) or off. System logs (boot messages,
+//! errors, warnings) go to **stderr** via tracing-subscriber.
 //!
-//! ```text
-//! RUST_LOG=warn,access_log=info   # suppress everything except access logs
-//! RUST_LOG=info                   # access logs + all info-level output
-//! ```
+//! ## Default format
+//!
+//! When no custom `format` is specified, a built-in default is used.
+//! The default conditionally includes `trace_id` when tracing is enabled.
 //!
 //! See [`AccessLogConfig`](crate::config::AccessLogConfig) for the full list
 //! of available tokens and configuration examples.
 
+use std::io::Write;
 use std::sync::Arc;
 
 use crate::ctx::GatewayCtx;
 use crate::request_context::{ExtractionCtx, PingoraRequest};
 use plenum_config::{ContextRef, Template, TemplatePart, Token};
+
+/// Built-in default access log format (without trace_id).
+const DEFAULT_FORMAT: &str = r#"{"method":"${{ method }}","path":"${{ path }}","status":${{ status }},"latency_ms":${{ latency_ms }},"client_ip":"${{ client-ip }}","route":"${{ route }}"}"#;
+
+/// Built-in default access log format (with trace_id, used when tracing is enabled).
+const DEFAULT_FORMAT_WITH_TRACING: &str = r#"{"method":"${{ method }}","path":"${{ path }}","status":${{ status }},"latency_ms":${{ latency_ms }},"client_ip":"${{ client-ip }}","route":"${{ route }}","trace_id":"${{ trace_id }}"}"#;
+
+/// Return the appropriate default format string based on whether tracing is enabled.
+pub fn default_format(tracing_enabled: bool) -> &'static str {
+    if tracing_enabled {
+        DEFAULT_FORMAT_WITH_TRACING
+    } else {
+        DEFAULT_FORMAT
+    }
+}
 
 /// A segment of the access log template, pre-parsed at boot time.
 #[derive(Debug)]
@@ -182,7 +200,11 @@ impl AccessLogTemplate {
             }
         }
 
-        log::info!(target: "access_log", "{}", output);
+        // Write directly to stdout — access logs bypass the tracing-subscriber
+        // pipeline so they are independent of the system log level.
+        let stdout = std::io::stdout();
+        let mut handle = stdout.lock();
+        let _ = writeln!(handle, "{}", output);
     }
 }
 

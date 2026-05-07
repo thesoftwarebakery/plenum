@@ -58,20 +58,32 @@ fn main() {
             std::process::exit(1);
         });
 
-    // Initialize tracing subscriber (replaces env_logger). Must be called after
-    // config parsing so the OTel endpoint is available. Pre-tracing errors use
-    // eprintln! so no log output is lost.
-    let _otel_guard = plenum_core::tracing_setup::init(server_config.tracing.as_ref());
+    // Initialize tracing subscriber for system logs (stderr). Must be called
+    // after config parsing so the log level and OTel endpoint are available.
+    // Pre-tracing errors use eprintln! so no log output is lost.
+    let tracing_enabled = server_config.tracing.as_ref().is_some_and(|t| t.enabled);
+    let _otel_guard =
+        plenum_core::tracing_setup::init(&server_config.log_level, server_config.tracing.as_ref());
 
-    // Parse access log template (if configured).
-    let access_log = server_config.access_log.as_ref().map(|al| {
-        let template = plenum_core::access_log::AccessLogTemplate::parse(&al.format)
-            .unwrap_or_else(|err| {
-                eprintln!("Error parsing access-log format: {}", err);
-                std::process::exit(1);
-            });
-        std::sync::Arc::new(template)
-    });
+    // Parse access log template (if enabled). Uses a built-in default format
+    // when no custom format is specified; the default conditionally includes
+    // trace_id when tracing is enabled.
+    let access_log = server_config
+        .access_log
+        .as_ref()
+        .filter(|al| al.enabled)
+        .map(|al| {
+            let format_str = al
+                .format
+                .as_deref()
+                .unwrap_or_else(|| plenum_core::access_log::default_format(tracing_enabled));
+            let template = plenum_core::access_log::AccessLogTemplate::parse(format_str)
+                .unwrap_or_else(|err| {
+                    eprintln!("Error parsing access-log format: {}", err);
+                    std::process::exit(1);
+                });
+            std::sync::Arc::new(template)
+        });
 
     let build_result =
         build_gateway(&config, &args.config_path, access_log).unwrap_or_else(|err| {

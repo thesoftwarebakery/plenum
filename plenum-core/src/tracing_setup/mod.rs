@@ -1,16 +1,20 @@
 //! Tracing subscriber setup and OpenTelemetry integration.
 //!
-//! Initializes a `tracing-subscriber` pipeline that replaces `env_logger`.
-//! Always installs a `fmt` layer filtered by `RUST_LOG`. When the `otel`
-//! feature is compiled in and a [`TracingConfig`] with `enabled: true` is
-//! provided, an OpenTelemetry layer with OTLP gRPC export is added.
+//! Initializes a `tracing-subscriber` pipeline for **system logs** (boot
+//! messages, errors, warnings). System logs go to **stderr**, filtered by
+//! the `log-level` config setting. Access logs are handled separately and
+//! written directly to **stdout** (see [`crate::access_log`]).
+//!
+//! When the `otel` feature is compiled in and a [`TracingConfig`] with
+//! `enabled: true` is provided, an OpenTelemetry layer with OTLP gRPC
+//! export is added for distributed tracing.
 //!
 //! ## Subscriber architecture
 //!
 //! ```text
 //! tracing::Registry
-//! ├── EnvFilter          (RUST_LOG-based filtering)
-//! ├── fmt::Layer         (human-readable log output to stderr)
+//! ├── EnvFilter          (log-level config, e.g. "info")
+//! ├── fmt::Layer         (human-readable system log output → stderr)
 //! └── OpenTelemetryLayer (optional — OTLP span export when tracing.enabled=true)
 //! ```
 //!
@@ -49,21 +53,21 @@ use crate::config::TracingConfig;
 
 /// Initialize the global tracing subscriber.
 ///
-/// Always installs a `fmt` layer (replacing `env_logger`) filtered by `RUST_LOG`.
-/// When `config` is `Some`, enabled, and the `otel` feature is compiled in,
-/// also installs an OpenTelemetry layer with OTLP gRPC export.
+/// Installs a `fmt` layer to **stderr** filtered by `log_level` for system
+/// logs. When `tracing_config` is `Some` and enabled, also installs an
+/// OpenTelemetry layer with OTLP gRPC export.
 ///
 /// Returns an [`OtelGuard`] that flushes the OTel pipeline on drop. Hold it
 /// alive for the lifetime of the process.
-pub fn init(config: Option<&TracingConfig>) -> Option<OtelGuard> {
+pub fn init(log_level: &str, tracing_config: Option<&TracingConfig>) -> Option<OtelGuard> {
     #[cfg(feature = "otel")]
     {
-        init_with_otel(config)
+        init_with_otel(log_level, tracing_config)
     }
     #[cfg(not(feature = "otel"))]
     {
-        let _ = config;
-        init_fmt_only();
+        let _ = tracing_config;
+        init_fmt_only(log_level);
         None
     }
 }
@@ -85,16 +89,16 @@ impl Drop for OtelGuard {
 }
 
 #[cfg(not(feature = "otel"))]
-fn init_fmt_only() {
+fn init_fmt_only(log_level: &str) {
     use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
     tracing_subscriber::registry()
-        .with(EnvFilter::from_default_env())
-        .with(fmt::layer())
+        .with(EnvFilter::new(log_level))
+        .with(fmt::layer().with_writer(std::io::stderr))
         .init();
 }
 
 #[cfg(feature = "otel")]
-fn init_with_otel(config: Option<&TracingConfig>) -> Option<OtelGuard> {
+fn init_with_otel(log_level: &str, config: Option<&TracingConfig>) -> Option<OtelGuard> {
     use opentelemetry::global;
     use opentelemetry::trace::TracerProvider;
     use opentelemetry_otlp::{SpanExporter, WithExportConfig};
@@ -103,8 +107,8 @@ fn init_with_otel(config: Option<&TracingConfig>) -> Option<OtelGuard> {
     use opentelemetry_sdk::{Resource, trace::BatchSpanProcessor};
     use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
-    let env_filter = EnvFilter::from_default_env();
-    let fmt_layer = fmt::layer();
+    let env_filter = EnvFilter::new(log_level);
+    let fmt_layer = fmt::layer().with_writer(std::io::stderr);
 
     let should_enable = config.is_some_and(|c| c.enabled);
     if !should_enable {

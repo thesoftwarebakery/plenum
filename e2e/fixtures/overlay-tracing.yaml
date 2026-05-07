@@ -13,4 +13,5 @@ actions:
           endpoint: "http://localhost:4317"
           sample-rate: 1.0
         access-log:
+          enabled: true
           format: '{"method":"${{ method }}","path":"${{ path }}","status":${{ status }},"route":"${{ route }}"}'
