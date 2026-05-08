@@ -1,5 +1,5 @@
 {
-  "plenum-core": "0.15.0",
+  "plenum-core": "0.16.0",
   "openapi-overlay": "0.2.0",
   "plenum-js-runtime": "0.3.0",
   "plenum-sandbox": "0.2.0",
