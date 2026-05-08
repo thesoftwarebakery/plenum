@@ -87,10 +87,7 @@ pub(crate) fn resolve_global_error_hook(
         }
     };
 
-    let timeout = cfg
-        .timeout_ms
-        .map(Duration::from_millis)
-        .unwrap_or(default_timeout);
+    let timeout = cfg.timeout.map(|t| *t).unwrap_or(default_timeout);
 
     let validate_arg = serde_json::json!({
         "module": &cfg.module,

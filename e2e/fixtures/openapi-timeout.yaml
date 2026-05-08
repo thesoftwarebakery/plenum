@@ -12,7 +12,7 @@ paths:
   /slow-op-timeout:
     get:
       operationId: slowOpTimeout
-      x-plenum-timeout: 1000
+      x-plenum-timeout: 1s
       responses:
         "200":
           description: Slow endpoint with 1s operation-level timeout
@@ -25,7 +25,7 @@ paths:
   /slow-interceptor:
     get:
       operationId: slowInterceptor
-      x-plenum-timeout: 1000
+      x-plenum-timeout: 1s
       responses:
         "200":
           description: Endpoint with slow interceptor and 1s timeout

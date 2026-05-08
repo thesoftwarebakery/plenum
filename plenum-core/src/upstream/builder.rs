@@ -111,14 +111,14 @@ pub(crate) fn build_upstream(
             plugin,
             options,
             permissions,
-            timeout_ms: upstream_config_timeout_ms,
+            timeout: upstream_config_timeout,
         } => {
             let resolved = module_resolver::resolve_module(plugin, config_base)
                 .map_err(|e| format!("path '{}': plugin '{}': {}", path, plugin, e))?;
             let cache_key = PluginRuntimeKey::new(resolved.cache_key(), permissions);
 
-            let plugin_timeout = upstream_config_timeout_ms
-                .map(Duration::from_millis)
+            let plugin_timeout = upstream_config_timeout
+                .map(|t| *t)
                 .unwrap_or(default_plugin_timeout);
 
             let h = match plugin_runtime_cache.entry(cache_key) {

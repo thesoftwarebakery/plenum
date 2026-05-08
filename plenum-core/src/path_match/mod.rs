@@ -1,7 +1,7 @@
 pub(crate) mod module_resolver;
 
 use oas_query::ParameterDef;
-use plenum_config::ConfigValue;
+use plenum_config::{ConfigDuration, ConfigValue};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::error::Error;
 use std::path::Path;
@@ -191,10 +191,7 @@ fn build_operation_interceptors(
             }
         };
 
-        let timeout = config
-            .timeout_ms
-            .map(Duration::from_millis)
-            .unwrap_or(default_timeout);
+        let timeout = config.timeout.map(|t| *t).unwrap_or(default_timeout);
 
         let validate_arg = serde_json::to_value(config).unwrap();
         crate::runtime_builder::validate_hook(runtime.as_ref(), validate_arg, timeout, &context)?;
@@ -229,10 +226,9 @@ pub fn build_router(
     let server_config: ServerConfig = config
         .extension(&config.spec.extensions, "plenum-config")
         .unwrap_or_else(|_| ServerConfig::default());
-    let default_interceptor_timeout =
-        Duration::from_millis(server_config.interceptor_default_timeout_ms);
-    let default_plugin_timeout = Duration::from_millis(server_config.plugin_default_timeout_ms);
-    let default_request_timeout = Duration::from_millis(server_config.request_timeout_ms);
+    let default_interceptor_timeout = *server_config.interceptor_default_timeout;
+    let default_plugin_timeout = *server_config.plugin_default_timeout;
+    let default_request_timeout = *server_config.request_timeout;
     let default_max_body_bytes = server_config.max_request_body_bytes;
 
     let mut router = Router::new();
@@ -287,12 +283,12 @@ pub fn build_router(
         for (method, operation) in path_item.methods() {
             // Request timeout (op > path > global)
             let request_timeout = config
-                .extension_cascade::<u64>(
+                .extension_cascade::<ConfigDuration>(
                     &[&operation.extensions, &path_item.extensions],
                     "plenum-timeout",
                 )
                 .map_err(|e| format!("path '{}' method {}: x-plenum-timeout: {}", path, method, e))?
-                .map(Duration::from_millis)
+                .map(|d| *d)
                 .unwrap_or(default_request_timeout);
 
             // Body size limit (op > path > global)
@@ -356,9 +352,7 @@ pub fn build_router(
                 validate_rate_limit_configs(&rate_limit, path)
                     .map_err(|e| -> Box<dyn Error> { e.into() })?;
                 for rl in &rate_limit {
-                    let window =
-                        crate::config::parse_window_duration(&rl.window).expect("validated above");
-                    rate_limit_windows.insert(window.as_secs());
+                    rate_limit_windows.insert(rl.window.as_secs());
                 }
             }
 
@@ -795,7 +789,7 @@ mod tests {
                             "module": &noop_path,
                             "hook": "on_request",
                             "function": "onRequest",
-                            "timeout-ms": 5000
+                            "timeout": "5s"
                         }],
                         "responses": { "200": { "description": "ok" } }
                     },
@@ -814,7 +808,7 @@ mod tests {
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(
             get.interceptors.on_request[0].timeout,
-            Duration::from_millis(5000)
+            Duration::from_secs(5)
         );
     }
 
@@ -894,7 +888,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "interceptor-default-timeout-ms": 15000 },
+            "x-plenum-config": { "interceptor-default-timeout": "15s" },
             "paths": {
                 "/test": {
                     "get": {
@@ -920,7 +914,7 @@ mod tests {
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(
             get.interceptors.on_request[0].timeout,
-            Duration::from_millis(15000)
+            Duration::from_secs(15)
         );
     }
 
@@ -955,7 +949,7 @@ mod tests {
         let get = matched.value.operations.get(&Method::GET).unwrap();
         assert_eq!(
             get.interceptors.on_request[0].timeout,
-            Duration::from_millis(30_000)
+            Duration::from_secs(30)
         );
     }
 
@@ -1268,7 +1262,7 @@ mod tests {
     }
 
     #[test]
-    fn plugin_upstream_uses_per_plugin_timeout_ms() {
+    fn plugin_upstream_uses_per_plugin_timeout() {
         let plugin_path = fixture_path("echo_plugin.js");
         let doc = json!({
             "openapi": "3.1.0",
@@ -1281,7 +1275,7 @@ mod tests {
                     "x-plenum-upstream": {
                         "kind": "plugin",
                         "plugin": &plugin_path,
-                        "timeout-ms": 12345
+                        "timeout": "12345ms"
                     }
                 }
             }
@@ -1533,7 +1527,7 @@ mod tests {
             .router;
         let matched = router.at("/items").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert_eq!(get.request_timeout, Duration::from_millis(30_000));
+        assert_eq!(get.request_timeout, Duration::from_secs(30));
     }
 
     #[test]
@@ -1541,7 +1535,7 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "request-timeout-ms": 5000 },
+            "x-plenum-config": { "request-timeout": "5s" },
             "paths": {
                 "/test": {
                     "get": {
@@ -1562,7 +1556,7 @@ mod tests {
             .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert_eq!(get.request_timeout, Duration::from_millis(5000));
+        assert_eq!(get.request_timeout, Duration::from_secs(5));
     }
 
     #[test]
@@ -1570,10 +1564,10 @@ mod tests {
         let doc = json!({
             "openapi": "3.1.0",
             "info": { "title": "Test", "version": "1.0" },
-            "x-plenum-config": { "request-timeout-ms": 5000 },
+            "x-plenum-config": { "request-timeout": "5s" },
             "paths": {
                 "/test": {
-                    "x-plenum-timeout": 2000,
+                    "x-plenum-timeout": "2s",
                     "get": {
                         "responses": { "200": { "description": "ok" } }
                     },
@@ -1592,7 +1586,7 @@ mod tests {
             .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert_eq!(get.request_timeout, Duration::from_millis(2000));
+        assert_eq!(get.request_timeout, Duration::from_secs(2));
     }
 
     #[test]
@@ -1602,9 +1596,9 @@ mod tests {
             "info": { "title": "Test", "version": "1.0" },
             "paths": {
                 "/test": {
-                    "x-plenum-timeout": 5000,
+                    "x-plenum-timeout": "5s",
                     "get": {
-                        "x-plenum-timeout": 1000,
+                        "x-plenum-timeout": "1s",
                         "responses": { "200": { "description": "ok" } }
                     },
                     "x-plenum-upstream": {
@@ -1622,7 +1616,7 @@ mod tests {
             .router;
         let matched = router.at("/test").unwrap();
         let get = matched.value.operations.get(&Method::GET).unwrap();
-        assert_eq!(get.request_timeout, Duration::from_millis(1000));
+        assert_eq!(get.request_timeout, Duration::from_secs(1));
     }
 
     #[test]

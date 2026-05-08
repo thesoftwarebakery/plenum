@@ -1,3 +1,4 @@
+use plenum_config::ConfigDuration;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
@@ -36,8 +37,8 @@ pub struct InterceptorConfig {
     pub module: String,
     pub hook: String,
     pub function: String,
-    #[serde(rename = "timeout-ms")]
-    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub timeout: Option<ConfigDuration>,
     #[serde(default)]
     pub options: Option<serde_json::Value>,
     #[serde(default)]
@@ -52,8 +53,8 @@ pub struct InterceptorConfig {
 pub struct GlobalInterceptorConfig {
     pub module: String,
     pub function: String,
-    #[serde(rename = "timeout-ms")]
-    pub timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub timeout: Option<ConfigDuration>,
     #[serde(default)]
     pub options: Option<serde_json::Value>,
     #[serde(default)]
@@ -70,13 +71,13 @@ mod tests {
             "module": "./interceptors/auth.js",
             "hook": "on_request",
             "function": "checkAuth",
-            "timeout-ms": 2000
+            "timeout": "2s"
         });
         let config: InterceptorConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.module, "./interceptors/auth.js");
         assert_eq!(config.hook, "on_request");
         assert_eq!(config.function, "checkAuth");
-        assert_eq!(config.timeout_ms, Some(2000));
+        assert_eq!(config.timeout, Some(ConfigDuration::from_secs(2)));
         assert_eq!(config.options, None);
     }
 
@@ -86,7 +87,7 @@ mod tests {
             "module": "./interceptors/auth.js",
             "hook": "on_request",
             "function": "checkAuth",
-            "timeout-ms": 2000,
+            "timeout": "2s",
             "options": {
                 "role": "admin",
                 "allowed_methods": ["GET", "POST"]
@@ -96,7 +97,7 @@ mod tests {
         assert_eq!(config.module, "./interceptors/auth.js");
         assert_eq!(config.hook, "on_request");
         assert_eq!(config.function, "checkAuth");
-        assert_eq!(config.timeout_ms, Some(2000));
+        assert_eq!(config.timeout, Some(ConfigDuration::from_secs(2)));
         assert!(config.options.is_some());
         let options = config.options.unwrap();
         assert_eq!(options["role"].as_str().unwrap(), "admin");
@@ -104,14 +105,14 @@ mod tests {
     }
 
     #[test]
-    fn timeout_ms_is_optional() {
+    fn timeout_is_optional() {
         let json = serde_json::json!({
             "module": "./interceptors/auth.js",
             "hook": "on_request",
             "function": "checkAuth"
         });
         let config: InterceptorConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(config.timeout_ms, None);
+        assert_eq!(config.timeout, None);
         assert_eq!(config.options, None);
     }
 

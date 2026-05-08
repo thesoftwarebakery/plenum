@@ -1,4 +1,5 @@
 use super::interceptor::GlobalInterceptorConfig;
+use plenum_config::ConfigDuration;
 use serde::Deserialize;
 
 fn default_threads() -> usize {
@@ -10,8 +11,8 @@ fn default_listen() -> String {
 fn default_tls_listen() -> String {
     "0.0.0.0:6189".to_string()
 }
-fn default_timeout_ms() -> u64 {
-    30_000
+fn default_timeout() -> ConfigDuration {
+    ConfigDuration::from_secs(30)
 }
 fn default_max_body_bytes() -> u64 {
     10_485_760
@@ -167,15 +168,12 @@ pub struct ServerConfig {
     pub threads: usize,
     #[serde(default = "default_listen")]
     pub listen: String,
-    #[serde(
-        default = "default_timeout_ms",
-        rename = "interceptor-default-timeout-ms"
-    )]
-    pub interceptor_default_timeout_ms: u64,
-    #[serde(default = "default_timeout_ms", rename = "plugin-default-timeout-ms")]
-    pub plugin_default_timeout_ms: u64,
-    #[serde(default = "default_timeout_ms", rename = "request-timeout-ms")]
-    pub request_timeout_ms: u64,
+    #[serde(default = "default_timeout", rename = "interceptor-default-timeout")]
+    pub interceptor_default_timeout: ConfigDuration,
+    #[serde(default = "default_timeout", rename = "plugin-default-timeout")]
+    pub plugin_default_timeout: ConfigDuration,
+    #[serde(default = "default_timeout", rename = "request-timeout")]
+    pub request_timeout: ConfigDuration,
     #[serde(default = "default_max_body_bytes", rename = "max-request-body-bytes")]
     pub max_request_body_bytes: u64,
     /// Inbound TLS listener configuration. When present, the gateway also
@@ -214,9 +212,9 @@ impl Default for ServerConfig {
         ServerConfig {
             threads: default_threads(),
             listen: default_listen(),
-            interceptor_default_timeout_ms: default_timeout_ms(),
-            plugin_default_timeout_ms: default_timeout_ms(),
-            request_timeout_ms: default_timeout_ms(),
+            interceptor_default_timeout: default_timeout(),
+            plugin_default_timeout: default_timeout(),
+            request_timeout: default_timeout(),
             max_request_body_bytes: default_max_body_bytes(),
             tls: None,
             ca: None,
@@ -300,51 +298,57 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_interceptor_default_timeout_ms() {
+    fn deserializes_interceptor_default_timeout() {
         let json = serde_json::json!({
-            "interceptor-default-timeout-ms": 5000
+            "interceptor-default-timeout": "5s"
         });
         let config: ServerConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(config.interceptor_default_timeout_ms, 5000);
+        assert_eq!(
+            config.interceptor_default_timeout,
+            ConfigDuration::from_secs(5)
+        );
     }
 
     #[test]
-    fn interceptor_default_timeout_ms_defaults_to_30_000() {
+    fn interceptor_default_timeout_defaults_to_30s() {
         let json = serde_json::json!({});
         let config: ServerConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(config.interceptor_default_timeout_ms, 30_000);
+        assert_eq!(
+            config.interceptor_default_timeout,
+            ConfigDuration::from_secs(30)
+        );
     }
 
     #[test]
-    fn deserializes_plugin_default_timeout_ms() {
+    fn deserializes_plugin_default_timeout() {
         let json = serde_json::json!({
-            "plugin-default-timeout-ms": 3000
+            "plugin-default-timeout": "3s"
         });
         let config: ServerConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(config.plugin_default_timeout_ms, 3000);
+        assert_eq!(config.plugin_default_timeout, ConfigDuration::from_secs(3));
     }
 
     #[test]
-    fn plugin_default_timeout_ms_defaults_to_30_000() {
+    fn plugin_default_timeout_defaults_to_30s() {
         let json = serde_json::json!({});
         let config: ServerConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(config.plugin_default_timeout_ms, 30_000);
+        assert_eq!(config.plugin_default_timeout, ConfigDuration::from_secs(30));
     }
 
     #[test]
-    fn deserializes_request_timeout_ms() {
+    fn deserializes_request_timeout() {
         let json = serde_json::json!({
-            "request-timeout-ms": 10000
+            "request-timeout": "10s"
         });
         let config: ServerConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(config.request_timeout_ms, 10000);
+        assert_eq!(config.request_timeout, ConfigDuration::from_secs(10));
     }
 
     #[test]
-    fn request_timeout_ms_defaults_to_30_000() {
+    fn request_timeout_defaults_to_30s() {
         let json = serde_json::json!({});
         let config: ServerConfig = serde_json::from_value(json).unwrap();
-        assert_eq!(config.request_timeout_ms, 30_000);
+        assert_eq!(config.request_timeout, ConfigDuration::from_secs(30));
     }
 
     #[test]
