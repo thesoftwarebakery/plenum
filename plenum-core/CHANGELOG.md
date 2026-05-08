@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.16.0](https://github.com/thesoftwarebakery/plenum/compare/v0.15.0...v0.16.0) (2026-05-08)
+
+
+### Features
+
+* add OpenTelemetry tracing and configurable access logs ([#37](https://github.com/thesoftwarebakery/plenum/issues/37)) ([da70749](https://github.com/thesoftwarebakery/plenum/commit/da70749955a2fd3bafc8ea04d9b9b0cfc51c4f32))
+* make x-plenum-upstream optional and support per-operation overrides ([bc6d550](https://github.com/thesoftwarebakery/plenum/commit/bc6d550582917a1c825ffda0ceae10d898fcc3e8)), closes [#162](https://github.com/thesoftwarebakery/plenum/issues/162)
+* OpenTelemetry tracing and configurable access logs ([36dc41b](https://github.com/thesoftwarebakery/plenum/commit/36dc41b478cb63836a1bcb2d9889f27e6fab8fec))
+* standardise duration format across all config fields ([f5a54f3](https://github.com/thesoftwarebakery/plenum/commit/f5a54f3c9b4bd0ad80212fe1282fbd95d269fc78)), closes [#115](https://github.com/thesoftwarebakery/plenum/issues/115)
+* standardise duration format across config ([ba9d005](https://github.com/thesoftwarebakery/plenum/commit/ba9d0050960212abf29bf78ffde5644af7ea6810))
+* support multiple rate limit configurations ([9035118](https://github.com/thesoftwarebakery/plenum/commit/9035118648de68707785541d74e8cfc5b3639214))
+* support multiple rate limit configurations per operation ([918a3b0](https://github.com/thesoftwarebakery/plenum/commit/918a3b002c059cbb5137cc3304fba8251e2010a1)), closes [#121](https://github.com/thesoftwarebakery/plenum/issues/121)
+* x-plenum-upstream improvements ([8560548](https://github.com/thesoftwarebakery/plenum/commit/8560548c7549044da5714939212a512458785638))
+
+
+### Bug Fixes
+
+* update imports after plenum-config crate extraction ([9e437de](https://github.com/thesoftwarebakery/plenum/commit/9e437de41eba2fceaec991f717ff8f18b6668f5b))
+
+
+### Performance Improvements
+
+* gate OTel propagation on runtime tracing config ([23c7121](https://github.com/thesoftwarebakery/plenum/commit/23c7121d6be040112366ae45c94f31fa420f69de))
+* store req by value in ExtractionCtx to eliminate double indirection ([093a12f](https://github.com/thesoftwarebakery/plenum/commit/093a12f91157ccc7fd63b5038fc33d4811ef1a23))
+
 ## [0.15.0](https://github.com/thesoftwarebakery/plenum/compare/v0.14.1...v0.15.0) (2026-04-30)
 
 
