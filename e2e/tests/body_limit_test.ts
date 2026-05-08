@@ -112,6 +112,8 @@ describe("body size limits", () => {
   test("returns 413 before interceptor runs when body exceeds limit", async () => {
     // /with-interceptor has a 50-byte limit and an on_request interceptor.
     // The 413 must fire before the interceptor, so wiremock must never receive the request.
+    // Filter by path to avoid flakes from stale requests logged asynchronously
+    // by WireMock after beforeEach's reset completes.
     const body = "x".repeat(100);
     const resp = await fetch(`${gateway.baseUrl}/with-interceptor`, {
       method: "POST",
@@ -120,8 +122,9 @@ describe("body size limits", () => {
     });
     expect(resp.status).toEqual(413);
 
-    const requests = await wm.getRequests();
-    expect(requests).toHaveLength(0);
+    const allRequests = await wm.getRequests();
+    const upstreamHits = allRequests.filter(r => r.request.url.startsWith("/with-interceptor"));
+    expect(upstreamHits).toHaveLength(0);
   });
 
   test("returns 413 for chunked upload exceeding global limit", async () => {
