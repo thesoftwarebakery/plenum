@@ -109,8 +109,8 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
 | `x-plenum-interceptor` | Operation | JS interceptor chain (array of hook configs) |
 | `x-plenum-cors` | Operation | CORS configuration |
 | `x-plenum-backend` | Operation | Opaque config passed to plugin `handle()`; `params` array values are resolved at request time |
-| `x-plenum-request-timeout` | Operation | Per-operation request timeout (ms) |
-| `x-plenum-max-request-body-bytes` | Operation | Per-operation max body size |
+| `x-plenum-timeout` | Operation | Per-operation request timeout (duration string, e.g. `"1s"`, `"500ms"`) |
+| `x-plenum-body-limit` | Operation | Per-operation max body size |
 
 ### Upstream types
 
@@ -118,7 +118,7 @@ All extensions use the `x-plenum-` prefix. The `oas3` crate strips the `x-` pref
 - **HTTP pool** — load-balanced backends (`kind: "HTTP"`, `backends[]`, `selection`, `health-check`)
   - Selection: `round-robin` (default), `weighted`, `consistent`
   - `hash-key` supports `${{header.*}}`, `${{query.*}}`, `${{path-param.*}}`, `${{cookie.*}}`, `${{client-ip}}`
-- **Plugin** — Node.js handler (`kind: "plugin"`, `plugin`, `options`, `permissions`, `timeout-ms`); plugins receive `input.request.queryParams` (parsed, typed) alongside `input.request.query` (raw string); `x-plenum-backend.params` tokens are resolved before calling `handle()`
+- **Plugin** — Node.js handler (`kind: "plugin"`, `plugin`, `options`, `permissions`, `timeout`); plugins receive `input.request.queryParams` (parsed, typed) alongside `input.request.query` (raw string); `x-plenum-backend.params` tokens are resolved before calling `handle()`
 - **Static** — pre-built response (`kind: "static"`, `status`, `headers`, `body`)
 
 ### Interceptor lifecycle hooks (execution order)

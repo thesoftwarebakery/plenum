@@ -12,7 +12,7 @@ actions:
             selection: "round-robin"
             health-check:
               path: "/__admin/health"
-              interval-seconds: 2
+              interval: 2s
               consecutive-failure: 2
               consecutive-success: 1
             backends:

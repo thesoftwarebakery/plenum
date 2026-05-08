@@ -4,7 +4,6 @@ use std::collections::{BTreeSet, HashMap};
 use std::error::Error;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
 
 use pingora_core::services::background::GenBackgroundService;
 use pingora_load_balancing::selection;
@@ -76,7 +75,7 @@ pub fn build_pool(
         lb_backends.set_health_check(hc);
     }
 
-    let frequency = health_check.map(|hc| Duration::from_secs(hc.interval_seconds));
+    let frequency = health_check.map(|hc| *hc.interval);
     let has_health_check = health_check.is_some();
 
     let (inner, bg_service) = match selection {

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::Deserialize;
 use serde_json::Value;
 
-use plenum_config::ContextRef;
+use plenum_config::{ConfigDuration, ContextRef};
 
 // ---------------------------------------------------------------------------
 // Selection algorithm
@@ -36,8 +36,8 @@ impl SelectionAlgorithm {
 // Health check config
 // ---------------------------------------------------------------------------
 
-fn default_hc_interval() -> u64 {
-    10
+fn default_hc_interval() -> ConfigDuration {
+    ConfigDuration::from_secs(10)
 }
 fn default_hc_status() -> u16 {
     200
@@ -51,8 +51,8 @@ fn default_one() -> usize {
 #[serde(deny_unknown_fields)]
 pub struct HealthCheckConfig {
     pub path: String,
-    #[serde(default = "default_hc_interval", rename = "interval-seconds")]
-    pub interval_seconds: u64,
+    #[serde(default = "default_hc_interval")]
+    pub interval: ConfigDuration,
     #[serde(default = "default_hc_status", rename = "expected-status")]
     pub expected_status: u16,
     #[serde(default = "default_one", rename = "consecutive-success")]
@@ -122,8 +122,8 @@ struct PluginUpstreamFields {
     options: Option<Value>,
     #[serde(default)]
     permissions: Option<super::PermissionsConfig>,
-    #[serde(default, rename = "timeout-ms")]
-    timeout_ms: Option<u64>,
+    #[serde(default)]
+    timeout: Option<ConfigDuration>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -166,7 +166,7 @@ pub enum UpstreamConfig {
         plugin: String,
         options: Option<Value>,
         permissions: Option<super::PermissionsConfig>,
-        timeout_ms: Option<u64>,
+        timeout: Option<ConfigDuration>,
     },
     Static {
         status: u16,
@@ -306,7 +306,7 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
                     plugin: fields.plugin,
                     options: fields.options,
                     permissions: fields.permissions,
-                    timeout_ms: fields.timeout_ms,
+                    timeout: fields.timeout,
                 })
             }
             "static" => {
@@ -441,13 +441,13 @@ mod tests {
                 plugin,
                 options,
                 permissions,
-                timeout_ms,
+                timeout,
             } => {
                 assert_eq!(plugin, "my-plugin");
                 assert!(options.is_some());
                 assert_eq!(options.unwrap()["key"], "value");
                 assert!(permissions.is_none());
-                assert!(timeout_ms.is_none());
+                assert!(timeout.is_none());
             }
             _ => panic!("expected Plugin variant"),
         }
@@ -465,23 +465,23 @@ mod tests {
                 plugin,
                 options,
                 permissions,
-                timeout_ms,
+                timeout,
             } => {
                 assert_eq!(plugin, "my-plugin");
                 assert!(options.is_none());
                 assert!(permissions.is_none());
-                assert!(timeout_ms.is_none());
+                assert!(timeout.is_none());
             }
             _ => panic!("expected Plugin variant"),
         }
     }
 
     #[test]
-    fn deserializes_plugin_variant_with_timeout_ms() {
+    fn deserializes_plugin_variant_with_timeout() {
         let json = serde_json::json!({
             "kind": "plugin",
             "plugin": "my-plugin",
-            "timeout-ms": 7500
+            "timeout": "7500ms"
         });
         let config: UpstreamConfig = serde_json::from_value(json).unwrap();
         match config {
@@ -489,12 +489,12 @@ mod tests {
                 plugin,
                 options,
                 permissions,
-                timeout_ms,
+                timeout,
             } => {
                 assert_eq!(plugin, "my-plugin");
                 assert!(options.is_none());
                 assert!(permissions.is_none());
-                assert_eq!(timeout_ms, Some(7500));
+                assert_eq!(timeout, Some(ConfigDuration::from_millis(7500)));
             }
             _ => panic!("expected Plugin variant"),
         }
@@ -708,7 +708,7 @@ mod tests {
             "kind": "HTTP",
             "health-check": {
                 "path": "/healthz",
-                "interval-seconds": 5,
+                "interval": "5s",
                 "expected-status": 200,
                 "consecutive-success": 2,
                 "consecutive-failure": 3
@@ -722,7 +722,7 @@ mod tests {
             UpstreamConfig::HTTPPool { health_check, .. } => {
                 let hc = health_check.unwrap();
                 assert_eq!(hc.path, "/healthz");
-                assert_eq!(hc.interval_seconds, 5);
+                assert_eq!(hc.interval, ConfigDuration::from_secs(5));
                 assert_eq!(hc.expected_status, 200);
                 assert_eq!(hc.consecutive_success, 2);
                 assert_eq!(hc.consecutive_failure, 3);
@@ -744,7 +744,7 @@ mod tests {
         match config {
             UpstreamConfig::HTTPPool { health_check, .. } => {
                 let hc = health_check.unwrap();
-                assert_eq!(hc.interval_seconds, 10);
+                assert_eq!(hc.interval, ConfigDuration::from_secs(10));
                 assert_eq!(hc.expected_status, 200);
                 assert_eq!(hc.consecutive_success, 1);
                 assert_eq!(hc.consecutive_failure, 1);

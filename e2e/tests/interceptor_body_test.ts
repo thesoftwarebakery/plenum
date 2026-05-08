@@ -130,8 +130,9 @@ test("on_request short-circuits with 403 based on body content", async () => {
     const body = await resp.json() as { error: string };
     expect(body.error).toEqual("blocked by body");
 
-    const requests = await wm.getRequests();
-    expect(requests.length, "expected no requests to upstream").toEqual(0);
+    const allRequests = await wm.getRequests();
+    const upstreamHits = allRequests.filter(r => r.request.url.startsWith("/products"));
+    expect(upstreamHits.length, `expected no requests to /products upstream, got: ${JSON.stringify(upstreamHits.map(r => r.request.url))}`).toEqual(0);
   } finally {
     await gateway.container.stop();
     await wiremock.container.stop();

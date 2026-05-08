@@ -1,7 +1,6 @@
 use serde::Deserialize;
-use std::time::Duration;
 
-use plenum_config::ContextTemplate;
+use plenum_config::{ConfigDuration, ContextTemplate};
 
 fn default_true() -> bool {
     true
@@ -48,8 +47,8 @@ pub struct RateLimitConfig {
     /// time; an invalid expression or unknown namespace is a boot-time error.
     pub identifier: ContextTemplate,
 
-    /// Window duration string. Supported formats: `"60s"`, `"5m"`, `"1h"`.
-    pub window: String,
+    /// Window duration. Supported formats: `"500ms"`, `"60s"`, `"5m"`, `"1h"`.
+    pub window: ConfigDuration,
 
     /// Maximum count of events allowed per window.
     pub limit: u64,
@@ -68,39 +67,12 @@ pub struct RateLimitConfig {
     pub enforce: bool,
 }
 
-/// Parse a window duration string into a `Duration`.
-///
-/// Accepts `"Ns"` (seconds), `"Nm"` (minutes), or `"Nh"` (hours).
-pub fn parse_window_duration(s: &str) -> Result<Duration, String> {
-    let s = s.trim();
-    if let Some(n) = s.strip_suffix('s') {
-        let secs: u64 = n
-            .parse()
-            .map_err(|_| format!("invalid window duration: '{s}'"))?;
-        return Ok(Duration::from_secs(secs));
-    }
-    if let Some(n) = s.strip_suffix('m') {
-        let mins: u64 = n
-            .parse()
-            .map_err(|_| format!("invalid window duration: '{s}'"))?;
-        return Ok(Duration::from_secs(mins * 60));
-    }
-    if let Some(n) = s.strip_suffix('h') {
-        let hours: u64 = n
-            .parse()
-            .map_err(|_| format!("invalid window duration: '{s}'"))?;
-        return Ok(Duration::from_secs(hours * 3600));
-    }
-    Err(format!(
-        "invalid window duration: '{s}' — must be a number followed by s, m, or h (e.g. '60s', '5m', '1h')"
-    ))
-}
-
 /// Validate all rate limit configs for a given path at boot time.
 ///
 /// The `identifier` expression syntax is already validated at deserialization
-/// time by [`ContextTemplate`]. This function checks the remaining constraints:
-/// non-empty array, `limit > 0`, and a parseable `window` for each element.
+/// time by [`ContextTemplate`], and `window` is validated by [`ConfigDuration`].
+/// This function checks the remaining constraints: non-empty array and
+/// `limit > 0`.
 pub fn validate_rate_limit_configs(configs: &[RateLimitConfig], path: &str) -> Result<(), String> {
     if configs.is_empty() {
         return Err(format!(
@@ -113,8 +85,6 @@ pub fn validate_rate_limit_configs(configs: &[RateLimitConfig], path: &str) -> R
                 "path '{path}': x-plenum-rate-limit: limit must be greater than 0"
             ));
         }
-        parse_window_duration(&config.window)
-            .map_err(|e| format!("path '{path}': x-plenum-rate-limit: window: {e}"))?;
     }
     Ok(())
 }
@@ -123,6 +93,7 @@ pub fn validate_rate_limit_configs(configs: &[RateLimitConfig], path: &str) -> R
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::time::Duration;
 
     fn deserialize(v: serde_json::Value) -> serde_json::Result<RateLimitConfig> {
         serde_json::from_value(v)
@@ -137,7 +108,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(config.identifier.as_str(), "${{header.x-api-key}}");
-        assert_eq!(config.window, "60s");
+        assert_eq!(*config.window, Duration::from_secs(60));
         assert_eq!(config.limit, 1000);
         assert!(config.enforce); // default true
         assert!(config.cost_ctx_path.is_none());
@@ -157,7 +128,7 @@ mod tests {
             config.identifier.as_str(),
             "${{header.x-api-key}}-${{ctx.tenant.id}}"
         );
-        assert_eq!(config.window, "5m");
+        assert_eq!(*config.window, Duration::from_secs(300));
         assert_eq!(config.limit, 500);
         assert_eq!(config.cost_ctx_path.as_deref(), Some("tokenCost"));
         assert!(!config.enforce);
@@ -187,7 +158,6 @@ mod tests {
 
     #[test]
     fn rejects_invalid_identifier_at_deserialization() {
-        // Unknown namespace — caught at config parse time, not validation time.
         let result = deserialize(json!({
             "identifier": "static-key",
             "window": "60s",
@@ -207,44 +177,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_window_seconds() {
-        assert_eq!(
-            parse_window_duration("60s").unwrap(),
-            Duration::from_secs(60)
-        );
-        assert_eq!(parse_window_duration("1s").unwrap(), Duration::from_secs(1));
-    }
-
-    #[test]
-    fn parse_window_minutes() {
-        assert_eq!(
-            parse_window_duration("5m").unwrap(),
-            Duration::from_secs(300)
-        );
-        assert_eq!(
-            parse_window_duration("1m").unwrap(),
-            Duration::from_secs(60)
-        );
-    }
-
-    #[test]
-    fn parse_window_hours() {
-        assert_eq!(
-            parse_window_duration("1h").unwrap(),
-            Duration::from_secs(3600)
-        );
-        assert_eq!(
-            parse_window_duration("2h").unwrap(),
-            Duration::from_secs(7200)
-        );
-    }
-
-    #[test]
-    fn parse_window_invalid() {
-        assert!(parse_window_duration("60").is_err());
-        assert!(parse_window_duration("abc").is_err());
-        assert!(parse_window_duration("").is_err());
-        assert!(parse_window_duration("xm").is_err());
+    fn rejects_invalid_window_at_deserialization() {
+        let result = deserialize(json!({
+            "identifier": "${{client-ip}}",
+            "window": "abc",
+            "limit": 10
+        }));
+        assert!(result.is_err());
     }
 
     // -- validate_rate_limit_configs --
@@ -305,19 +244,5 @@ mod tests {
         ];
         let err = validate_rate_limit_configs(&configs, "/test").unwrap_err();
         assert!(err.contains("limit must be greater than 0"), "{err}");
-    }
-
-    #[test]
-    fn validate_configs_rejects_invalid_window() {
-        let configs = vec![
-            deserialize(json!({
-                "identifier": "${{client-ip}}",
-                "window": "abc",
-                "limit": 10
-            }))
-            .unwrap(),
-        ];
-        let err = validate_rate_limit_configs(&configs, "/test").unwrap_err();
-        assert!(err.contains("window"), "{err}");
     }
 }

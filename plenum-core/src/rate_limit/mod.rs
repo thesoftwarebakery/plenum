@@ -72,9 +72,7 @@ pub(crate) fn evaluate(
             continue;
         };
 
-        let window =
-            crate::config::parse_window_duration(&config.window).expect("validated at boot time");
-        let window_secs = window.as_secs();
+        let window_secs = config.window.as_secs();
 
         let cost = extract_cost(&ctx.user_ctx, config.cost_ctx_path.as_deref());
 
