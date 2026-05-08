@@ -19,7 +19,7 @@ actions:
       x-plenum-upstream:
         $ref: "#/components/x-upstreams/default"
       x-plenum-rate-limit:
-        identifier: "${{ header.x-api-key }}"
-        window: "60s"
-        limit: 3
-        enforce: true
+        - identifier: "${{ header.x-api-key }}"
+          window: "60s"
+          limit: 3
+          enforce: true

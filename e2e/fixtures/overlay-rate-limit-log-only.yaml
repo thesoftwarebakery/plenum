@@ -19,10 +19,10 @@ actions:
       x-plenum-upstream:
         $ref: "#/components/x-upstreams/default"
       x-plenum-rate-limit:
-        identifier: "${{ header.x-api-key }}"
-        window: "60s"
-        limit: 3
-        enforce: false
+        - identifier: "${{ header.x-api-key }}"
+          window: "60s"
+          limit: 3
+          enforce: false
   - target: $.paths['/items'].get
     update:
       x-plenum-interceptor:

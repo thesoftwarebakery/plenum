@@ -17,7 +17,7 @@ use plenum_js_runtime::PluginRuntime;
 
 use crate::config::{
     Config, CorsConfig, InterceptorConfig, RateLimitConfig, ServerConfig, UpstreamConfig,
-    validate_rate_limit_config,
+    validate_rate_limit_configs,
 };
 use crate::cors;
 use crate::load_balancing::{self, UpstreamPool};
@@ -92,8 +92,8 @@ pub struct OperationSchemas {
     pub max_request_body_bytes: u64,
     /// CORS configuration for this operation, if `x-plenum-cors` is present.
     pub cors: Option<CorsConfig>,
-    /// Rate limit configuration for this operation, if `x-plenum-rate-limit` is present.
-    pub rate_limit: Option<RateLimitConfig>,
+    /// Rate limit configurations for this operation. Empty when no `x-plenum-rate-limit` is present.
+    pub rate_limit: Vec<RateLimitConfig>,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -499,9 +499,9 @@ pub fn build_router(
                     .map_err(|e| format!("path '{}' method {}: {}", path, method, e))?;
             }
 
-            // Rate limit config (op > path, absent = None)
-            let rate_limit: Option<RateLimitConfig> = config
-                .extension_cascade(
+            // Rate limit configs (op > path, absent = empty vec)
+            let rate_limit: Vec<RateLimitConfig> = config
+                .extension_cascade::<Vec<RateLimitConfig>>(
                     &[&operation.extensions, &path_item.extensions],
                     "plenum-rate-limit",
                 )
@@ -510,12 +510,16 @@ pub fn build_router(
                         "path '{}' method {}: x-plenum-rate-limit: {}",
                         path, method, e
                     )
-                })?;
-            if let Some(ref rl) = rate_limit {
-                validate_rate_limit_config(rl, path).map_err(|e| -> Box<dyn Error> { e.into() })?;
-                let window =
-                    crate::config::parse_window_duration(&rl.window).expect("validated above");
-                rate_limit_windows.insert(window.as_secs());
+                })?
+                .unwrap_or_default();
+            if !rate_limit.is_empty() {
+                validate_rate_limit_configs(&rate_limit, path)
+                    .map_err(|e| -> Box<dyn Error> { e.into() })?;
+                for rl in &rate_limit {
+                    let window =
+                        crate::config::parse_window_duration(&rl.window).expect("validated above");
+                    rate_limit_windows.insert(window.as_secs());
+                }
             }
 
             // Curated operation metadata for runtime use by plugins/interceptors

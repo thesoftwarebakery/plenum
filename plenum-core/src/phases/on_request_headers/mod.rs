@@ -54,7 +54,7 @@ pub(crate) async fn run(
             ctx.path_params.clone(),
             op.operation_meta.clone(),
             &route,
-            None, // rate limiting hasn't evaluated yet
+            Vec::new(), // rate limiting hasn't evaluated yet
             serde_json::Value::Object(ctx.user_ctx.clone()),
         );
         let mut input_json = serde_json::to_value(&input).unwrap();

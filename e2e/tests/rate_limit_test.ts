@@ -204,3 +204,80 @@ describe("rate limit cost from ctx", () => {
     await resp3.body?.cancel();
   });
 });
+
+describe("rate limit multiple windows", () => {
+  let network: StartedNetwork;
+  let wiremock: WiremockContainer;
+  let gateway: GatewayContainer;
+  let wm: WireMockClient;
+
+  beforeAll(async () => {
+    network = await new Network().start();
+    wiremock = await startWiremock({ network, alias: "wiremock" });
+    gateway = await startGateway({
+      network,
+      fixtures: {
+        openapi: "openapi-rate-limit.yaml",
+        overlays: ["overlay-rate-limit-multi.yaml"],
+      },
+    });
+    wm = new WireMockClient(wiremock.adminUrl);
+    await wm.stubFor({
+      request: { method: "GET", urlPath: "/items" },
+      response: {
+        status: 200,
+        jsonBody: { items: [] },
+        headers: { "Content-Type": "application/json" },
+      },
+    });
+  });
+
+  afterAll(async () => {
+    await gateway?.container.stop();
+    await wiremock?.container.stop();
+    await network?.stop();
+  });
+
+  test("tighter per-minute limit triggers before hourly limit", async () => {
+    const apiKey = "multi-window-key";
+    const url = `${gateway.baseUrl}/items`;
+    const headers = { "x-api-key": apiKey };
+
+    // First 3 requests succeed (within both 3/min and 10/hr)
+    for (let i = 1; i <= 3; i++) {
+      const resp = await fetch(url, { headers });
+      expect(resp.status, `request ${i} should succeed`).toEqual(200);
+      await resp.body?.cancel();
+    }
+
+    // 4th request exceeds the per-minute limit (3/min), even though hourly (10/hr) is fine
+    const resp4 = await fetch(url, { headers });
+    expect(resp4.status).toEqual(429);
+    await resp4.body?.cancel();
+  });
+
+  test("different identifiers counted separately across all windows", async () => {
+    // Use 3 requests for key-c (should hit per-minute limit)
+    for (let i = 1; i <= 3; i++) {
+      const resp = await fetch(`${gateway.baseUrl}/items`, {
+        headers: { "x-api-key": "multi-key-c" },
+      });
+      expect(resp.status).toEqual(200);
+      await resp.body?.cancel();
+    }
+
+    // key-d is independent — first request should succeed
+    const respD = await fetch(`${gateway.baseUrl}/items`, {
+      headers: { "x-api-key": "multi-key-d" },
+    });
+    expect(respD.status).toEqual(200);
+    await respD.body?.cancel();
+
+    // key-c is now over the per-minute limit
+    const respC4 = await fetch(`${gateway.baseUrl}/items`, {
+      headers: { "x-api-key": "multi-key-c" },
+    });
+    expect(respC4.status).toEqual(429);
+    await respC4.body?.cancel();
+  });
+});

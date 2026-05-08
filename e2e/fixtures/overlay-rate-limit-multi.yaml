@@ -1,6 +1,6 @@
 overlay: 1.1.0
 info:
-  title: Rate limit with cost-from-ctx test overlay
+  title: Multi-window rate limit test overlay
   version: 1.0.0
 actions:
   - target: $
@@ -21,12 +21,9 @@ actions:
       x-plenum-rate-limit:
         - identifier: "${{ header.x-api-key }}"
           window: "60s"
-          limit: 10
-          cost_ctx_path: "tokenCost"
+          limit: 3
           enforce: true
-  - target: $.paths['/items'].get
-    update:
-      x-plenum-interceptor:
-        - module: "./interceptors/set-cost.js"
-          hook: on_request_headers
-          function: setCost
+        - identifier: "${{ header.x-api-key }}"
+          window: "1h"
+          limit: 10
+          enforce: true
