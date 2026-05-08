@@ -115,6 +115,11 @@ impl GatewayErrorResponse {
         resp.headers = vec![("Allow".to_string(), allow_value)];
         resp
     }
+
+    /// 501 Not Implemented — the route has no upstream configured.
+    pub fn not_implemented(message: impl std::fmt::Display) -> Self {
+        Self::new(501, "not_implemented", message)
+    }
 }
 
 #[cfg(test)]
@@ -155,5 +160,14 @@ mod tests {
         assert_eq!(e.status, 413);
         let v: serde_json::Value = serde_json::from_slice(&e.body()).unwrap();
         assert_eq!(v["error"], "request body too large");
+    }
+
+    #[test]
+    fn not_implemented_has_correct_status_and_body() {
+        let e = GatewayErrorResponse::not_implemented("upstream not configured");
+        assert_eq!(e.status, 501);
+        assert_eq!(e.error_code, "not_implemented");
+        let v: serde_json::Value = serde_json::from_slice(&e.body).unwrap();
+        assert_eq!(v["error"], "upstream not configured");
     }
 }

@@ -6,10 +6,11 @@ use crate::headers::{apply_header_modifications, headers_hashmap_to_http_headerm
 use crate::interceptor::{
     InterceptorOutput, header_map_to_hash_map, request_input_from_parts, response_input_from_parts,
 };
-use crate::path_match::{OperationSchemas, PluginHandle};
+use crate::path_match::OperationSchemas;
 use crate::proxy_utils::{
     call_interceptor, js_body_from_content_type, js_body_to_bytes, merge_ctx, merge_options,
 };
+use crate::upstream::PluginHandle;
 use plenum_config::ConfigValue;
 
 use crate::request_context::{ExtractionCtx, PingoraRequest};

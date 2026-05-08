@@ -1,0 +1,23 @@
+openapi: 3.1.0
+info:
+  title: Not Implemented Test API
+  version: 1.0.0
+paths:
+  /no-upstream:
+    get:
+      operationId: noUpstream
+      responses:
+        "200":
+          description: Not reachable
+  /no-upstream-with-cors:
+    get:
+      operationId: noUpstreamWithCors
+      responses:
+        "200":
+          description: Not reachable
+  /no-upstream-with-interceptor:
+    get:
+      operationId: noUpstreamWithInterceptor
+      responses:
+        "200":
+          description: Not reachable

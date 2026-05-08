@@ -118,6 +118,50 @@ pub fn add_cors_headers_to_response(
     add_cors_headers(resp, cors_config, origin);
 }
 
+/// Append CORS headers to a `GatewayErrorResponse` for error paths (e.g. 501 Not Implemented).
+///
+/// Checks the request `Origin` header against the CORS config and, if it matches,
+/// pushes the appropriate `(name, value)` pairs into `error.headers`.
+pub fn append_cors_headers_to_error(
+    error: &mut crate::gateway_error::GatewayErrorResponse,
+    config: &CorsConfig,
+    session: &Session,
+) {
+    let origin = match session
+        .req_header()
+        .headers
+        .get(http::header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+    {
+        Some(o) => o,
+        None => return,
+    };
+
+    if !origin_matches(origin, config) {
+        return;
+    }
+
+    error.headers.push((
+        "Access-Control-Allow-Origin".to_string(),
+        origin.to_string(),
+    ));
+    error
+        .headers
+        .push(("Vary".to_string(), "Origin".to_string()));
+    if config.allow_credentials {
+        error.headers.push((
+            "Access-Control-Allow-Credentials".to_string(),
+            "true".to_string(),
+        ));
+    }
+    if !config.expose_headers.is_empty() {
+        error.headers.push((
+            "Access-Control-Expose-Headers".to_string(),
+            config.expose_headers.join(", "),
+        ));
+    }
+}
+
 /// Add all CORS headers to a response.
 fn add_cors_headers(resp: &mut ResponseHeader, config: &CorsConfig, request_origin: &str) {
     // Access-Control-Allow-Origin: exact origin (never "*" when credentials)
