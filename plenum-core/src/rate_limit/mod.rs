@@ -32,19 +32,19 @@ pub struct RateLimitState {
     pub retry_after: Option<u64>,
 }
 
-/// Evaluate rate limiting for the current request.
+/// Evaluate rate limiting for the current request against all configured limits.
 ///
-/// Resolves the identifier template, records the event cost, and populates
-/// `ctx.rate_limit_state`. Returns `true` when the request is over the limit
-/// AND `config.enforce` is `true` — the caller should respond with 429.
+/// Resolves the identifier template for each config, records the event cost,
+/// and appends a [`RateLimitState`] per config to `ctx.rate_limit_state`.
+/// All configs are always evaluated (no short-circuit) so interceptors see
+/// the full picture.
 ///
-/// Returns `false` in all other cases (under limit, enforce disabled, or
-/// identifier could not be resolved — e.g. the header referenced in the
-/// identifier template is absent).
+/// Returns `true` when ANY config is over the limit AND has `enforce: true`
+/// — the caller should respond with 429.
 pub(crate) fn evaluate(
     session: &Session,
     ctx: &mut GatewayCtx,
-    config: &RateLimitConfig,
+    configs: &[RateLimitConfig],
     rate_limiters: &HashMap<u64, Rate>,
 ) -> bool {
     let peer_addr = session
@@ -61,41 +61,49 @@ pub(crate) fn evaluate(
         body_json: None,
     };
 
-    let Some(identifier) = config.identifier.resolve(&cx) else {
-        log::debug!(
-            "rate_limit: identifier template could not be resolved, skipping: {}",
-            config.identifier
-        );
-        return false;
-    };
+    let mut should_reject = false;
 
-    let window =
-        crate::config::parse_window_duration(&config.window).expect("validated at boot time");
-    let window_secs = window.as_secs();
+    for config in configs {
+        let Some(identifier) = config.identifier.resolve(&cx) else {
+            log::debug!(
+                "rate_limit: identifier template could not be resolved, skipping: {}",
+                config.identifier
+            );
+            continue;
+        };
 
-    let cost = extract_cost(&ctx.user_ctx, config.cost_ctx_path.as_deref());
+        let window =
+            crate::config::parse_window_duration(&config.window).expect("validated at boot time");
+        let window_secs = window.as_secs();
 
-    let Some(rate) = rate_limiters.get(&window_secs) else {
-        log::error!(
-            "rate_limit: no Rate instance found for window {}s",
-            window_secs
-        );
-        return false;
-    };
+        let cost = extract_cost(&ctx.user_ctx, config.cost_ctx_path.as_deref());
 
-    let count = rate.observe(&identifier, cost as isize);
-    let over = count > config.limit as isize;
+        let Some(rate) = rate_limiters.get(&window_secs) else {
+            log::error!(
+                "rate_limit: no Rate instance found for window {}s",
+                window_secs
+            );
+            continue;
+        };
 
-    ctx.rate_limit_state = Some(RateLimitState {
-        identifier,
-        count,
-        limit: config.limit,
-        window_seconds: window_secs,
-        over,
-        retry_after: if over { Some(window_secs) } else { None },
-    });
+        let count = rate.observe(&identifier, cost as isize);
+        let over = count > config.limit as isize;
 
-    over && config.enforce
+        ctx.rate_limit_state.push(RateLimitState {
+            identifier,
+            count,
+            limit: config.limit,
+            window_seconds: window_secs,
+            over,
+            retry_after: if over { Some(window_secs) } else { None },
+        });
+
+        if over && config.enforce {
+            should_reject = true;
+        }
+    }
+
+    should_reject
 }
 
 /// Extract the per-request event cost from the user ctx bag.
@@ -149,7 +157,7 @@ mod tests {
             user_ctx: user_ctx.as_object().cloned().unwrap_or_default(),
             selected_backend_addr: None,
             error_hook: None,
-            rate_limit_state: None,
+            rate_limit_state: Vec::new(),
             request_span: None,
             #[cfg(feature = "otel")]
             otel_context: None,

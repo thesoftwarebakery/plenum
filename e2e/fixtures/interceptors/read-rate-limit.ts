@@ -6,10 +6,11 @@ import type { ResponseInput, InterceptorReturn } from '@plenum/types';
  * without enforcement (enforce: false mode).
  */
 export function readRateLimit(input: ResponseInput): InterceptorReturn {
-  const rl = input.rateLimits;
-  if (!rl) {
+  const rls = input.rateLimits;
+  if (rls.length === 0) {
     return { action: 'continue' };
   }
+  const rl = rls[0];
   return {
     action: 'continue',
     headers: {

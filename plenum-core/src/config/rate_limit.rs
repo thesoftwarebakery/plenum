@@ -31,9 +31,12 @@ fn default_true() -> bool {
 ///
 /// ```yaml
 /// x-plenum-rate-limit:
-///   identifier: "${{header.x-tenant}}-${{ctx.userId}}"
-///   window: 60s
-///   limit: 500
+///   - identifier: "${{header.x-tenant}}-${{ctx.userId}}"
+///     window: 60s
+///     limit: 500
+///   - identifier: "${{header.x-tenant}}-${{ctx.userId}}"
+///     window: 1h
+///     limit: 5000
 /// ```
 ///
 /// If any expression in the identifier fails to resolve (e.g. the header is
@@ -93,19 +96,26 @@ pub fn parse_window_duration(s: &str) -> Result<Duration, String> {
     ))
 }
 
-/// Validate a `RateLimitConfig` at boot time.
+/// Validate all rate limit configs for a given path at boot time.
 ///
 /// The `identifier` expression syntax is already validated at deserialization
 /// time by [`ContextTemplate`]. This function checks the remaining constraints:
-/// `limit > 0` and a parseable `window`.
-pub fn validate_rate_limit_config(config: &RateLimitConfig, path: &str) -> Result<(), String> {
-    if config.limit == 0 {
+/// non-empty array, `limit > 0`, and a parseable `window` for each element.
+pub fn validate_rate_limit_configs(configs: &[RateLimitConfig], path: &str) -> Result<(), String> {
+    if configs.is_empty() {
         return Err(format!(
-            "path '{path}': x-plenum-rate-limit: limit must be greater than 0"
+            "path '{path}': x-plenum-rate-limit: array must not be empty"
         ));
     }
-    parse_window_duration(&config.window)
-        .map_err(|e| format!("path '{path}': x-plenum-rate-limit: window: {e}"))?;
+    for config in configs {
+        if config.limit == 0 {
+            return Err(format!(
+                "path '{path}': x-plenum-rate-limit: limit must be greater than 0"
+            ));
+        }
+        parse_window_duration(&config.window)
+            .map_err(|e| format!("path '{path}': x-plenum-rate-limit: window: {e}"))?;
+    }
     Ok(())
 }
 
@@ -237,38 +247,77 @@ mod tests {
         assert!(parse_window_duration("xm").is_err());
     }
 
+    // -- validate_rate_limit_configs --
+
     #[test]
-    fn validate_passes_valid_config() {
-        let config = deserialize(json!({
-            "identifier": "${{header.x-api-key}}",
-            "window": "60s",
-            "limit": 1
-        }))
-        .unwrap();
-        assert!(validate_rate_limit_config(&config, "/test").is_ok());
+    fn validate_configs_passes_single() {
+        let configs = vec![
+            deserialize(json!({
+                "identifier": "${{header.x-api-key}}",
+                "window": "60s",
+                "limit": 1
+            }))
+            .unwrap(),
+        ];
+        assert!(validate_rate_limit_configs(&configs, "/test").is_ok());
     }
 
     #[test]
-    fn validate_rejects_zero_limit() {
-        let config = deserialize(json!({
-            "identifier": "${{client-ip}}",
-            "window": "60s",
-            "limit": 0
-        }))
-        .unwrap();
-        let err = validate_rate_limit_config(&config, "/test").unwrap_err();
+    fn validate_configs_passes_multiple() {
+        let configs = vec![
+            deserialize(json!({
+                "identifier": "${{header.x-api-key}}",
+                "window": "60s",
+                "limit": 100
+            }))
+            .unwrap(),
+            deserialize(json!({
+                "identifier": "${{header.x-api-key}}",
+                "window": "1h",
+                "limit": 1000
+            }))
+            .unwrap(),
+        ];
+        assert!(validate_rate_limit_configs(&configs, "/test").is_ok());
+    }
+
+    #[test]
+    fn validate_configs_rejects_empty() {
+        let err = validate_rate_limit_configs(&[], "/test").unwrap_err();
+        assert!(err.contains("must not be empty"), "{err}");
+    }
+
+    #[test]
+    fn validate_configs_rejects_if_any_invalid() {
+        let configs = vec![
+            deserialize(json!({
+                "identifier": "${{header.x-api-key}}",
+                "window": "60s",
+                "limit": 100
+            }))
+            .unwrap(),
+            deserialize(json!({
+                "identifier": "${{header.x-api-key}}",
+                "window": "60s",
+                "limit": 0
+            }))
+            .unwrap(),
+        ];
+        let err = validate_rate_limit_configs(&configs, "/test").unwrap_err();
         assert!(err.contains("limit must be greater than 0"), "{err}");
     }
 
     #[test]
-    fn validate_rejects_invalid_window() {
-        let config = deserialize(json!({
-            "identifier": "${{client-ip}}",
-            "window": "abc",
-            "limit": 10
-        }))
-        .unwrap();
-        let err = validate_rate_limit_config(&config, "/test").unwrap_err();
+    fn validate_configs_rejects_invalid_window() {
+        let configs = vec![
+            deserialize(json!({
+                "identifier": "${{client-ip}}",
+                "window": "abc",
+                "limit": 10
+            }))
+            .unwrap(),
+        ];
+        let err = validate_rate_limit_configs(&configs, "/test").unwrap_err();
         assert!(err.contains("window"), "{err}");
     }
 }

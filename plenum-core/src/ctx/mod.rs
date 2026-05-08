@@ -41,10 +41,10 @@ pub struct GatewayCtx {
     pub(crate) selected_backend_addr: Option<SocketAddr>,
     /// Global `on_gateway_error` interceptor hook, cloned from `Plenum` at request start.
     pub(crate) error_hook: Option<Arc<HookHandle>>,
-    /// Rate limit evaluation result for this request, populated after on_request
-    /// interceptors run. `None` when no `x-plenum-rate-limit` is configured on
+    /// Rate limit evaluation results for this request, populated after on_request_headers
+    /// interceptors run. Empty when no `x-plenum-rate-limit` is configured on
     /// the matched operation. Serialized as `rateLimits` on interceptor input objects.
-    pub(crate) rate_limit_state: Option<RateLimitState>,
+    pub(crate) rate_limit_state: Vec<RateLimitState>,
     /// Top-level `http.request` tracing span for this request. Created in
     /// `request_filter` and entered (via `.enter()`) in every subsequent
     /// `ProxyHttp` method so that child spans (route_match, interceptor_call)

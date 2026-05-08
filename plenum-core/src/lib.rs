@@ -94,7 +94,7 @@ impl ProxyHttp for Plenum {
             user_ctx: serde_json::Map::new(),
             selected_backend_addr: None,
             error_hook: self.error_hook.clone(),
-            rate_limit_state: None,
+            rate_limit_state: Vec::new(),
             request_span: None,
             #[cfg(feature = "otel")]
             otel_context: None,
@@ -222,8 +222,8 @@ impl ProxyHttp for Plenum {
                 }
                 // Rate limit evaluation: runs after on_request_headers (which populates
                 // auth identity in ctx), before on_request (which can read rateLimits).
-                if let Some(ref rl) = op.rate_limit
-                    && rate_limit::evaluate(session, ctx, rl, &self.rate_limiters)
+                if !op.rate_limit.is_empty()
+                    && rate_limit::evaluate(session, ctx, &op.rate_limit, &self.rate_limiters)
                 {
                     phases::gateway_error::respond(
                         session,
@@ -268,8 +268,8 @@ impl ProxyHttp for Plenum {
         if !matches!(
             effective_upstream,
             Upstream::Static(_) | Upstream::NotConfigured
-        ) && let Some(ref rl) = op.rate_limit
-            && rate_limit::evaluate(session, ctx, rl, &self.rate_limiters)
+        ) && !op.rate_limit.is_empty()
+            && rate_limit::evaluate(session, ctx, &op.rate_limit, &self.rate_limiters)
         {
             phases::gateway_error::respond(
                 session,
