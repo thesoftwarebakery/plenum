@@ -8,11 +8,9 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bytes::Bytes;
 use http::Method;
 use matchit::Router;
 use oas3::spec::{Operation, PathItem};
-use pingora_core::upstreams::peer::HttpPeer;
 use plenum_js_runtime::PluginRuntime;
 
 use crate::config::{
@@ -20,41 +18,12 @@ use crate::config::{
     validate_rate_limit_configs,
 };
 use crate::cors;
-use crate::load_balancing::{self, UpstreamPool};
+use crate::load_balancing;
 use crate::openapi::operation::build_operation_meta;
-use crate::upstream_peer::make_peer;
+use crate::upstream::build_upstream;
 
-/// Handle to a spawned backend plugin runtime (Node.js out-of-process).
-pub struct PluginHandle {
-    pub runtime: Arc<dyn PluginRuntime>,
-    pub timeout: Duration,
-}
-
-impl std::fmt::Debug for PluginHandle {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PluginHandle")
-            .field("timeout", &self.timeout)
-            .finish_non_exhaustive()
-    }
-}
-
-/// Pre-built static response, ready to write directly to the downstream session.
-#[derive(Debug)]
-pub struct StaticResponse {
-    pub status: u16,
-    pub headers: Vec<(String, String)>,
-    pub body: Bytes,
-}
-
-/// The upstream target for a route -- either an HTTP peer, a Node.js backend plugin,
-/// or a pre-built static response.
-#[derive(Debug)]
-pub enum Upstream {
-    Http(Box<HttpPeer>),
-    HttpPool(Arc<UpstreamPool>),
-    Plugin(PluginHandle),
-    Static(StaticResponse),
-}
+// Re-export upstream types for backward compatibility.
+pub use crate::upstream::{PluginHandle, StaticResponse, Upstream};
 
 /// A resolved interceptor hook: runtime handle, JS function name, call timeout, and options.
 pub struct HookHandle {
@@ -94,6 +63,8 @@ pub struct OperationSchemas {
     pub cors: Option<CorsConfig>,
     /// Rate limit configurations for this operation. Empty when no `x-plenum-rate-limit` is present.
     pub rate_limit: Vec<RateLimitConfig>,
+    /// Per-operation upstream override. When `Some`, takes priority over `RouteEntry.upstream`.
+    pub upstream: Option<Upstream>,
 }
 
 /// A route entry stored in the router, containing the upstream target
@@ -127,6 +98,12 @@ impl RouteEntry {
         })
     }
 
+    /// Resolve the effective upstream for a given operation.
+    /// Per-operation upstream takes priority over path-level upstream.
+    pub fn effective_upstream<'a>(&'a self, op: &'a OperationSchemas) -> &'a Upstream {
+        op.upstream.as_ref().unwrap_or(&self.upstream)
+    }
+
     /// Return the sorted list of HTTP methods this route accepts, including
     /// implicit HEAD when GET is defined (RFC 9110).
     pub fn allowed_methods(&self) -> Vec<&str> {
@@ -155,50 +132,7 @@ pub struct RouterBuildResult {
     pub rate_limit_windows: HashSet<u64>,
 }
 
-/// Cache key for plugin runtimes. Incorporates both the module identity and
-/// the normalized (sorted, order-independent) permissions so that the same
-/// module file used with different permission sets gets separate runtimes.
-#[derive(Debug, Hash, Eq, PartialEq)]
-struct PluginRuntimeKey {
-    module: module_resolver::ModuleCacheKey,
-    env: Vec<String>,  // sorted
-    read: Vec<String>, // sorted canonical paths
-    net: Vec<String>,  // sorted
-}
-
-impl PluginRuntimeKey {
-    fn new(
-        module: module_resolver::ModuleCacheKey,
-        permissions: &Option<crate::config::PermissionsConfig>,
-    ) -> Self {
-        let (mut env, mut read, mut net) = match permissions {
-            None => (vec![], vec![], vec![]),
-            Some(p) => {
-                let read_paths: Vec<String> = p
-                    .read
-                    .iter()
-                    .map(|s| {
-                        let path = std::path::PathBuf::from(s);
-                        path.canonicalize()
-                            .unwrap_or(path)
-                            .to_string_lossy()
-                            .into_owned()
-                    })
-                    .collect();
-                (p.env.clone(), read_paths, p.net.clone())
-            }
-        };
-        env.sort();
-        read.sort();
-        net.sort();
-        Self {
-            module,
-            env,
-            read,
-            net,
-        }
-    }
-}
+use crate::upstream::PluginRuntimeKey;
 
 /// Parse an operation's `x-plenum-interceptor` extension and build interceptor handles.
 fn build_operation_interceptors(
@@ -312,133 +246,39 @@ pub fn build_router(
         HashMap::new();
 
     for (path, path_item) in paths {
-        let upstream_config: UpstreamConfig = config
-            .extension(&path_item.extensions, "plenum-upstream")
+        let upstream_config: Option<UpstreamConfig> = config
+            .extension_cascade(&[&path_item.extensions], "plenum-upstream")
             .map_err(|e| format!("path '{}': x-plenum-upstream: {}", path, e))?;
 
         let upstream_buffer_response = matches!(
             &upstream_config,
-            UpstreamConfig::HTTP {
+            Some(UpstreamConfig::HTTP {
                 buffer_response: true,
                 ..
-            } | UpstreamConfig::HTTPPool {
+            }) | Some(UpstreamConfig::HTTPPool {
                 buffer_response: true,
                 ..
-            }
+            })
         );
-        upstream_config.emit_security_warnings(path);
 
-        let upstream = match &upstream_config {
-            UpstreamConfig::HTTP {
-                address,
-                port,
-                tls,
-                tls_verify,
-                ..
-            } => Upstream::Http(Box::new(make_peer(address, *port, *tls, *tls_verify))),
-            UpstreamConfig::HTTPPool {
-                backends,
-                tls,
-                tls_verify,
-                selection,
-                hash_key,
-                health_check,
-                ..
-            } => {
-                let result = load_balancing::build_pool(
-                    backends,
-                    *selection,
-                    *tls,
-                    *tls_verify,
-                    hash_key.as_ref(),
-                    health_check.as_ref(),
-                )
-                .map_err(|e| format!("path '{}': {}", path, e))?;
-                if let Some(bg) = result.background_service {
-                    background_services.push(bg);
-                }
-                Upstream::HttpPool(Arc::new(result.pool))
+        let upstream = match upstream_config {
+            Some(uc) => {
+                uc.emit_security_warnings(path);
+                build_upstream(
+                    &uc,
+                    path,
+                    config_base,
+                    default_plugin_timeout,
+                    &mut plugin_runtime_cache,
+                    &mut background_services,
+                )?
             }
-            UpstreamConfig::Plugin {
-                plugin,
-                options,
-                permissions,
-                timeout_ms: upstream_config_timeout_ms,
-            } => {
-                let resolved = module_resolver::resolve_module(plugin, config_base)
-                    .map_err(|e| format!("path '{}': plugin '{}': {}", path, plugin, e))?;
-                let cache_key = PluginRuntimeKey::new(resolved.cache_key(), permissions);
-
-                let plugin_timeout = upstream_config_timeout_ms
-                    .map(Duration::from_millis)
-                    .unwrap_or(default_plugin_timeout);
-
-                let h = match plugin_runtime_cache.entry(cache_key) {
-                    std::collections::hash_map::Entry::Occupied(e) => e.get().clone(),
-                    std::collections::hash_map::Entry::Vacant(e) => {
-                        let init_options = match options.as_ref() {
-                            Some(o) => o.clone(),
-                            None => serde_json::json!({}),
-                        };
-
-                        let plugin_module_path = match &resolved {
-                            module_resolver::ResolvedModule::File(p) => {
-                                p.to_string_lossy().into_owned()
-                            }
-                            module_resolver::ResolvedModule::Internal { path: p, .. } => {
-                                p.to_string_lossy().into_owned()
-                            }
-                        };
-
-                        let h: Arc<dyn PluginRuntime> = Arc::new(
-                            plenum_js_runtime::external::spawn_sync(
-                                &plugin_module_path,
-                                init_options.clone(),
-                                Default::default(),
-                            )
-                            .map_err(|e| {
-                                format!(
-                                    "path '{}': plugin '{}': failed to spawn Node.js runtime: {}",
-                                    path, plugin, e
-                                )
-                            })?,
-                        );
-
-                        // Call init() now that the process is up.
-                        h.call_blocking("init", init_options, None, plugin_timeout)
-                            .map_err(|e| {
-                                format!(
-                                    "path '{}': plugin '{}': init() failed: {}",
-                                    path, plugin, e
-                                )
-                            })?;
-
-                        e.insert(h).clone()
-                    }
-                };
-
-                Upstream::Plugin(PluginHandle {
-                    runtime: h,
-                    timeout: plugin_timeout,
-                })
-            }
-            UpstreamConfig::Static {
-                status,
-                headers,
-                body,
-            } => {
-                let body_bytes = match body {
-                    Some(s) => s.as_bytes().to_vec(),
-                    None => Vec::new(),
-                };
-                Upstream::Static(StaticResponse {
-                    status: *status,
-                    headers: headers
-                        .as_ref()
-                        .map(|h| h.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                        .unwrap_or_default(),
-                    body: Bytes::from(body_bytes),
-                })
+            None => {
+                log::warn!(
+                    "path '{}': no x-plenum-upstream configured — requests will receive 501 Not Implemented",
+                    path
+                );
+                Upstream::NotConfigured
             }
         };
 
@@ -522,6 +362,30 @@ pub fn build_router(
                 }
             }
 
+            // Per-operation upstream override (operation-level only; path-level is on RouteEntry)
+            let op_upstream_config: Option<UpstreamConfig> = config
+                .extension_cascade(&[&operation.extensions], "plenum-upstream")
+                .map_err(|e| {
+                    format!(
+                        "path '{}' method {}: x-plenum-upstream: {}",
+                        path, method, e
+                    )
+                })?;
+            let op_upstream = match op_upstream_config {
+                Some(uc) => {
+                    uc.emit_security_warnings(&format!("{} {}", method, path));
+                    Some(build_upstream(
+                        &uc,
+                        path,
+                        config_base,
+                        default_plugin_timeout,
+                        &mut plugin_runtime_cache,
+                        &mut background_services,
+                    )?)
+                }
+                None => None,
+            };
+
             // Curated operation metadata for runtime use by plugins/interceptors
             let operation_meta = build_operation_meta(operation, &config.spec);
 
@@ -535,14 +399,18 @@ pub fn build_router(
                     max_request_body_bytes,
                     cors,
                     rate_limit,
+                    upstream: op_upstream,
                 },
             );
         }
 
-        // If this is a plugin upstream, call validate() for each operation's backend_config.
-        // Resolve the ConfigValue with an empty context — tokens become null at validate time.
-        if let Upstream::Plugin(ref plugin_handle) = upstream {
-            for (method, op_schemas) in &operations {
+        // For each operation, check the effective upstream (op-level > path-level).
+        // - Plugin upstreams: call validate() with the operation's backend_config.
+        // - HTTP upstreams without buffer-response: reject on_response_body interceptors.
+        for (method, op_schemas) in &operations {
+            let effective = op_schemas.upstream.as_ref().unwrap_or(&upstream);
+
+            if let Upstream::Plugin(plugin_handle) = effective {
                 let validate_arg = match &op_schemas.backend_config {
                     Some(config) => {
                         use crate::request_context::{ExtractionCtx, PingoraRequest};
@@ -579,22 +447,19 @@ pub fn build_router(
                     }
                 }
             }
-        }
 
-        // HTTP upstreams: on_response_body interceptors require buffer-response: true.
-        // Plugin upstreams: response is always fully buffered (no restriction needed).
-        if matches!(upstream, Upstream::Http(_) | Upstream::HttpPool(_))
-            && !upstream_buffer_response
-        {
-            for (method, op_schemas) in &operations {
-                if !op_schemas.interceptors.on_response_body.is_empty() {
-                    return Err(format!(
-                        "path '{}' method {} has on_response_body interceptors but upstream \
-                         does not set buffer-response: true",
-                        path, method
-                    )
-                    .into());
-                }
+            // HTTP upstreams: on_response_body interceptors require buffer-response: true.
+            // Plugin upstreams: response is always fully buffered (no restriction needed).
+            if matches!(effective, Upstream::Http(_) | Upstream::HttpPool(_))
+                && !upstream_buffer_response
+                && !op_schemas.interceptors.on_response_body.is_empty()
+            {
+                return Err(format!(
+                    "path '{}' method {} has on_response_body interceptors but upstream \
+                     does not set buffer-response: true",
+                    path, method
+                )
+                .into());
             }
         }
 
@@ -1996,5 +1861,140 @@ mod tests {
         let head_direct = matched.value.operations.get(&Method::HEAD).unwrap() as *const _;
         let head_via_helper = matched.value.get_operation(&Method::HEAD).unwrap() as *const _;
         assert_eq!(head_direct, head_via_helper);
+    }
+
+    #[test]
+    fn path_without_upstream_uses_not_configured() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/no-upstream": {
+                    "get": {
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let result = build_router(&config, paths, &dummy_config_base());
+        assert!(
+            result.is_ok(),
+            "build_router should succeed without upstream"
+        );
+        let router = result.unwrap().router;
+        let matched = router.at("/no-upstream").unwrap();
+        assert!(matches!(matched.value.upstream, Upstream::NotConfigured));
+    }
+
+    #[test]
+    fn per_operation_upstream_overrides_path_upstream() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/items": {
+                    "get": {
+                        "x-plenum-upstream": {
+                            "kind": "HTTP",
+                            "address": "127.0.0.1",
+                            "port": 9090
+                        },
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "post": {
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "x-plenum-upstream": {
+                        "kind": "HTTP",
+                        "address": "127.0.0.1",
+                        "port": 8080
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
+        let matched = router.at("/items").unwrap();
+        let route = &matched.value;
+
+        // GET has a per-operation override (port 9090)
+        let get = route.operations.get(&Method::GET).unwrap();
+        assert!(get.upstream.is_some(), "GET should have per-op upstream");
+        let effective_get = route.effective_upstream(get);
+        match effective_get {
+            Upstream::Http(peer) => {
+                let addr = format!("{:?}", peer._address);
+                assert!(
+                    addr.contains("9090"),
+                    "GET should route to port 9090, got: {}",
+                    addr
+                );
+            }
+            other => panic!("expected Http upstream for GET, got: {:?}", other),
+        }
+
+        // POST has no override — falls back to path-level (port 8080)
+        let post = route.operations.get(&Method::POST).unwrap();
+        assert!(
+            post.upstream.is_none(),
+            "POST should not have per-op upstream"
+        );
+        let effective_post = route.effective_upstream(post);
+        match effective_post {
+            Upstream::Http(peer) => {
+                let addr = format!("{:?}", peer._address);
+                assert!(
+                    addr.contains("8080"),
+                    "POST should route to port 8080, got: {}",
+                    addr
+                );
+            }
+            other => panic!("expected Http upstream for POST, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn per_operation_upstream_on_path_without_upstream() {
+        let doc = json!({
+            "openapi": "3.1.0",
+            "info": { "title": "Test", "version": "1.0" },
+            "paths": {
+                "/mixed": {
+                    "get": {
+                        "x-plenum-upstream": {
+                            "kind": "HTTP",
+                            "address": "127.0.0.1",
+                            "port": 8080
+                        },
+                        "responses": { "200": { "description": "ok" } }
+                    },
+                    "post": {
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        });
+        let config = Config::from_value(doc).unwrap();
+        let paths = config.spec.paths.as_ref().unwrap();
+        let router = build_router(&config, paths, &dummy_config_base())
+            .unwrap()
+            .router;
+        let matched = router.at("/mixed").unwrap();
+        let route = &matched.value;
+
+        // GET has an upstream override
+        let get = route.operations.get(&Method::GET).unwrap();
+        let effective_get = route.effective_upstream(get);
+        assert!(matches!(effective_get, Upstream::Http(_)));
+
+        // POST falls through to path-level NotConfigured
+        let post = route.operations.get(&Method::POST).unwrap();
+        let effective_post = route.effective_upstream(post);
+        assert!(matches!(effective_post, Upstream::NotConfigured));
     }
 }

@@ -1,0 +1,11 @@
+overlay: 1.1.0
+info:
+  title: Interceptor on not-implemented route
+  version: 1.0.0
+actions:
+  - target: $.paths['/no-upstream-with-interceptor'].get
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/block-request.js"
+          hook: on_request
+          function: onRequest
