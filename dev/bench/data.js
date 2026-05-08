@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778248225028,
+  "lastUpdate": 1778255766762,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -3168,6 +3168,78 @@ window.BENCHMARK_DATA = {
             "value": 3.58,
             "unit": "ms",
             "extra": "n=8086"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "ba9d0050960212abf29bf78ffde5644af7ea6810",
+          "message": "Merge pull request #168 from thesoftwarebakery/worktree-issue-115-standardise-time-format\n\nfeat: standardise duration format across config",
+          "timestamp": "2026-05-08T16:51:24+01:00",
+          "tree_id": "efae146ec08de1f9b0c9f8adab426383de10cfdf",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/ba9d0050960212abf29bf78ffde5644af7ea6810"
+        },
+        "date": 1778255766407,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.782,
+            "unit": "ms",
+            "extra": "n=12787"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 3.246,
+            "unit": "ms",
+            "extra": "n=12787"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.887,
+            "unit": "ms",
+            "extra": "n=11278"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 1.849,
+            "unit": "ms",
+            "extra": "n=11278"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.255,
+            "unit": "ms",
+            "extra": "n=7968"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 2.112,
+            "unit": "ms",
+            "extra": "n=7968"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.201,
+            "unit": "ms",
+            "extra": "n=8329"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.653,
+            "unit": "ms",
+            "extra": "n=8329"
           }
         ]
       }
