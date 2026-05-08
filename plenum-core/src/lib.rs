@@ -7,12 +7,13 @@ use async_trait::async_trait;
 use bytes::{BufMut, Bytes, BytesMut};
 use config::Config;
 use gateway_error::GatewayErrorResponse;
-use path_match::{HookHandle, OperationSchemas, Upstream, build_router};
+use path_match::{HookHandle, OperationSchemas, build_router};
 use pingora_core::upstreams::peer::HttpPeer;
 use pingora_http::ResponseHeader;
 use pingora_limits::rate::Rate;
 use pingora_proxy::{FailToProxy, ProxyHttp, Session};
 use tokio_util::sync::CancellationToken;
+use upstream::Upstream;
 
 pub mod access_log;
 pub mod config;
@@ -32,6 +33,7 @@ pub mod request_context;
 pub mod request_timeout;
 mod runtime_builder;
 pub mod tracing_setup;
+pub mod upstream;
 pub mod upstream_peer;
 pub mod upstream_plugin;
 
@@ -208,8 +210,11 @@ impl ProxyHttp for Plenum {
 
         ctx.request_start = Some(Instant::now());
 
+        // Resolve the effective upstream: per-operation override > path-level.
+        let effective_upstream = route_arc.effective_upstream(op);
+
         // Plugin routes: wrap on_request_headers + on_request phase 1 + dispatch in a single timeout.
-        if let Upstream::Plugin(plugin) = &route_arc.upstream {
+        if let Upstream::Plugin(plugin) = effective_upstream {
             let backend_config = op.backend_config.clone();
             return match pingora_timeout::timeout(op.request_timeout, async {
                 if phases::on_request_headers::run(session, ctx, op, false).await? {
@@ -252,16 +257,18 @@ impl ProxyHttp for Plenum {
             };
         }
 
-        // HTTP/Static routes: budget-capped on_request_headers, then rate limit, then on_request.
+        // HTTP/Static/NotConfigured routes: budget-capped on_request_headers, then rate limit, then on_request.
         if phases::on_request_headers::run(session, ctx, op, true).await? {
             return Ok(true);
         }
 
         // Rate limit evaluation: runs after on_request_headers (which populates
         // auth identity in ctx), before on_request (which can read rateLimits).
-        // Not applied to static routes.
-        if !matches!(route_arc.upstream, Upstream::Static(_))
-            && let Some(ref rl) = op.rate_limit
+        // Not applied to static or not-configured routes.
+        if !matches!(
+            effective_upstream,
+            Upstream::Static(_) | Upstream::NotConfigured
+        ) && let Some(ref rl) = op.rate_limit
             && rate_limit::evaluate(session, ctx, rl, &self.rate_limiters)
         {
             phases::gateway_error::respond(
@@ -279,7 +286,7 @@ impl ProxyHttp for Plenum {
         }
 
         // Static routes: write the pre-built response and short-circuit.
-        if let Upstream::Static(static_resp) = &route_arc.upstream {
+        if let Upstream::Static(static_resp) = effective_upstream {
             let mut resp_header = pingora_http::ResponseHeader::build(static_resp.status, None)
                 .map_err(|e| {
                     pingora_core::Error::because(
@@ -319,6 +326,18 @@ impl ProxyHttp for Plenum {
                         e,
                     )
                 })?;
+            return Ok(true);
+        }
+
+        // NotConfigured routes: return 501 Not Implemented with CORS headers.
+        // Interceptors have already run above and had the chance to short-circuit.
+        if matches!(effective_upstream, Upstream::NotConfigured) {
+            let mut error = GatewayErrorResponse::not_implemented("upstream not configured");
+            if let Some(ref cors_config) = op.cors {
+                cors::append_cors_headers_to_error(&mut error, cors_config, session);
+            }
+            phases::gateway_error::respond(session, ctx, error, ctx.error_hook.clone().as_deref())
+                .await;
             return Ok(true);
         }
 
@@ -507,10 +526,17 @@ impl ProxyHttp for Plenum {
         let span = ctx.request_span.clone();
         let _guard = span.as_ref().map(|s| s.enter());
         // Report failure to load balancer pool for passive health tracking.
-        if let (Some(addr), Some(route)) = (&ctx.selected_backend_addr, &ctx.matched_route)
-            && let Upstream::HttpPool(pool) = &route.upstream
-        {
-            pool.report_failure(addr);
+        // Use the effective upstream (per-operation override > path-level).
+        if let (Some(addr), Some(route)) = (&ctx.selected_backend_addr, &ctx.matched_route) {
+            let effective = ctx
+                .matched_method
+                .as_ref()
+                .and_then(|m| route.get_operation(m))
+                .map(|op| route.effective_upstream(op))
+                .unwrap_or(&route.upstream);
+            if let Upstream::HttpPool(pool) = effective {
+                pool.report_failure(addr);
+            }
         }
 
         if ctx.request_start.is_some() && request_timeout::is_timeout_error(e) {

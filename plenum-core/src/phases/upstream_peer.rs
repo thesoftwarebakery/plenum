@@ -7,6 +7,7 @@ use pingora_proxy::Session;
 use crate::ctx::GatewayCtx;
 use crate::path_match::{OperationSchemas, RouteEntry};
 use crate::request_timeout;
+use crate::upstream::Upstream;
 
 /// Look up the matched operation from context, borrowing only the route and method fields.
 /// Passing the fields explicitly (rather than `&GatewayCtx`) lets other fields remain
@@ -46,22 +47,27 @@ pub(crate) fn resolve(
         .matched_route
         .as_ref()
         .ok_or_else(|| pingora_core::Error::new(pingora_core::ErrorType::InternalError))?;
-    match &route.upstream {
-        crate::path_match::Upstream::Http(peer) => {
+
+    // Resolve the effective upstream: per-operation override > path-level.
+    let op = matched_op(&ctx.matched_route, &ctx.matched_method);
+    let effective_upstream = match op {
+        Some(o) => route.effective_upstream(o),
+        None => &route.upstream,
+    };
+
+    match effective_upstream {
+        Upstream::Http(peer) => {
             let mut peer = Box::new(*peer.clone());
 
             // Set upstream timeouts to remaining request budget so pingora races
             // the upstream I/O against the overall request timeout.
-            if let (Some(start), Some(op)) = (
-                ctx.request_start,
-                matched_op(&ctx.matched_route, &ctx.matched_method),
-            ) {
+            if let (Some(start), Some(op)) = (ctx.request_start, op) {
                 request_timeout::apply_to_peer(&mut peer, start, op.request_timeout)?;
             }
 
             Ok(peer)
         }
-        crate::path_match::Upstream::HttpPool(pool) => {
+        Upstream::HttpPool(pool) => {
             let req = session.req_header();
             let (mut peer, addr) = pool.select(req, &ctx.path_params).ok_or_else(|| {
                 pingora_core::Error::explain(
@@ -75,18 +81,15 @@ pub(crate) fn resolve(
             ctx.selected_backend_addr = Some(addr);
 
             // Set upstream timeouts to remaining request budget.
-            if let (Some(start), Some(op)) = (
-                ctx.request_start,
-                matched_op(&ctx.matched_route, &ctx.matched_method),
-            ) {
+            if let (Some(start), Some(op)) = (ctx.request_start, op) {
                 request_timeout::apply_to_peer(&mut peer, start, op.request_timeout)?;
             }
 
             Ok(peer)
         }
-        crate::path_match::Upstream::Plugin(_) | crate::path_match::Upstream::Static(_) => {
-            // Should never be reached -- plugin and static routes return Ok(true) from
-            // request_filter, skipping upstream_peer entirely. This branch is a safety net.
+        Upstream::Plugin(_) | Upstream::Static(_) | Upstream::NotConfigured => {
+            // Should never be reached -- plugin, static, and not-configured routes return
+            // Ok(true) from request_filter, skipping upstream_peer entirely. Safety net.
             Err(pingora_core::Error::new(
                 pingora_core::ErrorType::InternalError,
             ))

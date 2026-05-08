@@ -1,0 +1,27 @@
+openapi: 3.1.0
+info:
+  title: Per-Operation Upstream Test API
+  version: 1.0.0
+paths:
+  /items:
+    get:
+      operationId: getItems
+      responses:
+        "200":
+          description: List items
+    post:
+      operationId: createItem
+      responses:
+        "200":
+          description: Create item
+  /mixed:
+    get:
+      operationId: getMixed
+      responses:
+        "200":
+          description: Has upstream
+    post:
+      operationId: postMixed
+      responses:
+        "200":
+          description: No upstream

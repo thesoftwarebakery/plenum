@@ -1,0 +1,31 @@
+overlay: 1.1.0
+info:
+  title: Per-operation upstream routing
+  version: 1.0.0
+actions:
+  - target: $
+    update:
+      x-plenum-config:
+        threads: 1
+        listen: "0.0.0.0:6188"
+  # Path-level upstream for /items → upstream-a
+  - target: $.paths['/items']
+    update:
+      x-plenum-upstream:
+        kind: HTTP
+        address: upstream-a
+        port: 8080
+  # Per-operation upstream override: GET /items → upstream-b
+  - target: $.paths['/items'].get
+    update:
+      x-plenum-upstream:
+        kind: HTTP
+        address: upstream-b
+        port: 8080
+  # No path-level upstream for /mixed, but GET has one → upstream-a
+  - target: $.paths['/mixed'].get
+    update:
+      x-plenum-upstream:
+        kind: HTTP
+        address: upstream-a
+        port: 8080
