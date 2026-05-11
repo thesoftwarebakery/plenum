@@ -148,7 +148,6 @@ fn spawn_stream_reader(stream: UnixStream, id: u64, timeout: Duration) -> Stream
     tokio::spawn(async move {
         let mut stream = stream;
         let mut stream_active = true;
-        let mut last_error: Option<String> = None;
 
         while stream_active {
             let chunk_result = tokio::time::timeout(timeout, async {
@@ -167,12 +166,6 @@ fn spawn_stream_reader(stream: UnixStream, id: u64, timeout: Duration) -> Stream
                         let _ = tx.send(Ok(StreamChunk::Done)).await;
                         stream_active = false;
                     } else {
-                        // If there was a pending error frame, send it before the next chunk.
-                        if let Some(ref err) = last_error {
-                            let _ = tx.send(Err(JsError::ExecutionError(err.clone()))).await;
-                            last_error = None;
-                        }
-
                         let chunk_bytes = value
                             .as_object()
                             .and_then(|m| m.get("chunk"))
@@ -203,6 +196,24 @@ fn spawn_stream_reader(stream: UnixStream, id: u64, timeout: Duration) -> Stream
     rx
 }
 
+/// Take ownership of the Unix stream from a locked connection, release the
+/// lock, and spawn a background reader that feeds chunks into an mpsc channel.
+/// Shared by the success and retry paths of `call_stream`.
+fn finish_stream_setup(
+    mut conn: tokio::sync::MutexGuard<'_, Connection>,
+    call_output: CallOutput,
+    id: u64,
+    timeout: Duration,
+) -> Result<(CallOutput, StreamReceiver), JsError> {
+    let stream = conn
+        .stream
+        .take()
+        .ok_or_else(|| JsError::ExecutionError("stream already taken".into()))?;
+    drop(conn);
+    let rx = spawn_stream_reader(stream, id, timeout);
+    Ok((call_output, rx))
+}
+
 impl ExternalRuntime {
     /// Send a request and read the response, respawning the process on socket errors.
     async fn send_recv(
@@ -223,7 +234,7 @@ impl ExternalRuntime {
             Err(e) => {
                 // Check whether this looks like a broken socket (process crash).
                 let is_io_error = matches!(e, JsError::ExecutionError(ref msg)
-                    if msg.contains("socket") || msg.contains("broken pipe") || msg.contains("EOF"));
+                    if msg.contains("socket") || msg.contains("broken pipe") || msg.contains("EOF") || msg.contains("stream taken"));
 
                 if !is_io_error {
                     return Err(e);
@@ -243,19 +254,8 @@ impl ExternalRuntime {
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     delay_ms = (delay_ms * 2).min(5000);
 
-                    match self.respawn(&mut conn).await {
+                    match self.respawn_and_reinit(&mut conn).await {
                         Ok(()) => {
-                            // Re-initialise the plugin (init is optional — interceptors don't have it).
-                            match self
-                                .do_send_recv(&mut conn, id, "init", self.init_options.clone())
-                                .await
-                            {
-                                Ok(_) | Err(JsError::FunctionNotFound(_)) => {}
-                                Err(e) => {
-                                    last_err = e;
-                                    continue;
-                                }
-                            }
                             // Retry the original call.
                             match self
                                 .do_send_recv(&mut conn, id, method, params.clone())
@@ -269,7 +269,8 @@ impl ExternalRuntime {
                             }
                         }
                         Err(e) => {
-                            last_err = JsError::ExecutionError(format!("respawn failed: {e}"));
+                            last_err = e;
+                            continue;
                         }
                     }
                 }
@@ -417,6 +418,22 @@ impl ExternalRuntime {
         conn.socket_path = new_socket_path;
         Ok(())
     }
+
+    /// Respawn the Node.js process and re-run the `init` function (if exported).
+    /// Shared by `send_recv` and `call_stream` recovery paths.
+    async fn respawn_and_reinit(&self, conn: &mut Connection) -> Result<(), JsError> {
+        self.respawn(conn)
+            .await
+            .map_err(|re| JsError::ExecutionError(format!("respawn failed: {re}")))?;
+        let init_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        match self
+            .do_send_recv(conn, init_id, "init", self.init_options.clone())
+            .await
+        {
+            Ok(_) | Err(JsError::FunctionNotFound(_)) => Ok(()),
+            Err(e) => Err(e),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -457,31 +474,9 @@ impl PluginRuntime for ExternalRuntime {
         body: Option<JsBody>,
         timeout: Duration,
     ) -> Result<(CallOutput, StreamReceiver), JsError> {
-        // Merge body into arg (same logic as call()).
+        // Merge body into arg for JS consumption.
         if let Some(ref b) = body {
-            match b {
-                JsBody::Json(v) => {
-                    if let Some(obj) = arg.as_object_mut() {
-                        obj.insert("body".to_string(), v.clone());
-                    }
-                }
-                JsBody::Text(s) => {
-                    if let Some(obj) = arg.as_object_mut() {
-                        obj.insert("body".to_string(), serde_json::Value::String(s.clone()));
-                    }
-                }
-                JsBody::Bytes(bytes) => {
-                    use base64::Engine as _;
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                    if let Some(obj) = arg.as_object_mut() {
-                        obj.insert("body".to_string(), serde_json::Value::String(encoded));
-                        obj.insert(
-                            "bodyEncoding".to_string(),
-                            serde_json::Value::String("base64".to_string()),
-                        );
-                    }
-                }
-            }
+            merge_body_into_arg(&mut arg, b);
         }
 
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -499,19 +494,7 @@ impl PluginRuntime for ExternalRuntime {
             .await;
 
         match result {
-            Ok((call_output, _stream)) => {
-                // Take ownership of the stream for the background read task.
-                let stream = conn
-                    .stream
-                    .take()
-                    .ok_or_else(|| JsError::ExecutionError("stream already taken".into()))?;
-
-                // Drop the Mutex lock — the background task owns the stream directly.
-                drop(conn);
-
-                let rx = spawn_stream_reader(stream, id, timeout);
-                Ok((call_output, rx))
-            }
+            Ok((call_output, _stream)) => finish_stream_setup(conn, call_output, id, timeout),
             Err(e) => {
                 // Check if this is a recoverable socket error (broken pipe, EOF,
                 // or a stream taken by a previous streaming call that completed).
@@ -528,23 +511,7 @@ impl PluginRuntime for ExternalRuntime {
                     self.plugin_path,
                     e,
                 );
-                self.respawn(&mut conn).await.map_err(|re| {
-                    JsError::ExecutionError(format!("respawn failed during streaming call: {re}"))
-                })?;
-
-                // Re-init.
-                let init_id = self.next_id.fetch_add(1, Ordering::Relaxed);
-                match self
-                    .do_send_recv(&mut conn, init_id, "init", self.init_options.clone())
-                    .await
-                {
-                    Ok(_) | Err(JsError::FunctionNotFound(_)) => {}
-                    Err(e) => {
-                        return Err(JsError::ExecutionError(format!(
-                            "re-init after respawn failed: {e}"
-                        )));
-                    }
-                }
+                self.respawn_and_reinit(&mut conn).await?;
 
                 // Retry the streaming call.
                 let id = self.next_id.fetch_add(1, Ordering::Relaxed);
@@ -552,13 +519,7 @@ impl PluginRuntime for ExternalRuntime {
                     .do_call_stream(&mut conn, id, function_name, arg)
                     .await?;
 
-                let stream = conn.stream.take().ok_or_else(|| {
-                    JsError::ExecutionError("stream already taken on retry".into())
-                })?;
-                drop(conn);
-
-                let rx = spawn_stream_reader(stream, id, timeout);
-                Ok((call_output, rx))
+                finish_stream_setup(conn, call_output, id, timeout)
             }
         }
     }

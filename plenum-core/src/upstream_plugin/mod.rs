@@ -22,6 +22,21 @@ use serde::{Deserialize, Serialize};
 use tracing::Instrument;
 use ts_rs::TS;
 
+/// Log a plugin error and send a gateway error response, then return early.
+macro_rules! plugin_error_response {
+    ($session:expr, $ctx:expr, $label:expr, $err:expr) => {{
+        log::error!("{}: {}", $label, $err);
+        crate::phases::gateway_error::respond(
+            $session,
+            $ctx,
+            GatewayErrorResponse::internal(format!("plugin error: {}", $err)),
+            $ctx.error_hook.clone().as_deref(),
+        )
+        .await;
+        return Ok(true);
+    }};
+}
+
 /// The request sub-object inside [`PluginInput`].
 /// Note: the request body is injected at the top level of the input by the JS
 /// runtime and is accessible as `input.body` in JavaScript.
@@ -86,6 +101,15 @@ pub struct JsPluginInput {
     #[serde(rename = "bodyEncoding")]
     #[ts(optional)]
     body_encoding: Option<String>,
+}
+
+/// Convert `HashMap<String, Option<String>>` plugin headers into a flat
+/// `Vec<(String, String)>`, dropping entries with `None` values.
+fn flatten_plugin_headers(headers: HashMap<String, Option<String>>) -> Vec<(String, String)> {
+    headers
+        .into_iter()
+        .filter_map(|(k, v)| v.map(|val| (k, val)))
+        .collect()
 }
 
 /// Run `on_response` interceptors for the current response (shared by streaming
@@ -408,15 +432,7 @@ pub(crate) async fn dispatch(
         {
             Ok(result) => result,
             Err(e) => {
-                log::error!("plugin handle() streaming error: {}", e);
-                crate::phases::gateway_error::respond(
-                    session,
-                    ctx,
-                    GatewayErrorResponse::internal(format!("plugin error: {}", e)),
-                    ctx.error_hook.clone().as_deref(),
-                )
-                .await;
-                return Ok(true);
+                plugin_error_response!(session, ctx, "plugin handle() streaming error", e);
             }
         };
 
@@ -447,10 +463,7 @@ pub(crate) async fn dispatch(
         }
 
         // Step E: write header + stream chunks
-        let response_headers: Vec<(String, String)> = plugin_headers
-            .into_iter()
-            .filter_map(|(k, v)| v.map(|val| (k, val)))
-            .collect();
+        let response_headers = flatten_plugin_headers(plugin_headers);
         let mut resp_header =
             pingora_http::ResponseHeader::build(plugin_status, None).map_err(|e| {
                 pingora_core::Error::because(
@@ -547,15 +560,7 @@ pub(crate) async fn dispatch(
                 )
             }
             Err(e) => {
-                log::error!("plugin handle() error: {}", e);
-                crate::phases::gateway_error::respond(
-                    session,
-                    ctx,
-                    GatewayErrorResponse::internal(format!("plugin error: {}", e)),
-                    ctx.error_hook.clone().as_deref(),
-                )
-                .await;
-                return Ok(true);
+                plugin_error_response!(session, ctx, "plugin handle() error", e);
             }
         };
         merge_ctx(&mut ctx.user_ctx, plugin_returned_ctx);
@@ -644,10 +649,7 @@ pub(crate) async fn dispatch(
         }
 
         // Step E: write response
-        let response_headers: Vec<(String, String)> = plugin_headers
-            .into_iter()
-            .filter_map(|(k, v)| v.map(|val| (k, val)))
-            .collect();
+        let response_headers = flatten_plugin_headers(plugin_headers);
         crate::proxy_utils::write_response(
             session,
             plugin_status,

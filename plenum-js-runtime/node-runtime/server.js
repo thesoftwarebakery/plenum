@@ -215,12 +215,7 @@ function sendResponse(conn, response) {
 
 // Send a streaming frame (metadata, done, or error) via the normal pack+sanitize path.
 function sendStreamFrame(conn, id, result) {
-  const response = { id, result };
-  const respPayload = pack(response);
-  const lenBuf = Buffer.allocUnsafe(4);
-  lenBuf.writeUInt32BE(respPayload.length, 0);
-  conn.write(lenBuf);
-  conn.write(respPayload);
+  sendResponse(conn, { id, result });
 }
 
 // Send a binary-safe frame without sanitize (for chunk data that may contain binary).
