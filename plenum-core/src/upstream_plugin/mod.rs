@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 
+use bytes::Bytes;
+use plenum_js_runtime::StreamChunk;
+
 use crate::ctx::GatewayCtx;
 use crate::gateway_error::GatewayErrorResponse;
 use crate::headers::{apply_header_modifications, headers_hashmap_to_http_headermap};
@@ -309,191 +312,385 @@ pub(crate) async fn dispatch(
         &final_buf,
     );
 
-    let (mut plugin_status, mut plugin_headers, plugin_body, plugin_returned_ctx) = match plugin
-        .runtime
-        .call(
-            "handle",
-            serde_json::to_value(plugin_input).unwrap(),
-            js_body,
-            plugin.timeout,
-        )
-        .await
-    {
-        Ok(output) => {
-            let parsed: PluginOutput = serde_json::from_value(output.value).unwrap_or_default();
-            (
-                parsed.status.unwrap_or(200),
-                parsed.headers.unwrap_or_default(),
-                output.body,
-                parsed.ctx,
+    // Step B: call plugin handle() — either streaming or full response
+    if plugin.streaming {
+        // -----------------------------------------------------------------------
+        // Streaming path: call_stream returns chunks via mpsc channel.
+        // -----------------------------------------------------------------------
+        let (meta_value, mut rx) = match plugin
+            .runtime
+            .call_stream(
+                "handle",
+                serde_json::to_value(plugin_input).unwrap(),
+                js_body,
+                plugin.timeout,
             )
-        }
-        Err(e) => {
-            log::error!("plugin handle() error: {}", e);
-            crate::phases::gateway_error::respond(
-                session,
-                ctx,
-                GatewayErrorResponse::internal(format!("plugin error: {}", e)),
-                ctx.error_hook.clone().as_deref(),
-            )
-            .await;
-            return Ok(true);
-        }
-    };
-    merge_ctx(&mut ctx.user_ctx, plugin_returned_ctx);
-
-    // Step C: on_response interceptors
-    for hook in &op.interceptors.on_response {
-        let effective_headers: HashMap<String, String> = plugin_headers
-            .iter()
-            .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
-            .collect();
-        let input = response_input_from_parts(
-            http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
-            &method,
-            &route,
-            &headers_hashmap_to_http_headermap(&effective_headers),
-            op.operation_meta.clone(),
-            ctx.rate_limit_state.clone(),
-            serde_json::Value::Object(ctx.user_ctx.clone()),
-        );
-        let mut input_json = serde_json::to_value(&input).unwrap();
-        merge_options(&mut input_json, hook.options.as_ref());
-        let span = tracing::debug_span!(
-            "interceptor_call",
-            hook = "on_response",
-            function = hook.function.as_str()
-        );
-        match call_interceptor(
-            hook.runtime.as_ref(),
-            &hook.function,
-            input_json,
-            None,
-            hook.timeout,
-        )
-        .instrument(span)
-        .await
+            .await
         {
-            Ok((
-                InterceptorOutput::Continue {
-                    status,
-                    headers,
-                    ctx: returned_ctx,
-                },
-                _,
-            )) => {
-                if let Some(s) = status {
-                    plugin_status = s;
-                }
-                if let Some(mods) = headers {
-                    for (k, v) in mods {
-                        match v {
-                            Some(val) => {
-                                plugin_headers.insert(k, Some(val));
-                            }
-                            None => {
-                                plugin_headers.remove(&k);
+            Ok(result) => result,
+            Err(e) => {
+                log::error!("plugin handle() streaming error: {}", e);
+                crate::phases::gateway_error::respond(
+                    session,
+                    ctx,
+                    GatewayErrorResponse::internal(format!("plugin error: {}", e)),
+                    ctx.error_hook.clone().as_deref(),
+                )
+                .await;
+                return Ok(true);
+            }
+        };
+
+        let parsed: PluginOutput = serde_json::from_value(meta_value.value).unwrap_or_default();
+        let mut plugin_status = parsed.status.unwrap_or(200);
+        let mut plugin_headers = parsed.headers.unwrap_or_default();
+        merge_ctx(&mut ctx.user_ctx, parsed.ctx);
+
+        // Step C: on_response interceptors (run normally — they don't use body)
+        for hook in &op.interceptors.on_response {
+            let effective_headers: HashMap<String, String> = plugin_headers
+                .iter()
+                .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
+                .collect();
+            let input = response_input_from_parts(
+                http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
+                &method,
+                &route,
+                &headers_hashmap_to_http_headermap(&effective_headers),
+                op.operation_meta.clone(),
+                ctx.rate_limit_state.clone(),
+                serde_json::Value::Object(ctx.user_ctx.clone()),
+            );
+            let mut input_json = serde_json::to_value(&input).unwrap();
+            merge_options(&mut input_json, hook.options.as_ref());
+            let span = tracing::debug_span!(
+                "interceptor_call",
+                hook = "on_response",
+                function = hook.function.as_str()
+            );
+            match call_interceptor(
+                hook.runtime.as_ref(),
+                &hook.function,
+                input_json,
+                None,
+                hook.timeout,
+            )
+            .instrument(span)
+            .await
+            {
+                Ok((
+                    InterceptorOutput::Continue {
+                        status,
+                        headers,
+                        ctx: returned_ctx,
+                    },
+                    _,
+                )) => {
+                    if let Some(s) = status {
+                        plugin_status = s;
+                    }
+                    if let Some(mods) = headers {
+                        for (k, v) in mods {
+                            match v {
+                                Some(val) => {
+                                    plugin_headers.insert(k, Some(val));
+                                }
+                                None => {
+                                    plugin_headers.remove(&k);
+                                }
                             }
                         }
                     }
+                    merge_ctx(&mut ctx.user_ctx, returned_ctx);
                 }
-                merge_ctx(&mut ctx.user_ctx, returned_ctx);
-            }
-            Ok((InterceptorOutput::Respond { .. }, _)) => {
-                log::warn!(
-                    "on_response interceptor returned 'respond' action for plugin route -- ignored"
-                );
-            }
-            Err(e) => {
-                log::error!("on_response interceptor error: {}", e);
+                Ok((InterceptorOutput::Respond { .. }, _)) => {
+                    log::warn!(
+                        "on_response interceptor returned 'respond' action for plugin route -- ignored"
+                    );
+                }
+                Err(e) => {
+                    log::error!("on_response interceptor error: {}", e);
+                }
             }
         }
-    }
 
-    // Step D: on_response_body interceptors
-    let mut response_body_bytes = plugin_body.map(js_body_to_bytes).unwrap_or_default();
-    let response_content_type = plugin_headers
-        .get("content-type")
-        .and_then(|v| v.clone())
-        .clone();
-    for hook in &op.interceptors.on_response_body {
-        let js_body =
-            js_body_from_content_type(response_content_type.as_deref(), &response_body_bytes);
-        let effective_headers: HashMap<String, String> = plugin_headers
-            .iter()
-            .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
+        // Step D: on_response_body interceptors are SKIPPED for streaming routes.
+        // Streaming has no full body buffer for interceptors to transform.
+        // Plugin author accepts this tradeoff when setting `streaming: true`.
+        if !op.interceptors.on_response_body.is_empty() {
+            log::warn!(
+                "on_response_body interceptors are not supported for streaming plugin route '{}' — skipped",
+                route,
+            );
+        }
+
+        // Step E: write header + stream chunks
+        let response_headers: Vec<(String, String)> = plugin_headers
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|val| (k, val)))
             .collect();
-        let input = response_input_from_parts(
-            http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
-            &method,
-            &route,
-            &headers_hashmap_to_http_headermap(&effective_headers),
-            op.operation_meta.clone(),
-            ctx.rate_limit_state.clone(),
-            serde_json::Value::Object(ctx.user_ctx.clone()),
-        );
-        let mut input_json = serde_json::to_value(&input).unwrap();
-        merge_options(&mut input_json, hook.options.as_ref());
-        match call_interceptor(
-            hook.runtime.as_ref(),
-            &hook.function,
-            input_json,
-            js_body,
-            hook.timeout,
-        )
-        .await
-        {
-            Ok((
-                InterceptorOutput::Continue {
-                    status,
-                    headers,
-                    ctx: returned_ctx,
-                },
-                body_out,
-            )) => {
-                if let Some(s) = status {
-                    plugin_status = s;
+        let mut resp_header =
+            pingora_http::ResponseHeader::build(plugin_status, None).map_err(|e| {
+                pingora_core::Error::because(
+                    pingora_core::ErrorType::InternalError,
+                    "build response header for streaming plugin",
+                    e,
+                )
+            })?;
+        for (name, value) in &response_headers {
+            resp_header
+                .insert_header(name.clone(), value.as_bytes())
+                .ok();
+        }
+        session
+            .write_response_header(Box::new(resp_header), false)
+            .await
+            .map_err(|e| {
+                pingora_core::Error::because(
+                    pingora_core::ErrorType::InternalError,
+                    "write response header for streaming plugin",
+                    e,
+                )
+            })?;
+
+        // Stream chunks until done or cancelled.
+        loop {
+            tokio::select! {
+                biased;
+                _ = ctx.cancellation.cancelled() => {
+                    // Client disconnected — stop reading chunks.
+                    break;
                 }
-                if let Some(mods) = headers {
-                    for (k, v) in mods {
-                        match v {
-                            Some(val) => {
-                                plugin_headers.insert(k, Some(val));
-                            }
-                            None => {
-                                plugin_headers.remove(&k);
-                            }
+                chunk = rx.recv() => {
+                    match chunk {
+                        Some(Ok(StreamChunk::Chunk(data))) => {
+                            session
+                                .write_response_body(Some(Bytes::from(data)), false)
+                                .await
+                                .map_err(|e| {
+                                    pingora_core::Error::because(
+                                        pingora_core::ErrorType::InternalError,
+                                        "write streaming plugin chunk",
+                                        e,
+                                    )
+                                })?;
+                        }
+                        Some(Ok(StreamChunk::Done)) | None => {
+                            // Finalize the chunked response.
+                            session
+                                .write_response_body(None, true)
+                                .await
+                                .map_err(|e| {
+                                    pingora_core::Error::because(
+                                        pingora_core::ErrorType::InternalError,
+                                        "finalize streaming plugin response",
+                                        e,
+                                    )
+                                })?;
+                            break;
+                        }
+                        Some(Err(e)) => {
+                            log::error!("plugin streaming error: {}", e);
+                            // Response header already sent — terminate chunked transfer.
+                            let _ = session.write_response_body(None, true).await;
+                            break;
                         }
                     }
                 }
-                if let Some(b) = body_out {
-                    response_body_bytes = js_body_to_bytes(b);
-                }
-                merge_ctx(&mut ctx.user_ctx, returned_ctx);
-            }
-            Ok((InterceptorOutput::Respond { .. }, _)) => {
-                log::warn!(
-                    "on_response_body interceptor returned 'respond' action for plugin route -- ignored"
-                );
-            }
-            Err(e) => {
-                log::error!("on_response_body interceptor error: {}", e);
             }
         }
+
+        Ok(true)
+    } else {
+        // -----------------------------------------------------------------------
+        // Non-streaming path: call returns full response body.
+        // -----------------------------------------------------------------------
+        let (mut plugin_status, mut plugin_headers, plugin_body, plugin_returned_ctx) = match plugin
+            .runtime
+            .call(
+                "handle",
+                serde_json::to_value(plugin_input).unwrap(),
+                js_body,
+                plugin.timeout,
+            )
+            .await
+        {
+            Ok(output) => {
+                let parsed: PluginOutput = serde_json::from_value(output.value).unwrap_or_default();
+                (
+                    parsed.status.unwrap_or(200),
+                    parsed.headers.unwrap_or_default(),
+                    output.body,
+                    parsed.ctx,
+                )
+            }
+            Err(e) => {
+                log::error!("plugin handle() error: {}", e);
+                crate::phases::gateway_error::respond(
+                    session,
+                    ctx,
+                    GatewayErrorResponse::internal(format!("plugin error: {}", e)),
+                    ctx.error_hook.clone().as_deref(),
+                )
+                .await;
+                return Ok(true);
+            }
+        };
+        merge_ctx(&mut ctx.user_ctx, plugin_returned_ctx);
+
+        // Step C: on_response interceptors
+        for hook in &op.interceptors.on_response {
+            let effective_headers: HashMap<String, String> = plugin_headers
+                .iter()
+                .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
+                .collect();
+            let input = response_input_from_parts(
+                http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
+                &method,
+                &route,
+                &headers_hashmap_to_http_headermap(&effective_headers),
+                op.operation_meta.clone(),
+                ctx.rate_limit_state.clone(),
+                serde_json::Value::Object(ctx.user_ctx.clone()),
+            );
+            let mut input_json = serde_json::to_value(&input).unwrap();
+            merge_options(&mut input_json, hook.options.as_ref());
+            let span = tracing::debug_span!(
+                "interceptor_call",
+                hook = "on_response",
+                function = hook.function.as_str()
+            );
+            match call_interceptor(
+                hook.runtime.as_ref(),
+                &hook.function,
+                input_json,
+                None,
+                hook.timeout,
+            )
+            .instrument(span)
+            .await
+            {
+                Ok((
+                    InterceptorOutput::Continue {
+                        status,
+                        headers,
+                        ctx: returned_ctx,
+                    },
+                    _,
+                )) => {
+                    if let Some(s) = status {
+                        plugin_status = s;
+                    }
+                    if let Some(mods) = headers {
+                        for (k, v) in mods {
+                            match v {
+                                Some(val) => {
+                                    plugin_headers.insert(k, Some(val));
+                                }
+                                None => {
+                                    plugin_headers.remove(&k);
+                                }
+                            }
+                        }
+                    }
+                    merge_ctx(&mut ctx.user_ctx, returned_ctx);
+                }
+                Ok((InterceptorOutput::Respond { .. }, _)) => {
+                    log::warn!(
+                        "on_response interceptor returned 'respond' action for plugin route -- ignored"
+                    );
+                }
+                Err(e) => {
+                    log::error!("on_response interceptor error: {}", e);
+                }
+            }
+        }
+
+        // Step D: on_response_body interceptors
+        let mut response_body_bytes = plugin_body.map(js_body_to_bytes).unwrap_or_default();
+        let response_content_type = plugin_headers
+            .get("content-type")
+            .and_then(|v| v.clone())
+            .clone();
+        for hook in &op.interceptors.on_response_body {
+            let js_body =
+                js_body_from_content_type(response_content_type.as_deref(), &response_body_bytes);
+            let effective_headers: HashMap<String, String> = plugin_headers
+                .iter()
+                .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
+                .collect();
+            let input = response_input_from_parts(
+                http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
+                &method,
+                &route,
+                &headers_hashmap_to_http_headermap(&effective_headers),
+                op.operation_meta.clone(),
+                ctx.rate_limit_state.clone(),
+                serde_json::Value::Object(ctx.user_ctx.clone()),
+            );
+            let mut input_json = serde_json::to_value(&input).unwrap();
+            merge_options(&mut input_json, hook.options.as_ref());
+            match call_interceptor(
+                hook.runtime.as_ref(),
+                &hook.function,
+                input_json,
+                js_body,
+                hook.timeout,
+            )
+            .await
+            {
+                Ok((
+                    InterceptorOutput::Continue {
+                        status,
+                        headers,
+                        ctx: returned_ctx,
+                    },
+                    body_out,
+                )) => {
+                    if let Some(s) = status {
+                        plugin_status = s;
+                    }
+                    if let Some(mods) = headers {
+                        for (k, v) in mods {
+                            match v {
+                                Some(val) => {
+                                    plugin_headers.insert(k, Some(val));
+                                }
+                                None => {
+                                    plugin_headers.remove(&k);
+                                }
+                            }
+                        }
+                    }
+                    if let Some(b) = body_out {
+                        response_body_bytes = js_body_to_bytes(b);
+                    }
+                    merge_ctx(&mut ctx.user_ctx, returned_ctx);
+                }
+                Ok((InterceptorOutput::Respond { .. }, _)) => {
+                    log::warn!(
+                        "on_response_body interceptor returned 'respond' action for plugin route -- ignored"
+                    );
+                }
+                Err(e) => {
+                    log::error!("on_response_body interceptor error: {}", e);
+                }
+            }
+        }
+
+        // Step E: write response
+        let response_headers: Vec<(String, String)> = plugin_headers
+            .into_iter()
+            .filter_map(|(k, v)| v.map(|val| (k, val)))
+            .collect();
+        crate::proxy_utils::write_response(
+            session,
+            plugin_status,
+            &response_headers,
+            response_body_bytes,
+        )
+        .await?;
+
+        Ok(true)
     }
-
-    // Step E: write response
-    let response_headers: Vec<(String, String)> = plugin_headers
-        .into_iter()
-        .filter_map(|(k, v)| v.map(|val| (k, val)))
-        .collect();
-    crate::proxy_utils::write_response(
-        session,
-        plugin_status,
-        &response_headers,
-        response_body_bytes,
-    )
-    .await?;
-
-    Ok(true)
 }

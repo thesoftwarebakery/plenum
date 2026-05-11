@@ -112,6 +112,7 @@ pub(crate) fn build_upstream(
             options,
             permissions,
             timeout: upstream_config_timeout,
+            streaming,
         } => {
             let resolved = module_resolver::resolve_module(plugin, config_base)
                 .map_err(|e| format!("path '{}': plugin '{}': {}", path, plugin, e))?;
@@ -165,6 +166,7 @@ pub(crate) fn build_upstream(
             Ok(Upstream::Plugin(PluginHandle {
                 runtime: h,
                 timeout: plugin_timeout,
+                streaming: *streaming,
             }))
         }
         UpstreamConfig::Static {

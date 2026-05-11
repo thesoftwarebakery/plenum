@@ -11,6 +11,15 @@ pub enum JsBody {
     Bytes(Vec<u8>),
 }
 
+/// A chunk yielded by a streaming plugin response.
+#[derive(Debug)]
+pub enum StreamChunk {
+    /// Body data chunk.
+    Chunk(Vec<u8>),
+    /// Stream ended normally.
+    Done,
+}
+
 /// Output from a JS interceptor call. The main result value excludes the body
 /// field, which is extracted separately due to its typed nature.
 #[derive(Debug)]

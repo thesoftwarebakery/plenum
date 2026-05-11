@@ -1,11 +1,14 @@
 pub mod external;
 mod types;
 
-pub use types::{CallOutput, JsBody, JsError};
+pub use types::{CallOutput, JsBody, JsError, StreamChunk};
 
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
+
+/// Channel receiver for streaming plugin response chunks.
+pub type StreamReceiver = tokio::sync::mpsc::Receiver<Result<StreamChunk, JsError>>;
 
 /// Permissions granted to a single interceptor or plugin module.
 ///
@@ -36,6 +39,21 @@ pub trait PluginRuntime: Send + Sync {
         body: Option<JsBody>,
         timeout: Duration,
     ) -> Result<CallOutput, JsError>;
+
+    /// Start a streaming call. Returns (metadata, channel receiver for chunks).
+    /// The metadata frame contains status/headers; subsequent chunks arrive via receiver.
+    /// Default implementation returns an error — override in streaming-aware runtimes.
+    async fn call_stream(
+        &self,
+        _function_name: &str,
+        _arg: serde_json::Value,
+        _body: Option<JsBody>,
+        _timeout: Duration,
+    ) -> Result<(CallOutput, StreamReceiver), JsError> {
+        Err(JsError::ExecutionError(
+            "streaming not supported by this runtime".into(),
+        ))
+    }
 
     /// Synchronous variant for use from non-async contexts (e.g. pingora body filters).
     fn call_blocking(

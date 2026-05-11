@@ -18,7 +18,9 @@ use tokio::net::UnixStream;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use crate::{CallOutput, InterceptorPermissions, JsBody, JsError, PluginRuntime};
+use crate::{
+    CallOutput, InterceptorPermissions, JsBody, JsError, PluginRuntime, StreamChunk, StreamReceiver,
+};
 
 /// Maximum response payload size (10 MB). Responses exceeding this are rejected.
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -44,7 +46,7 @@ struct PluginResponse {
 
 /// State shared behind a Mutex — the live connection to the Node.js process.
 struct Connection {
-    stream: UnixStream,
+    stream: Option<UnixStream>,
     child: Child,
     socket_path: PathBuf,
 }
@@ -172,6 +174,11 @@ impl ExternalRuntime {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, JsError> {
+        let stream = conn
+            .stream
+            .as_mut()
+            .ok_or_else(|| JsError::ExecutionError("stream taken for streaming call".into()))?;
+
         let request = PluginRequest {
             id,
             method: method.to_string(),
@@ -182,22 +189,92 @@ impl ExternalRuntime {
             .map_err(|e| JsError::ExecutionError(format!("msgpack encode error: {e}")))?;
 
         // Write length prefix + payload.
-        conn.stream
+        stream
             .write_all(&(payload.len() as u32).to_be_bytes())
             .await
             .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
-        conn.stream
+        stream
             .write_all(&payload)
             .await
             .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
-        conn.stream
+        stream
             .flush()
             .await
             .map_err(|e| JsError::ExecutionError(format!("socket flush error: {e}")))?;
 
+        // Read response frame and map "not found" errors.
+        match Self::read_frame(stream, id).await {
+            Ok(v) => Ok(v),
+            Err(JsError::ExecutionError(ref msg))
+                if msg.contains("not found in plugin exports") =>
+            {
+                let name = msg
+                    .strip_prefix("function '")
+                    .and_then(|s| s.split('\'').next())
+                    .map(str::to_string)
+                    .unwrap_or_else(|| method.to_string());
+                Err(JsError::FunctionNotFound(name))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Send a request and read the metadata response frame for a streaming call.
+    /// Returns the metadata `CallOutput` and a reference to the live stream
+    /// (the caller must `.take()` the stream from the connection afterward).
+    async fn do_call_stream<'a>(
+        &self,
+        conn: &'a mut Connection,
+        id: u64,
+        method: &str,
+        arg: serde_json::Value,
+    ) -> Result<(CallOutput, &'a mut UnixStream), JsError> {
+        let stream = conn.stream.as_mut().ok_or_else(|| {
+            JsError::ExecutionError("stream taken for another streaming call".into())
+        })?;
+
+        // Send request frame.
+        let request = PluginRequest {
+            id,
+            method: method.to_string(),
+            params: arg,
+        };
+        let payload = rmp_serde::to_vec_named(&request)
+            .map_err(|e| JsError::ExecutionError(format!("msgpack encode error: {e}")))?;
+        stream
+            .write_all(&(payload.len() as u32).to_be_bytes())
+            .await
+            .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
+        stream
+            .write_all(&payload)
+            .await
+            .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| JsError::ExecutionError(format!("socket flush error: {e}")))?;
+
+        // Read metadata frame — should contain {status, headers, _stream: true}.
+        let meta_value = Self::read_frame(stream, id).await?;
+
+        Ok((
+            CallOutput {
+                value: meta_value,
+                body: None,
+            },
+            stream,
+        ))
+    }
+
+    /// Read a single msgpack frame from the stream and validate it against the expected id.
+    /// Extracted so both `do_send_recv` and the streaming background task share the same logic.
+    async fn read_frame(
+        stream: &mut UnixStream,
+        expected_id: u64,
+    ) -> Result<serde_json::Value, JsError> {
         // Read length prefix.
         let mut len_buf = [0u8; 4];
-        conn.stream
+        stream
             .read_exact(&mut len_buf)
             .await
             .map_err(|e| JsError::ExecutionError(format!("socket read error: {e}")))?;
@@ -211,7 +288,7 @@ impl ExternalRuntime {
 
         // Read payload.
         let mut resp_buf = vec![0u8; resp_len];
-        conn.stream
+        stream
             .read_exact(&mut resp_buf)
             .await
             .map_err(|e| JsError::ExecutionError(format!("socket read error: {e}")))?;
@@ -219,25 +296,14 @@ impl ExternalRuntime {
         let response: PluginResponse = rmp_serde::from_slice(&resp_buf)
             .map_err(|e| JsError::ExecutionError(format!("msgpack decode error: {e}")))?;
 
-        if response.id != id {
+        if response.id != expected_id {
             return Err(JsError::ExecutionError(format!(
-                "response id mismatch: expected {id}, got {}",
+                "response id mismatch: expected {expected_id}, got {}",
                 response.id
             )));
         }
 
         if let Some(err) = response.error {
-            // Map the server's "not found" error to FunctionNotFound so callers
-            // can silently ignore optional plugin functions (e.g. validate).
-            if err.contains("not found in plugin exports") {
-                // Extract the function name from the message if possible.
-                let name = err
-                    .strip_prefix("function '")
-                    .and_then(|s| s.split('\'').next())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| method.to_string());
-                return Err(JsError::FunctionNotFound(name));
-            }
             return Err(JsError::ExecutionError(err));
         }
 
@@ -260,7 +326,7 @@ impl ExternalRuntime {
         .await?;
 
         conn.child = new_child;
-        conn.stream = new_stream;
+        conn.stream = Some(new_stream);
         conn.socket_path = new_socket_path;
         Ok(())
     }
@@ -324,6 +390,213 @@ impl PluginRuntime for ExternalRuntime {
             value: result,
             body,
         })
+    }
+
+    async fn call_stream(
+        &self,
+        function_name: &str,
+        mut arg: serde_json::Value,
+        body: Option<JsBody>,
+        timeout: Duration,
+    ) -> Result<(CallOutput, StreamReceiver), JsError> {
+        // Merge body into arg (same logic as call()).
+        if let Some(ref b) = body {
+            match b {
+                JsBody::Json(v) => {
+                    if let Some(obj) = arg.as_object_mut() {
+                        obj.insert("body".to_string(), v.clone());
+                    }
+                }
+                JsBody::Text(s) => {
+                    if let Some(obj) = arg.as_object_mut() {
+                        obj.insert("body".to_string(), serde_json::Value::String(s.clone()));
+                    }
+                }
+                JsBody::Bytes(bytes) => {
+                    use base64::Engine as _;
+                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+                    if let Some(obj) = arg.as_object_mut() {
+                        obj.insert("body".to_string(), serde_json::Value::String(encoded));
+                        obj.insert(
+                            "bodyEncoding".to_string(),
+                            serde_json::Value::String("base64".to_string()),
+                        );
+                    }
+                }
+            }
+        }
+
+        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+
+        // Lock the connection, send the request, and read the metadata frame.
+        // On socket-level failure (or taken stream from previous streaming call),
+        // respawn the process and retry once.
+        let mut conn = self.conn.lock().await;
+
+        // Clone arg so we still have it for the retry path.
+        let first_arg = arg.clone();
+
+        let result = self
+            .do_call_stream(&mut conn, id, function_name, first_arg)
+            .await;
+
+        match result {
+            Ok((call_output, _stream)) => {
+                // Take ownership of the stream for the background read task.
+                let stream = conn
+                    .stream
+                    .take()
+                    .ok_or_else(|| JsError::ExecutionError("stream already taken".into()))?;
+
+                // Drop the Mutex lock — the background task owns the stream directly.
+                drop(conn);
+
+                // Create channel and spawn background task.
+                let (tx, rx) = tokio::sync::mpsc::channel::<Result<StreamChunk, JsError>>(32);
+
+                tokio::spawn(async move {
+                    let mut stream = stream;
+                    let mut stream_active = true;
+
+                    while stream_active {
+                        let chunk_result = tokio::time::timeout(timeout, async {
+                            Self::read_frame(&mut stream, id).await
+                        })
+                        .await;
+
+                        match chunk_result {
+                            Ok(Ok(value)) => {
+                                if value
+                                    .as_object()
+                                    .and_then(|m| m.get("done"))
+                                    .and_then(|v| v.as_bool())
+                                    == Some(true)
+                                {
+                                    let _ = tx.send(Ok(StreamChunk::Done)).await;
+                                    stream_active = false;
+                                } else {
+                                    let chunk_bytes = value
+                                        .as_object()
+                                        .and_then(|m| m.get("chunk"))
+                                        .and_then(|v| {
+                                            v.as_str()
+                                                .map(|s| s.as_bytes().to_vec())
+                                                .or_else(|| serde_json::to_vec(v).ok())
+                                        })
+                                        .unwrap_or_default();
+
+                                    if tx.send(Ok(StreamChunk::Chunk(chunk_bytes))).await.is_err() {
+                                        stream_active = false;
+                                    }
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                let _ = tx.send(Err(e)).await;
+                                stream_active = false;
+                            }
+                            Err(_elapsed) => {
+                                let _ = tx.send(Err(JsError::Timeout)).await;
+                                stream_active = false;
+                            }
+                        }
+                    }
+                });
+
+                Ok((call_output, rx))
+            }
+            Err(e) => {
+                // Check if this is a recoverable socket error (broken pipe, EOF,
+                // or a stream taken by a previous streaming call that completed).
+                let is_recoverable = matches!(&e, JsError::ExecutionError(msg)
+                    if msg.contains("socket") || msg.contains("broken pipe") || msg.contains("EOF") || msg.contains("stream taken"));
+
+                if !is_recoverable {
+                    return Err(e);
+                }
+
+                // Respawn and retry once.
+                log::warn!(
+                    "plugin process for '{}' stream call failed, respawning: {}",
+                    self.plugin_path,
+                    e,
+                );
+                self.respawn(&mut conn).await.map_err(|re| {
+                    JsError::ExecutionError(format!("respawn failed during streaming call: {re}"))
+                })?;
+
+                // Re-init.
+                let init_id = self.next_id.fetch_add(1, Ordering::Relaxed);
+                match self
+                    .do_send_recv(&mut conn, init_id, "init", self.init_options.clone())
+                    .await
+                {
+                    Ok(_) | Err(JsError::FunctionNotFound(_)) => {}
+                    Err(e) => {
+                        return Err(JsError::ExecutionError(format!(
+                            "re-init after respawn failed: {e}"
+                        )));
+                    }
+                }
+
+                // Retry the streaming call.
+                let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+                let (call_output, _stream) = self
+                    .do_call_stream(&mut conn, id, function_name, arg)
+                    .await?;
+
+                let stream = conn.stream.take().ok_or_else(|| {
+                    JsError::ExecutionError("stream already taken on retry".into())
+                })?;
+                drop(conn);
+
+                let (tx, rx) = tokio::sync::mpsc::channel::<Result<StreamChunk, JsError>>(32);
+
+                tokio::spawn(async move {
+                    let mut stream = stream;
+                    loop {
+                        let chunk_result = tokio::time::timeout(timeout, async {
+                            Self::read_frame(&mut stream, id).await
+                        })
+                        .await;
+                        match chunk_result {
+                            Ok(Ok(value)) => {
+                                if value
+                                    .as_object()
+                                    .and_then(|m| m.get("done"))
+                                    .and_then(|v| v.as_bool())
+                                    == Some(true)
+                                {
+                                    let _ = tx.send(Ok(StreamChunk::Done)).await;
+                                    return;
+                                }
+                                let chunk_bytes = value
+                                    .as_object()
+                                    .and_then(|m| m.get("chunk"))
+                                    .and_then(|v| {
+                                        v.as_str()
+                                            .map(|s| s.as_bytes().to_vec())
+                                            .or_else(|| serde_json::to_vec(v).ok())
+                                    })
+                                    .unwrap_or_default();
+                                if tx.send(Ok(StreamChunk::Chunk(chunk_bytes))).await.is_err() {
+                                    return;
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                let _ = tx.send(Err(e)).await;
+                                return;
+                            }
+                            Err(_elapsed) => {
+                                let _ = tx.send(Err(JsError::Timeout)).await;
+                                return;
+                            }
+                        }
+                    }
+                });
+
+                Ok((call_output, rx))
+            }
+        }
     }
 
     fn call_blocking(
@@ -542,7 +815,7 @@ pub async fn spawn(
 
     Ok(ExternalRuntime {
         conn: Mutex::new(Connection {
-            stream,
+            stream: Some(stream),
             child,
             socket_path,
         }),
