@@ -7,20 +7,24 @@
 //! Request:  { id: number, method: string, params: any }
 //! Response: { id: number, result?: any, error?: string }
 
+mod process;
+mod streaming;
+
+pub use process::{locate_interceptor, locate_plugin, locate_server_script};
+
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::io::AsyncReadExt;
 use tokio::net::UnixStream;
-use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
-use crate::{
-    CallOutput, InterceptorPermissions, JsBody, JsError, PluginRuntime, StreamChunk, StreamReceiver,
-};
+use crate::{CallOutput, InterceptorPermissions, JsBody, JsError, PluginRuntime, StreamReceiver};
+
+use streaming::{finish_stream_setup, write_request};
 
 /// Maximum response payload size (10 MB). Responses exceeding this are rejected.
 const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
@@ -29,7 +33,7 @@ const MAX_RESPONSE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_RESTARTS: u32 = 5;
 
 /// A request sent from the gateway to the external plugin process.
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 struct PluginRequest {
     id: u64,
     method: String,
@@ -47,7 +51,7 @@ struct PluginResponse {
 /// State shared behind a Mutex — the live connection to the Node.js process.
 struct Connection {
     stream: Option<UnixStream>,
-    child: Child,
+    child: tokio::process::Child,
     socket_path: PathBuf,
 }
 
@@ -73,8 +77,6 @@ impl Drop for ExternalRuntime {
         // Best-effort graceful shutdown: SIGTERM then socket cleanup.
         // We can't await here so we fire-and-forget.
         if let Ok(mut conn) = self.conn.try_lock() {
-            // start_kill sends SIGKILL immediately; we tried SIGTERM via the
-            // server's SIGTERM handler. For cleanliness just kill here.
             let _ = conn.child.start_kill();
             let _ = std::fs::remove_file(&conn.socket_path);
         }
@@ -86,10 +88,6 @@ impl Drop for ExternalRuntime {
         }
     }
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers: body merging, request writing, stream reader
-// ---------------------------------------------------------------------------
 
 /// Merge a `JsBody` into a JSON arg under the `"body"` key (and `"bodyEncoding"`
 /// for binary), matching the convention used by `call()` and `call_stream()`.
@@ -117,101 +115,6 @@ fn merge_body_into_arg(arg: &mut serde_json::Value, body: &JsBody) {
             }
         }
     }
-}
-
-/// Serialize a `PluginRequest` and write it as a length-prefixed msgpack frame.
-async fn write_request(stream: &mut UnixStream, request: &PluginRequest) -> Result<(), JsError> {
-    let payload = rmp_serde::to_vec_named(request)
-        .map_err(|e| JsError::ExecutionError(format!("msgpack encode error: {e}")))?;
-
-    stream
-        .write_all(&(payload.len() as u32).to_be_bytes())
-        .await
-        .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
-    stream
-        .write_all(&payload)
-        .await
-        .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
-    stream
-        .flush()
-        .await
-        .map_err(|e| JsError::ExecutionError(format!("socket flush error: {e}")))?;
-
-    Ok(())
-}
-
-/// Spawn a background task that reads multi-frame msgpack responses from a
-/// UnixStream and feeds them as `StreamChunk` items into an mpsc channel.
-fn spawn_stream_reader(stream: UnixStream, id: u64, timeout: Duration) -> StreamReceiver {
-    let (tx, rx) = tokio::sync::mpsc::channel(32);
-
-    tokio::spawn(async move {
-        let mut stream = stream;
-        let mut stream_active = true;
-
-        while stream_active {
-            let chunk_result = tokio::time::timeout(timeout, async {
-                ExternalRuntime::read_frame(&mut stream, id).await
-            })
-            .await;
-
-            match chunk_result {
-                Ok(Ok(value)) => {
-                    if value
-                        .as_object()
-                        .and_then(|m| m.get("done"))
-                        .and_then(|v| v.as_bool())
-                        == Some(true)
-                    {
-                        let _ = tx.send(Ok(StreamChunk::Done)).await;
-                        stream_active = false;
-                    } else {
-                        let chunk_bytes = value
-                            .as_object()
-                            .and_then(|m| m.get("chunk"))
-                            .and_then(|v| {
-                                v.as_str()
-                                    .map(|s| s.as_bytes().to_vec())
-                                    .or_else(|| serde_json::to_vec(v).ok())
-                            })
-                            .unwrap_or_default();
-
-                        if tx.send(Ok(StreamChunk::Chunk(chunk_bytes))).await.is_err() {
-                            stream_active = false;
-                        }
-                    }
-                }
-                Ok(Err(e)) => {
-                    let _ = tx.send(Err(e)).await;
-                    stream_active = false;
-                }
-                Err(_elapsed) => {
-                    let _ = tx.send(Err(JsError::Timeout)).await;
-                    stream_active = false;
-                }
-            }
-        }
-    });
-
-    rx
-}
-
-/// Take ownership of the Unix stream from a locked connection, release the
-/// lock, and spawn a background reader that feeds chunks into an mpsc channel.
-/// Shared by the success and retry paths of `call_stream`.
-fn finish_stream_setup(
-    mut conn: tokio::sync::MutexGuard<'_, Connection>,
-    call_output: CallOutput,
-    id: u64,
-    timeout: Duration,
-) -> Result<(CallOutput, StreamReceiver), JsError> {
-    let stream = conn
-        .stream
-        .take()
-        .ok_or_else(|| JsError::ExecutionError("stream already taken".into()))?;
-    drop(conn);
-    let rx = spawn_stream_reader(stream, id, timeout);
-    Ok((call_output, rx))
 }
 
 impl ExternalRuntime {
@@ -356,7 +259,7 @@ impl ExternalRuntime {
 
     /// Read a single msgpack frame from the stream and validate it against the expected id.
     /// Extracted so both `do_send_recv` and the streaming background task share the same logic.
-    async fn read_frame(
+    pub(crate) async fn read_frame(
         stream: &mut UnixStream,
         expected_id: u64,
     ) -> Result<serde_json::Value, JsError> {
@@ -370,7 +273,7 @@ impl ExternalRuntime {
 
         if resp_len > MAX_RESPONSE_BYTES {
             return Err(JsError::ExecutionError(format!(
-                "response too large: {resp_len} bytes (max {MAX_RESPONSE_BYTES})"
+                "response payload too large ({resp_len} bytes, max {MAX_RESPONSE_BYTES})"
             )));
         }
 
@@ -405,7 +308,7 @@ impl ExternalRuntime {
         let _ = conn.child.start_kill();
         let _ = std::fs::remove_file(&conn.socket_path);
 
-        let (new_child, new_stream, new_socket_path) = spawn_process(
+        let (new_child, new_stream, new_socket_path) = process::spawn_process(
             &self.server_script,
             &self.plugin_path,
             &self.socket_dir,
@@ -432,6 +335,24 @@ impl ExternalRuntime {
         {
             Ok(_) | Err(JsError::FunctionNotFound(_)) => Ok(()),
             Err(e) => Err(e),
+        }
+    }
+
+    pub fn health_check(&self) -> Result<serde_json::Value, JsError> {
+        let conn = self.conn.try_lock().map_err(|_| {
+            JsError::ExecutionError("connection locked (concurrent call in progress)".into())
+        })?;
+
+        let pid = conn.child.id();
+        match pid {
+            Some(pid) => Ok(serde_json::json!({
+                "status": "ok",
+                "pid": pid,
+                "socket": conn.socket_path.display().to_string(),
+            })),
+            None => Err(JsError::ExecutionError(
+                "child process has no PID (not running)".into(),
+            )),
         }
     }
 }
@@ -547,182 +468,6 @@ impl PluginRuntime for ExternalRuntime {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Process spawning helpers
-// ---------------------------------------------------------------------------
-
-/// Spawn a Node.js plugin server process and connect to it.
-/// Returns `(child, stream, socket_path)`.
-async fn spawn_process(
-    server_script: &Path,
-    plugin_path: &str,
-    socket_dir: &Path,
-    permissions: &InterceptorPermissions,
-) -> Result<(Child, UnixStream, PathBuf), Box<dyn Error + Send + Sync>> {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let socket_path = socket_dir.join(format!(
-        "og-plugin-{}-{}.sock",
-        std::process::id(),
-        COUNTER.fetch_add(1, Ordering::Relaxed)
-    ));
-
-    // Clean up any stale socket file.
-    let _ = std::fs::remove_file(&socket_path);
-
-    // Build sandbox config from permissions.
-    // Infrastructure paths (server script, plugin, socket) are only added when
-    // OS-level sandboxing will actually be applied, so that the platform guard
-    // doesn't fire on non-Linux when the user hasn't configured any restrictions.
-    let user_wants_os_sandbox =
-        !permissions.allowed_read_paths.is_empty() || !permissions.allowed_hosts.is_empty();
-
-    let sandbox_config = plenum_sandbox::SandboxConfig {
-        env: permissions.allowed_env_vars.iter().cloned().collect(),
-        read: {
-            let mut r = permissions.allowed_read_paths.clone();
-            if user_wants_os_sandbox {
-                if let Some(d) = server_script.parent() {
-                    r.push(d.to_path_buf());
-                }
-                if let Some(d) = std::path::Path::new(plugin_path).parent() {
-                    r.push(d.to_path_buf());
-                }
-            }
-            r
-        },
-        write: if user_wants_os_sandbox {
-            vec![socket_dir.to_path_buf()]
-        } else {
-            vec![]
-        },
-        net: permissions.allowed_hosts.iter().cloned().collect(),
-    };
-
-    let node_args = [
-        server_script.as_os_str().to_owned(),
-        "--socket".into(),
-        socket_path.as_os_str().to_owned(),
-        "--plugin".into(),
-        plugin_path.into(),
-    ];
-    let std_cmd = plenum_sandbox::wrap_command("node", node_args, &sandbox_config)
-        .map_err(|e| format!("failed to configure sandbox: {e}"))?;
-
-    let mut child = Command::from(std_cmd)
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::inherit())
-        .spawn()
-        .map_err(|e| format!("failed to spawn node process: {e}"))?;
-
-    // Wait for "ready\n" on stdout (10 second timeout).
-    let stdout = child.stdout.take().ok_or("no stdout from child process")?;
-    let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            line.clear();
-            let n = reader.read_line(&mut line).await?;
-            if n == 0 {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::UnexpectedEof,
-                    "plugin process exited before becoming ready",
-                ));
-            }
-            if line.trim() == "ready" {
-                return Ok(());
-            }
-        }
-    })
-    .await
-    .map_err(|_| "plugin process did not become ready within 10s")?
-    .map_err(|e: std::io::Error| format!("error reading plugin stdout: {e}"))?;
-
-    let stream = UnixStream::connect(&socket_path)
-        .await
-        .map_err(|e| format!("failed to connect to plugin socket at {socket_path:?}: {e}"))?;
-
-    Ok((child, stream, socket_path))
-}
-
-/// Locate the bundled `server.js` for the node-runtime.
-///
-/// Resolution order:
-///   1. `PLENUM_NODE_SERVER` env var (override for testing / custom deployments)
-///   2. Alongside the gateway binary: `<binary_dir>/node-runtime/server.js`
-///   3. Compile-time fallback: `<crate_dir>/node-runtime/server.js`
-pub fn locate_server_script() -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
-    // 1. Explicit override.
-    if let Ok(path) = std::env::var("PLENUM_NODE_SERVER") {
-        let p = PathBuf::from(&path);
-        if p.exists() {
-            return Ok(p);
-        }
-        return Err(
-            format!("PLENUM_NODE_SERVER is set to '{path}' but the file does not exist").into(),
-        );
-    }
-
-    // 2. Alongside the running binary.
-    if let Ok(exe) = std::env::current_exe() {
-        let candidate = exe
-            .parent()
-            .map(|d| d.join("node-runtime").join("server.js"));
-        if let Some(p) = candidate
-            && p.exists()
-        {
-            return Ok(p);
-        }
-    }
-
-    // 3. Compile-time crate directory (dev / cargo test).
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("node-runtime")
-        .join("server.js");
-    if dev_path.exists() {
-        return Ok(dev_path);
-    }
-
-    Err("cannot locate node-runtime/server.js: set PLENUM_NODE_SERVER or place it alongside the gateway binary".into())
-}
-
-/// Locate a built-in interceptor JS file in the node-runtime/interceptors/ directory.
-pub fn locate_interceptor(name: &str) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
-    let server_script = locate_server_script()?;
-    let interceptor_dir = server_script
-        .parent()
-        .ok_or("server.js has no parent directory")?
-        .join("interceptors");
-    let path = interceptor_dir.join(format!("{name}.js"));
-    if !path.exists() {
-        return Err(format!(
-            "built-in interceptor '{name}' not found at '{}'; \
-             ensure the node-runtime is correctly installed",
-            path.display()
-        )
-        .into());
-    }
-    Ok(path)
-}
-
-/// Locate a built-in plugin JS file in the node-runtime/plugins/ directory.
-pub fn locate_plugin(name: &str) -> Result<PathBuf, Box<dyn Error + Send + Sync>> {
-    let server_script = locate_server_script()?;
-    let plugin_dir = server_script
-        .parent()
-        .ok_or("server.js has no parent directory")?
-        .join("plugins");
-    let path = plugin_dir.join(format!("{name}.js"));
-    if !path.exists() {
-        return Err(format!(
-            "built-in plugin '{name}' not found at '{}'; \
-             ensure the node-runtime is correctly installed",
-            path.display()
-        )
-        .into());
-    }
-    Ok(path)
-}
-
 /// Spawn a Node.js plugin process and return a connected [`ExternalRuntime`].
 ///
 /// This is the async variant — use inside an existing tokio runtime.
@@ -736,7 +481,7 @@ pub async fn spawn(
     let socket_dir = std::env::temp_dir();
 
     let (child, stream, socket_path) =
-        spawn_process(&server_script, plugin_path, &socket_dir, &permissions).await?;
+        process::spawn_process(&server_script, plugin_path, &socket_dir, &permissions).await?;
 
     Ok(ExternalRuntime {
         conn: Mutex::new(Connection {
@@ -767,4 +512,45 @@ pub fn spawn_sync(
     let mut handle = rt.block_on(spawn(plugin_path, init_options, permissions))?;
     handle._runtime = Some(rt);
     Ok(handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merge_body_json_inserts_body_key() {
+        let mut arg = serde_json::json!({"method": "GET"});
+        let body = JsBody::Json(serde_json::json!({"key": "value"}));
+        merge_body_into_arg(&mut arg, &body);
+        assert_eq!(arg["body"], serde_json::json!({"key": "value"}));
+    }
+
+    #[test]
+    fn merge_body_text_inserts_string() {
+        let mut arg = serde_json::json!({});
+        let body = JsBody::Text("hello".to_string());
+        merge_body_into_arg(&mut arg, &body);
+        assert_eq!(arg["body"], serde_json::json!("hello"));
+    }
+
+    #[test]
+    fn merge_body_bytes_inserts_base64_with_encoding() {
+        let mut arg = serde_json::json!({});
+        let body = JsBody::Bytes(vec![0x00, 0xFF, 0x42]);
+        merge_body_into_arg(&mut arg, &body);
+
+        use base64::Engine as _;
+        let expected = base64::engine::general_purpose::STANDARD.encode([0x00, 0xFF, 0x42]);
+        assert_eq!(arg["body"], serde_json::json!(expected));
+        assert_eq!(arg["bodyEncoding"], serde_json::json!("base64"));
+    }
+
+    #[test]
+    fn merge_body_on_non_object_is_noop() {
+        let mut arg = serde_json::json!("not an object");
+        let body = JsBody::Text("hello".to_string());
+        merge_body_into_arg(&mut arg, &body);
+        assert_eq!(arg, serde_json::json!("not an object"));
+    }
 }
