@@ -88,6 +88,85 @@ pub struct JsPluginInput {
     body_encoding: Option<String>,
 }
 
+/// Run `on_response` interceptors for the current response (shared by streaming
+/// and non-streaming plugin paths). Mutates `plugin_status` and `plugin_headers`
+/// in place based on interceptor responses.
+async fn run_on_response_interceptors(
+    op: &OperationSchemas,
+    ctx: &mut GatewayCtx,
+    method: &str,
+    route: &str,
+    plugin_status: &mut u16,
+    plugin_headers: &mut HashMap<String, Option<String>>,
+) {
+    for hook in &op.interceptors.on_response {
+        let effective_headers: HashMap<String, String> = plugin_headers
+            .iter()
+            .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
+            .collect();
+        let input = response_input_from_parts(
+            http::StatusCode::from_u16(*plugin_status).unwrap_or(http::StatusCode::OK),
+            method,
+            route,
+            &headers_hashmap_to_http_headermap(&effective_headers),
+            op.operation_meta.clone(),
+            ctx.rate_limit_state.clone(),
+            serde_json::Value::Object(ctx.user_ctx.clone()),
+        );
+        let mut input_json = serde_json::to_value(&input).unwrap();
+        merge_options(&mut input_json, hook.options.as_ref());
+        let span = tracing::debug_span!(
+            "interceptor_call",
+            hook = "on_response",
+            function = hook.function.as_str()
+        );
+        match call_interceptor(
+            hook.runtime.as_ref(),
+            &hook.function,
+            input_json,
+            None,
+            hook.timeout,
+        )
+        .instrument(span)
+        .await
+        {
+            Ok((
+                InterceptorOutput::Continue {
+                    status,
+                    headers,
+                    ctx: returned_ctx,
+                },
+                _,
+            )) => {
+                if let Some(s) = status {
+                    *plugin_status = s;
+                }
+                if let Some(mods) = headers {
+                    for (k, v) in mods {
+                        match v {
+                            Some(val) => {
+                                plugin_headers.insert(k, Some(val));
+                            }
+                            None => {
+                                plugin_headers.remove(&k);
+                            }
+                        }
+                    }
+                }
+                merge_ctx(&mut ctx.user_ctx, returned_ctx);
+            }
+            Ok((InterceptorOutput::Respond { .. }, _)) => {
+                log::warn!(
+                    "on_response interceptor returned 'respond' action for plugin route -- ignored"
+                );
+            }
+            Err(e) => {
+                log::error!("on_response interceptor error: {}", e);
+            }
+        }
+    }
+}
+
 /// Handle a plugin route request end-to-end:
 /// reads the request body, runs interceptors, calls the plugin handle(), runs response
 /// interceptors, and writes the response to the downstream session.
@@ -347,72 +426,15 @@ pub(crate) async fn dispatch(
         merge_ctx(&mut ctx.user_ctx, parsed.ctx);
 
         // Step C: on_response interceptors (run normally — they don't use body)
-        for hook in &op.interceptors.on_response {
-            let effective_headers: HashMap<String, String> = plugin_headers
-                .iter()
-                .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
-                .collect();
-            let input = response_input_from_parts(
-                http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
-                &method,
-                &route,
-                &headers_hashmap_to_http_headermap(&effective_headers),
-                op.operation_meta.clone(),
-                ctx.rate_limit_state.clone(),
-                serde_json::Value::Object(ctx.user_ctx.clone()),
-            );
-            let mut input_json = serde_json::to_value(&input).unwrap();
-            merge_options(&mut input_json, hook.options.as_ref());
-            let span = tracing::debug_span!(
-                "interceptor_call",
-                hook = "on_response",
-                function = hook.function.as_str()
-            );
-            match call_interceptor(
-                hook.runtime.as_ref(),
-                &hook.function,
-                input_json,
-                None,
-                hook.timeout,
-            )
-            .instrument(span)
-            .await
-            {
-                Ok((
-                    InterceptorOutput::Continue {
-                        status,
-                        headers,
-                        ctx: returned_ctx,
-                    },
-                    _,
-                )) => {
-                    if let Some(s) = status {
-                        plugin_status = s;
-                    }
-                    if let Some(mods) = headers {
-                        for (k, v) in mods {
-                            match v {
-                                Some(val) => {
-                                    plugin_headers.insert(k, Some(val));
-                                }
-                                None => {
-                                    plugin_headers.remove(&k);
-                                }
-                            }
-                        }
-                    }
-                    merge_ctx(&mut ctx.user_ctx, returned_ctx);
-                }
-                Ok((InterceptorOutput::Respond { .. }, _)) => {
-                    log::warn!(
-                        "on_response interceptor returned 'respond' action for plugin route -- ignored"
-                    );
-                }
-                Err(e) => {
-                    log::error!("on_response interceptor error: {}", e);
-                }
-            }
-        }
+        run_on_response_interceptors(
+            op,
+            ctx,
+            &method,
+            &route,
+            &mut plugin_status,
+            &mut plugin_headers,
+        )
+        .await;
 
         // Step D: on_response_body interceptors are SKIPPED for streaming routes.
         // Streaming has no full body buffer for interceptors to transform.
@@ -539,72 +561,15 @@ pub(crate) async fn dispatch(
         merge_ctx(&mut ctx.user_ctx, plugin_returned_ctx);
 
         // Step C: on_response interceptors
-        for hook in &op.interceptors.on_response {
-            let effective_headers: HashMap<String, String> = plugin_headers
-                .iter()
-                .filter_map(|(k, v)| v.as_ref().map(|val| (k.clone(), val.clone())))
-                .collect();
-            let input = response_input_from_parts(
-                http::StatusCode::from_u16(plugin_status).unwrap_or(http::StatusCode::OK),
-                &method,
-                &route,
-                &headers_hashmap_to_http_headermap(&effective_headers),
-                op.operation_meta.clone(),
-                ctx.rate_limit_state.clone(),
-                serde_json::Value::Object(ctx.user_ctx.clone()),
-            );
-            let mut input_json = serde_json::to_value(&input).unwrap();
-            merge_options(&mut input_json, hook.options.as_ref());
-            let span = tracing::debug_span!(
-                "interceptor_call",
-                hook = "on_response",
-                function = hook.function.as_str()
-            );
-            match call_interceptor(
-                hook.runtime.as_ref(),
-                &hook.function,
-                input_json,
-                None,
-                hook.timeout,
-            )
-            .instrument(span)
-            .await
-            {
-                Ok((
-                    InterceptorOutput::Continue {
-                        status,
-                        headers,
-                        ctx: returned_ctx,
-                    },
-                    _,
-                )) => {
-                    if let Some(s) = status {
-                        plugin_status = s;
-                    }
-                    if let Some(mods) = headers {
-                        for (k, v) in mods {
-                            match v {
-                                Some(val) => {
-                                    plugin_headers.insert(k, Some(val));
-                                }
-                                None => {
-                                    plugin_headers.remove(&k);
-                                }
-                            }
-                        }
-                    }
-                    merge_ctx(&mut ctx.user_ctx, returned_ctx);
-                }
-                Ok((InterceptorOutput::Respond { .. }, _)) => {
-                    log::warn!(
-                        "on_response interceptor returned 'respond' action for plugin route -- ignored"
-                    );
-                }
-                Err(e) => {
-                    log::error!("on_response interceptor error: {}", e);
-                }
-            }
-        }
+        run_on_response_interceptors(
+            op,
+            ctx,
+            &method,
+            &route,
+            &mut plugin_status,
+            &mut plugin_headers,
+        )
+        .await;
 
         // Step D: on_response_body interceptors
         let mut response_body_bytes = plugin_body.map(js_body_to_bytes).unwrap_or_default();

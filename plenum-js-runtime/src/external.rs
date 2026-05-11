@@ -87,6 +87,122 @@ impl Drop for ExternalRuntime {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Internal helpers: body merging, request writing, stream reader
+// ---------------------------------------------------------------------------
+
+/// Merge a `JsBody` into a JSON arg under the `"body"` key (and `"bodyEncoding"`
+/// for binary), matching the convention used by `call()` and `call_stream()`.
+fn merge_body_into_arg(arg: &mut serde_json::Value, body: &JsBody) {
+    match body {
+        JsBody::Json(v) => {
+            if let Some(obj) = arg.as_object_mut() {
+                obj.insert("body".to_string(), v.clone());
+            }
+        }
+        JsBody::Text(s) => {
+            if let Some(obj) = arg.as_object_mut() {
+                obj.insert("body".to_string(), serde_json::Value::String(s.clone()));
+            }
+        }
+        JsBody::Bytes(bytes) => {
+            use base64::Engine as _;
+            let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+            if let Some(obj) = arg.as_object_mut() {
+                obj.insert("body".to_string(), serde_json::Value::String(encoded));
+                obj.insert(
+                    "bodyEncoding".to_string(),
+                    serde_json::Value::String("base64".to_string()),
+                );
+            }
+        }
+    }
+}
+
+/// Serialize a `PluginRequest` and write it as a length-prefixed msgpack frame.
+async fn write_request(stream: &mut UnixStream, request: &PluginRequest) -> Result<(), JsError> {
+    let payload = rmp_serde::to_vec_named(request)
+        .map_err(|e| JsError::ExecutionError(format!("msgpack encode error: {e}")))?;
+
+    stream
+        .write_all(&(payload.len() as u32).to_be_bytes())
+        .await
+        .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
+    stream
+        .write_all(&payload)
+        .await
+        .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
+    stream
+        .flush()
+        .await
+        .map_err(|e| JsError::ExecutionError(format!("socket flush error: {e}")))?;
+
+    Ok(())
+}
+
+/// Spawn a background task that reads multi-frame msgpack responses from a
+/// UnixStream and feeds them as `StreamChunk` items into an mpsc channel.
+fn spawn_stream_reader(stream: UnixStream, id: u64, timeout: Duration) -> StreamReceiver {
+    let (tx, rx) = tokio::sync::mpsc::channel(32);
+
+    tokio::spawn(async move {
+        let mut stream = stream;
+        let mut stream_active = true;
+        let mut last_error: Option<String> = None;
+
+        while stream_active {
+            let chunk_result = tokio::time::timeout(timeout, async {
+                ExternalRuntime::read_frame(&mut stream, id).await
+            })
+            .await;
+
+            match chunk_result {
+                Ok(Ok(value)) => {
+                    if value
+                        .as_object()
+                        .and_then(|m| m.get("done"))
+                        .and_then(|v| v.as_bool())
+                        == Some(true)
+                    {
+                        let _ = tx.send(Ok(StreamChunk::Done)).await;
+                        stream_active = false;
+                    } else {
+                        // If there was a pending error frame, send it before the next chunk.
+                        if let Some(ref err) = last_error {
+                            let _ = tx.send(Err(JsError::ExecutionError(err.clone()))).await;
+                            last_error = None;
+                        }
+
+                        let chunk_bytes = value
+                            .as_object()
+                            .and_then(|m| m.get("chunk"))
+                            .and_then(|v| {
+                                v.as_str()
+                                    .map(|s| s.as_bytes().to_vec())
+                                    .or_else(|| serde_json::to_vec(v).ok())
+                            })
+                            .unwrap_or_default();
+
+                        if tx.send(Ok(StreamChunk::Chunk(chunk_bytes))).await.is_err() {
+                            stream_active = false;
+                        }
+                    }
+                }
+                Ok(Err(e)) => {
+                    let _ = tx.send(Err(e)).await;
+                    stream_active = false;
+                }
+                Err(_elapsed) => {
+                    let _ = tx.send(Err(JsError::Timeout)).await;
+                    stream_active = false;
+                }
+            }
+        }
+    });
+
+    rx
+}
+
 impl ExternalRuntime {
     /// Send a request and read the response, respawning the process on socket errors.
     async fn send_recv(
@@ -184,23 +300,7 @@ impl ExternalRuntime {
             method: method.to_string(),
             params,
         };
-
-        let payload = rmp_serde::to_vec_named(&request)
-            .map_err(|e| JsError::ExecutionError(format!("msgpack encode error: {e}")))?;
-
-        // Write length prefix + payload.
-        stream
-            .write_all(&(payload.len() as u32).to_be_bytes())
-            .await
-            .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
-        stream
-            .write_all(&payload)
-            .await
-            .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| JsError::ExecutionError(format!("socket flush error: {e}")))?;
+        write_request(stream, &request).await?;
 
         // Read response frame and map "not found" errors.
         match Self::read_frame(stream, id).await {
@@ -239,20 +339,7 @@ impl ExternalRuntime {
             method: method.to_string(),
             params: arg,
         };
-        let payload = rmp_serde::to_vec_named(&request)
-            .map_err(|e| JsError::ExecutionError(format!("msgpack encode error: {e}")))?;
-        stream
-            .write_all(&(payload.len() as u32).to_be_bytes())
-            .await
-            .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
-        stream
-            .write_all(&payload)
-            .await
-            .map_err(|e| JsError::ExecutionError(format!("socket write error: {e}")))?;
-        stream
-            .flush()
-            .await
-            .map_err(|e| JsError::ExecutionError(format!("socket flush error: {e}")))?;
+        write_request(stream, &request).await?;
 
         // Read metadata frame — should contain {status, headers, _stream: true}.
         let meta_value = Self::read_frame(stream, id).await?;
@@ -341,38 +428,9 @@ impl PluginRuntime for ExternalRuntime {
         body: Option<JsBody>,
         timeout: Duration,
     ) -> Result<CallOutput, JsError> {
-        // Merge the incoming body into the params object so JS can read it as
-        // `params.body`. For interceptors this is the request/response body; for
-        // plugins it is added to the input as `body` before `call()` is invoked.
+        // Merge body into arg for JS consumption.
         if let Some(ref b) = body {
-            match b {
-                JsBody::Json(v) => {
-                    if let Some(obj) = arg.as_object_mut() {
-                        obj.insert("body".to_string(), v.clone());
-                    }
-                }
-                JsBody::Text(s) => {
-                    if let Some(obj) = arg.as_object_mut() {
-                        obj.insert("body".to_string(), serde_json::Value::String(s.clone()));
-                    }
-                }
-                JsBody::Bytes(bytes) => {
-                    // Binary bodies (e.g. application/octet-stream, image/*) cannot
-                    // be represented directly in JSON. Following the AWS API Gateway
-                    // convention, we base64-encode the body and set a `bodyEncoding`
-                    // flag so JS interceptors can opt into decoding with
-                    // `Buffer.from(params.body, 'base64')`.
-                    use base64::Engine as _;
-                    let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-                    if let Some(obj) = arg.as_object_mut() {
-                        obj.insert("body".to_string(), serde_json::Value::String(encoded));
-                        obj.insert(
-                            "bodyEncoding".to_string(),
-                            serde_json::Value::String("base64".to_string()),
-                        );
-                    }
-                }
-            }
+            merge_body_into_arg(&mut arg, b);
         }
 
         let mut result = tokio::time::timeout(timeout, self.send_recv(function_name, arg))
@@ -451,57 +509,7 @@ impl PluginRuntime for ExternalRuntime {
                 // Drop the Mutex lock — the background task owns the stream directly.
                 drop(conn);
 
-                // Create channel and spawn background task.
-                let (tx, rx) = tokio::sync::mpsc::channel::<Result<StreamChunk, JsError>>(32);
-
-                tokio::spawn(async move {
-                    let mut stream = stream;
-                    let mut stream_active = true;
-
-                    while stream_active {
-                        let chunk_result = tokio::time::timeout(timeout, async {
-                            Self::read_frame(&mut stream, id).await
-                        })
-                        .await;
-
-                        match chunk_result {
-                            Ok(Ok(value)) => {
-                                if value
-                                    .as_object()
-                                    .and_then(|m| m.get("done"))
-                                    .and_then(|v| v.as_bool())
-                                    == Some(true)
-                                {
-                                    let _ = tx.send(Ok(StreamChunk::Done)).await;
-                                    stream_active = false;
-                                } else {
-                                    let chunk_bytes = value
-                                        .as_object()
-                                        .and_then(|m| m.get("chunk"))
-                                        .and_then(|v| {
-                                            v.as_str()
-                                                .map(|s| s.as_bytes().to_vec())
-                                                .or_else(|| serde_json::to_vec(v).ok())
-                                        })
-                                        .unwrap_or_default();
-
-                                    if tx.send(Ok(StreamChunk::Chunk(chunk_bytes))).await.is_err() {
-                                        stream_active = false;
-                                    }
-                                }
-                            }
-                            Ok(Err(e)) => {
-                                let _ = tx.send(Err(e)).await;
-                                stream_active = false;
-                            }
-                            Err(_elapsed) => {
-                                let _ = tx.send(Err(JsError::Timeout)).await;
-                                stream_active = false;
-                            }
-                        }
-                    }
-                });
-
+                let rx = spawn_stream_reader(stream, id, timeout);
                 Ok((call_output, rx))
             }
             Err(e) => {
@@ -549,51 +557,7 @@ impl PluginRuntime for ExternalRuntime {
                 })?;
                 drop(conn);
 
-                let (tx, rx) = tokio::sync::mpsc::channel::<Result<StreamChunk, JsError>>(32);
-
-                tokio::spawn(async move {
-                    let mut stream = stream;
-                    loop {
-                        let chunk_result = tokio::time::timeout(timeout, async {
-                            Self::read_frame(&mut stream, id).await
-                        })
-                        .await;
-                        match chunk_result {
-                            Ok(Ok(value)) => {
-                                if value
-                                    .as_object()
-                                    .and_then(|m| m.get("done"))
-                                    .and_then(|v| v.as_bool())
-                                    == Some(true)
-                                {
-                                    let _ = tx.send(Ok(StreamChunk::Done)).await;
-                                    return;
-                                }
-                                let chunk_bytes = value
-                                    .as_object()
-                                    .and_then(|m| m.get("chunk"))
-                                    .and_then(|v| {
-                                        v.as_str()
-                                            .map(|s| s.as_bytes().to_vec())
-                                            .or_else(|| serde_json::to_vec(v).ok())
-                                    })
-                                    .unwrap_or_default();
-                                if tx.send(Ok(StreamChunk::Chunk(chunk_bytes))).await.is_err() {
-                                    return;
-                                }
-                            }
-                            Ok(Err(e)) => {
-                                let _ = tx.send(Err(e)).await;
-                                return;
-                            }
-                            Err(_elapsed) => {
-                                let _ = tx.send(Err(JsError::Timeout)).await;
-                                return;
-                            }
-                        }
-                    }
-                });
-
+                let rx = spawn_stream_reader(stream, id, timeout);
                 Ok((call_output, rx))
             }
         }
