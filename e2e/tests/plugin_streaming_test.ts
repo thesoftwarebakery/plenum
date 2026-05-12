@@ -208,6 +208,51 @@ describe("plugin upstream: streaming error mid-stream", () => {
   });
 });
 
+describe("plugin upstream: concurrent streaming requests", () => {
+  let network: StartedNetwork;
+  let gateway: GatewayContainer;
+
+  beforeAll(async () => {
+    network = await new Network().start();
+    gateway = await startGateway({
+      network,
+      fixtures: CHUNK_STREAM_FIXTURES,
+    });
+  });
+
+  afterAll(async () => {
+    await gateway?.container.stop();
+    await network?.stop();
+  });
+
+  test("multiple concurrent streaming requests all complete correctly", async () => {
+    const N = 5;
+    const requests = Array.from({ length: N }, () =>
+      fetch(`${gateway.baseUrl}/echo`)
+    );
+    const responses = await Promise.all(requests);
+    for (const resp of responses) {
+      expect(resp.status).toEqual(200);
+      const body = await resp.text();
+      expect(body).toEqual("chunk-0\nchunk-1\nchunk-2\nchunk-3\nchunk-4\n");
+    }
+  });
+
+  test("mixed concurrent streaming and non-streaming requests all complete", async () => {
+    // Streaming and regular plugin calls share the same IPC socket;
+    // verify they do not block or corrupt each other.
+    const streaming = Array.from({ length: 3 }, () =>
+      fetch(`${gateway.baseUrl}/echo`)
+    );
+    const responses = await Promise.all(streaming);
+    for (const resp of responses) {
+      expect(resp.status).toEqual(200);
+      const body = await resp.text();
+      expect(body).toEqual("chunk-0\nchunk-1\nchunk-2\nchunk-3\nchunk-4\n");
+    }
+  });
+});
+
 describe("plugin upstream: streaming with POST body", () => {
   let network: StartedNetwork;
   let gateway: GatewayContainer;

@@ -2424,12 +2424,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "plenum-ipc"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "rmp-serde",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "plenum-js-runtime"
 version = "0.3.0"
 dependencies = [
  "async-trait",
  "base64",
  "log",
+ "plenum-ipc",
  "plenum-sandbox",
  "rmp-serde",
  "serde",
