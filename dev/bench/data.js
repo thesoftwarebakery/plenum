@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1778497800930,
+  "lastUpdate": 1778615358112,
   "repoUrl": "https://github.com/thesoftwarebakery/plenum",
   "entries": {
     "Benchmark": [
@@ -3384,6 +3384,78 @@ window.BENCHMARK_DATA = {
             "value": 4.418,
             "unit": "ms",
             "extra": "n=7297"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "3245509+georgewaters@users.noreply.github.com",
+            "name": "George Waters",
+            "username": "georgewaters"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "00fda03872bb3baaa58efcb9ed8d41df67f514e3",
+          "message": "Merge pull request #170 from thesoftwarebakery/feature/plugin-streaming\n\nfeat: support streaming responses from plugin upstreams",
+          "timestamp": "2026-05-12T20:44:40+01:00",
+          "tree_id": "145483424bd126243469992590e41e40b059ba64",
+          "url": "https://github.com/thesoftwarebakery/plenum/commit/00fda03872bb3baaa58efcb9ed8d41df67f514e3"
+        },
+        "date": 1778615357786,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "passthrough mean latency",
+            "value": 0.825,
+            "unit": "ms",
+            "extra": "n=12126"
+          },
+          {
+            "name": "passthrough p99 latency",
+            "value": 2.705,
+            "unit": "ms",
+            "extra": "n=12126"
+          },
+          {
+            "name": "add-header-interceptor mean latency",
+            "value": 0.929,
+            "unit": "ms",
+            "extra": "n=10768"
+          },
+          {
+            "name": "add-header-interceptor p99 latency",
+            "value": 2.069,
+            "unit": "ms",
+            "extra": "n=10768"
+          },
+          {
+            "name": "all-hooks mean latency",
+            "value": 1.339,
+            "unit": "ms",
+            "extra": "n=7471"
+          },
+          {
+            "name": "all-hooks p99 latency",
+            "value": 2.256,
+            "unit": "ms",
+            "extra": "n=7471"
+          },
+          {
+            "name": "response-body-interceptor mean latency",
+            "value": 1.23,
+            "unit": "ms",
+            "extra": "n=8130"
+          },
+          {
+            "name": "response-body-interceptor p99 latency",
+            "value": 3.669,
+            "unit": "ms",
+            "extra": "n=8130"
           }
         ]
       }
