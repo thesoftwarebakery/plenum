@@ -16,6 +16,9 @@ pub(crate) use builder::build_upstream;
 pub struct PluginHandle {
     pub runtime: Arc<dyn PluginRuntime>,
     pub timeout: Duration,
+    /// When true, the plugin's `handle()` function returns an async generator
+    /// and response chunks are streamed to the client as they arrive.
+    pub streaming: bool,
 }
 
 impl std::fmt::Debug for PluginHandle {

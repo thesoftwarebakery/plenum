@@ -124,6 +124,8 @@ struct PluginUpstreamFields {
     permissions: Option<super::PermissionsConfig>,
     #[serde(default)]
     timeout: Option<ConfigDuration>,
+    #[serde(default)]
+    streaming: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -167,6 +169,7 @@ pub enum UpstreamConfig {
         options: Option<Value>,
         permissions: Option<super::PermissionsConfig>,
         timeout: Option<ConfigDuration>,
+        streaming: bool,
     },
     Static {
         status: u16,
@@ -307,6 +310,7 @@ impl<'de> serde::Deserialize<'de> for UpstreamConfig {
                     options: fields.options,
                     permissions: fields.permissions,
                     timeout: fields.timeout,
+                    streaming: fields.streaming,
                 })
             }
             "static" => {
@@ -442,12 +446,14 @@ mod tests {
                 options,
                 permissions,
                 timeout,
+                streaming,
             } => {
                 assert_eq!(plugin, "my-plugin");
                 assert!(options.is_some());
                 assert_eq!(options.unwrap()["key"], "value");
                 assert!(permissions.is_none());
                 assert!(timeout.is_none());
+                assert!(!streaming);
             }
             _ => panic!("expected Plugin variant"),
         }
@@ -466,11 +472,13 @@ mod tests {
                 options,
                 permissions,
                 timeout,
+                streaming,
             } => {
                 assert_eq!(plugin, "my-plugin");
                 assert!(options.is_none());
                 assert!(permissions.is_none());
                 assert!(timeout.is_none());
+                assert!(!streaming);
             }
             _ => panic!("expected Plugin variant"),
         }
@@ -490,11 +498,13 @@ mod tests {
                 options,
                 permissions,
                 timeout,
+                streaming,
             } => {
                 assert_eq!(plugin, "my-plugin");
                 assert!(options.is_none());
                 assert!(permissions.is_none());
                 assert_eq!(timeout, Some(ConfigDuration::from_millis(7500)));
+                assert!(!streaming);
             }
             _ => panic!("expected Plugin variant"),
         }

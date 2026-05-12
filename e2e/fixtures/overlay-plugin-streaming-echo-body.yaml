@@ -1,0 +1,11 @@
+overlay: 1.1.0
+info:
+  title: Plugin streaming with POST body echo
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        kind: "plugin"
+        plugin: "./plugins/stream-echo-body.js"
+        streaming: true

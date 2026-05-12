@@ -128,7 +128,62 @@ function handleConnection(conn) {
           };
         } else {
           const result = await fn_(params);
-          response = { id, result: result ?? {} };
+
+          // Check if the result is an async generator (async function*).
+          if (result && typeof result[Symbol.asyncIterator] === "function") {
+            // Streaming path: iterate the generator and send multi-frame response.
+            const iterator = result[Symbol.asyncIterator]();
+            let firstChunk;
+            try {
+              firstChunk = await iterator.next();
+            } catch (e) {
+              const msg = e && e.message ? e.message : String(e);
+              response = { id, error: `stream metadata error: ${msg}` };
+            }
+
+            if (response) {
+              // Error occurred getting metadata — fall through to sendResponse.
+            } else if (firstChunk.done) {
+              // Generator yielded nothing — send empty response.
+              response = { id, result: {} };
+            } else {
+              const meta = firstChunk.value;
+              // Send metadata frame with status and headers.
+              sendStreamFrame(conn, id, {
+                status: meta.status ?? 200,
+                headers: meta.headers ?? {},
+                _stream: true,
+              });
+
+              let streamError = null;
+              while (true) {
+                let chunk;
+                try {
+                  chunk = await iterator.next();
+                } catch (e) {
+                  streamError = e && e.message ? e.message : String(e);
+                  break;
+                }
+                if (chunk.done) break;
+
+                const chunkData = chunk.value.body ?? chunk.value;
+                await sendRawFrame(conn, { id, result: { chunk: chunkData } });
+              }
+
+              if (streamError) {
+                // Send error frame then done.
+                sendStreamFrame(conn, id, { error: streamError });
+              }
+
+              // Send done frame.
+              sendStreamFrame(conn, id, { done: true });
+
+              // Suppress the normal sendResponse — we sent everything already.
+              response = null;
+            }
+          } else {
+            response = { id, result: result ?? {} };
+          }
         }
       } catch (e) {
         const stack = e && e.stack ? e.stack : String(e);
@@ -139,7 +194,9 @@ function handleConnection(conn) {
         checkShutdown();
       }
 
-      sendResponse(conn, response);
+      if (response !== null) {
+        sendResponse(conn, response);
+      }
     }
   }
 
@@ -154,6 +211,36 @@ function sendResponse(conn, response) {
   lenBuf.writeUInt32BE(respPayload.length, 0);
   conn.write(lenBuf);
   conn.write(respPayload);
+}
+
+// Send a streaming frame (metadata, done, or error) via the normal pack+sanitize path.
+function sendStreamFrame(conn, id, result) {
+  sendResponse(conn, { id, result });
+}
+
+// Write a length-prefixed frame to the socket, waiting for drain if the
+// kernel buffer is full. This prevents unbounded memory growth in the Node.js
+// process when the Rust reader is slower than the generator.
+function writeFrameWithBackpressure(conn, payload) {
+  return new Promise((resolve, reject) => {
+    const lenBuf = Buffer.allocUnsafe(4);
+    lenBuf.writeUInt32BE(payload.length, 0);
+    conn.write(lenBuf);
+    const ok = conn.write(payload);
+    if (ok) {
+      resolve();
+    } else {
+      conn.once("drain", resolve);
+      conn.once("error", reject);
+    }
+  });
+}
+
+// Send a binary-safe frame without sanitize (for chunk data that may contain binary).
+// Returns a promise that resolves when the socket is ready for more data.
+function sendRawFrame(conn, rawBody) {
+  const respPayload = packr.pack(rawBody);
+  return writeFrameWithBackpressure(conn, respPayload);
 }
 
 function checkShutdown() {

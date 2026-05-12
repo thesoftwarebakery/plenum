@@ -1,0 +1,17 @@
+overlay: 1.1.0
+info:
+  title: Plugin streaming with on_response interceptor
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        kind: "plugin"
+        plugin: "./plugins/stream.js"
+        streaming: true
+  - target: $.paths[*].get
+    update:
+      x-plenum-interceptor:
+        - module: "./interceptors/on-response-modify.js"
+          hook: on_response
+          function: onResponse
