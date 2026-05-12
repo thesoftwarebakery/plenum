@@ -167,7 +167,7 @@ function handleConnection(conn) {
                 if (chunk.done) break;
 
                 const chunkData = chunk.value.body ?? chunk.value;
-                sendRawFrame(conn, { id, result: { chunk: chunkData } });
+                await sendRawFrame(conn, { id, result: { chunk: chunkData } });
               }
 
               if (streamError) {
@@ -218,13 +218,29 @@ function sendStreamFrame(conn, id, result) {
   sendResponse(conn, { id, result });
 }
 
+// Write a length-prefixed frame to the socket, waiting for drain if the
+// kernel buffer is full. This prevents unbounded memory growth in the Node.js
+// process when the Rust reader is slower than the generator.
+function writeFrameWithBackpressure(conn, payload) {
+  return new Promise((resolve, reject) => {
+    const lenBuf = Buffer.allocUnsafe(4);
+    lenBuf.writeUInt32BE(payload.length, 0);
+    conn.write(lenBuf);
+    const ok = conn.write(payload);
+    if (ok) {
+      resolve();
+    } else {
+      conn.once("drain", resolve);
+      conn.once("error", reject);
+    }
+  });
+}
+
 // Send a binary-safe frame without sanitize (for chunk data that may contain binary).
+// Returns a promise that resolves when the socket is ready for more data.
 function sendRawFrame(conn, rawBody) {
   const respPayload = packr.pack(rawBody);
-  const lenBuf = Buffer.allocUnsafe(4);
-  lenBuf.writeUInt32BE(respPayload.length, 0);
-  conn.write(lenBuf);
-  conn.write(respPayload);
+  return writeFrameWithBackpressure(conn, respPayload);
 }
 
 function checkShutdown() {
