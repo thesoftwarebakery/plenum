@@ -2,7 +2,7 @@
 //!
 //! # Architecture
 //!
-//! Two background tasks share a `pending` map (`Arc<Mutex<HashMap<u64, Registration>>>`):
+//! Two background tasks share a `pending` map (`Arc<DashMap<u64, Registration>>`):
 //!
 //! ```text
 //!  caller A ──send_recv──┐
@@ -10,7 +10,7 @@
 //!  caller C ─send_stream─┴──────────────────> │ register + write  │──> FramedWrite
 //!                                              └───────────────────┘
 //!
-//!                         pending: Arc<Mutex<HashMap<id, Registration>>>
+//!                         pending: Arc<DashMap<id, Registration>>
 //!
 //!  FramedRead ──────────> ┌─── reader task ───┐
 //!                         │ extract id, route  │──> oneshot (A, B) or mpsc (C)
@@ -19,14 +19,20 @@
 //!
 //! The writer inserts into `pending` **before** writing to the socket, so a
 //! response can never arrive for an unregistered id.
+//!
+//! Stream registrations stay in the map permanently (only removed on send
+//! failure or connection close). The reader task clones the mpsc sender and
+//! drops the DashMap shard lock **before** calling `.await` — holding a
+//! DashMap `Ref` across `.await` is unsound (blocks the shard for an
+//! unbounded duration).
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::codec::{FramedRead, FramedWrite};
 
 use crate::codec::MsgpackCodec;
@@ -55,7 +61,7 @@ enum Command {
     },
 }
 
-type Pending = Arc<Mutex<HashMap<u64, Registration>>>;
+type Pending = Arc<DashMap<u64, Registration>>;
 
 // ---------------------------------------------------------------------------
 // Public handle
@@ -93,7 +99,7 @@ impl MultiplexedTransport {
 
         let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(256);
         let alive = Arc::new(AtomicBool::new(true));
-        let pending: Pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending: Pending = Arc::new(DashMap::new());
 
         tokio::spawn(writer_task(cmd_rx, framed_write, pending.clone()));
         tokio::spawn(reader_task(framed_read, pending, alive.clone()));
@@ -131,6 +137,10 @@ impl MultiplexedTransport {
         &self,
         frame: Frame,
     ) -> Result<mpsc::Receiver<Result<Frame, TransportError>>, TransportError> {
+        // Channel capacity: when full, the reader task blocks on send until
+        // the consumer drains it. The reader is shared across all connections
+        // so a slow consumer stalls routing for everyone. 32 is sufficient for
+        // typical plugin streaming workloads (consumer reads eagerly).
         let (tx, rx) = mpsc::channel(32);
         self.cmd_tx
             .send(Command::SendAndRegister {
@@ -164,11 +174,11 @@ async fn writer_task<W: AsyncWrite + Send + 'static>(
         let Command::SendAndRegister { payload, id, reg } = cmd;
 
         // Register before writing so no response can arrive unregistered.
-        pending.lock().await.insert(id, reg);
+        pending.insert(id, reg);
 
         if let Err(e) = sink.send(payload).await {
             // Write failed — remove the registration and notify the caller.
-            if let Some(reg) = pending.lock().await.remove(&id) {
+            if let Some((_, reg)) = pending.remove(&id) {
                 notify_error(reg, e);
             }
         }
@@ -190,21 +200,33 @@ async fn reader_task<R: AsyncRead + Send + 'static>(
                     None => continue,
                 };
 
-                // Remove to get ownership; re-insert below for stream registrations.
-                let reg = pending.lock().await.remove(&id);
+                let frame = Frame { id, payload: value };
 
-                if let Some(reg) = reg {
-                    let frame = Frame { id, payload: value };
-                    match reg {
-                        Registration::Oneshot(tx) => {
-                            let _ = tx.send(Ok(frame));
+                // Peek at the registration type without removing.
+                // For Oneshot: remove and resolve once.
+                // For Stream: clone the sender, drop the shard lock, then
+                // send. Stream registrations stay in the map until the send
+                // fails (receiver dropped) or the connection closes.
+                //
+                // SAFETY: the shard read lock from `pending.get()` must be
+                // released (by dropping the Ref) before any `.await` —
+                // DashMap's parking_lot guards are blocking and must not be
+                // held across yield points.
+                if let Some(entry) = pending.get(&id) {
+                    match entry.value() {
+                        Registration::Oneshot(_) => {
+                            drop(entry); // release shard read lock
+                            if let Some((_, Registration::Oneshot(tx))) = pending.remove(&id) {
+                                let _ = tx.send(Ok(frame));
+                            }
                         }
                         Registration::Stream(tx) => {
-                            // Re-insert the sender so subsequent frames are routed.
-                            if tx.send(Ok(frame)).await.is_ok() {
-                                pending.lock().await.insert(id, Registration::Stream(tx));
+                            let tx = tx.clone();
+                            drop(entry); // release shard read lock before .await
+                            if tx.send(Ok(frame)).await.is_err() {
+                                // Receiver was dropped — stream complete, clean up.
+                                pending.remove(&id);
                             }
-                            // If send fails the receiver was dropped — stream done.
                         }
                     }
                 }
@@ -238,8 +260,14 @@ fn notify_error(reg: Registration, error: TransportError) {
 }
 
 async fn drain_pending(pending: &Pending, error: TransportError) {
-    for (_, reg) in pending.lock().await.drain() {
-        notify_error(reg, error.clone());
+    // Collect keys first to avoid holding a shard lock during notification
+    // (notify_error for Stream entries calls try_send, which is non-blocking,
+    // but Oneshot notification is synchronous and safe).
+    let keys: Vec<u64> = pending.iter().map(|e| *e.key()).collect();
+    for key in keys {
+        if let Some((_, reg)) = pending.remove(&key) {
+            notify_error(reg, error.clone());
+        }
     }
 }
 
@@ -453,5 +481,220 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
         assert!(!transport.is_alive());
+    }
+
+    // -----------------------------------------------------------------------
+    // Throughput benchmarks — run with:
+    //   cargo test --package plenum-ipc -- --nocapture bench_
+    // -----------------------------------------------------------------------
+
+    /// Server that echoes every request back unchanged; handles concurrent
+    /// requests in a loop.
+    async fn echo_server_multi(server_stream: UnixStream) {
+        let (r, w) = tokio::io::split(server_stream);
+        let mut read = FramedRead::new(r, MsgpackCodec);
+        let mut write = FramedWrite::new(w, MsgpackCodec);
+        while let Some(Ok(frame)) = read.next().await {
+            if write.send(frame).await.is_err() {
+                break;
+            }
+        }
+    }
+
+    /// Server that handles multiple sequential streaming requests; sends
+    /// `chunks` chunk frames followed by a done frame for each.
+    async fn stream_server_with_chunks(server_stream: UnixStream, chunks: usize) {
+        let (r, w) = tokio::io::split(server_stream);
+        let mut read = FramedRead::new(r, MsgpackCodec);
+        let mut write = FramedWrite::new(w, MsgpackCodec);
+        while let Some(Ok(frame)) = read.next().await {
+            let id = frame["id"].as_u64().unwrap();
+            let _ = write
+                .send(serde_json::json!({ "id": id, "result": { "_stream": true } }))
+                .await;
+            for i in 0..chunks {
+                let _ = write
+                    .send(serde_json::json!({ "id": id, "result": { "chunk": format!("chunk-{i}") } }))
+                    .await;
+            }
+            let _ = write
+                .send(serde_json::json!({ "id": id, "result": { "done": true } }))
+                .await;
+        }
+    }
+
+    /// Throughput at varying concurrency levels. Run with `--nocapture` to
+    /// see numbers. Useful for before/after comparisons.
+    #[tokio::test]
+    async fn bench_concurrent_send_recv() {
+        let concurrency_levels = [1usize, 10, 50, 100];
+        let rounds = 100;
+
+        println!("\n=== bench_concurrent_send_recv ===");
+        for &concurrency in &concurrency_levels {
+            let (client_stream, server_stream) = UnixStream::pair().unwrap();
+            tokio::spawn(echo_server_multi(server_stream));
+            let transport = MultiplexedTransport::new(client_stream);
+
+            let start = std::time::Instant::now();
+            for round in 0..rounds {
+                let handles: Vec<_> = (0..concurrency)
+                    .map(|i| {
+                        let t = transport.clone();
+                        let id = (round * concurrency + i) as u64;
+                        tokio::spawn(async move {
+                            t.send_recv(Frame {
+                                id,
+                                payload: serde_json::json!({ "id": id }),
+                            })
+                            .await
+                            .unwrap()
+                        })
+                    })
+                    .collect();
+                for h in handles {
+                    h.await.unwrap();
+                }
+            }
+            let elapsed = start.elapsed();
+            let total = concurrency * rounds;
+            println!(
+                "  concurrency {:>3}: {:>5} req in {:>8.1?} → {:>9.0} req/s",
+                concurrency,
+                total,
+                elapsed,
+                total as f64 / elapsed.as_secs_f64(),
+            );
+        }
+    }
+
+    /// Streaming throughput: sequential streams with varying chunk counts.
+    #[tokio::test]
+    async fn bench_streaming_throughput() {
+        let chunk_counts = [10usize, 50, 100];
+        let iterations = 50;
+
+        println!("\n=== bench_streaming_throughput ===");
+        for &chunks in &chunk_counts {
+            let (client_stream, server_stream) = UnixStream::pair().unwrap();
+            tokio::spawn(stream_server_with_chunks(server_stream, chunks));
+            let transport = MultiplexedTransport::new(client_stream);
+
+            let start = std::time::Instant::now();
+            for i in 0..iterations {
+                let mut rx = transport
+                    .send_stream(Frame {
+                        id: i as u64,
+                        payload: serde_json::json!({ "id": i as u64 }),
+                    })
+                    .await
+                    .unwrap();
+                // Skip metadata frame.
+                let _ = rx.recv().await.unwrap().unwrap();
+                let mut received = 0usize;
+                while let Some(Ok(f)) = rx.recv().await {
+                    if f.payload["result"]["done"].as_bool() == Some(true) {
+                        break;
+                    }
+                    received += 1;
+                }
+                assert_eq!(received, chunks);
+            }
+            let elapsed = start.elapsed();
+            let total_chunks = chunks * iterations;
+            println!(
+                "  chunks {:>3}: {:>5} chunks in {:>8.1?} → {:>9.0} chunk/s",
+                chunks,
+                total_chunks,
+                elapsed,
+                total_chunks as f64 / elapsed.as_secs_f64(),
+            );
+        }
+    }
+
+    /// Mixed load: interleaved oneshot and streaming requests.
+    #[tokio::test]
+    async fn bench_mixed_load() {
+        let concurrency = 20;
+        let rounds = 20;
+
+        println!("\n=== bench_mixed_load (concurrency={concurrency}) ===");
+
+        let (client_stream, server_stream) = UnixStream::pair().unwrap();
+        tokio::spawn(async move {
+            let (r, w) = tokio::io::split(server_stream);
+            let mut read = FramedRead::new(r, MsgpackCodec);
+            let mut write = FramedWrite::new(w, MsgpackCodec);
+            while let Some(Ok(frame)) = read.next().await {
+                let id = frame["id"].as_u64().unwrap();
+                if id % 2 == 0 {
+                    // Oneshot: echo.
+                    let _ = write.send(frame).await;
+                } else {
+                    // Stream: metadata + 5 chunks + done.
+                    let _ = write
+                        .send(serde_json::json!({ "id": id, "result": { "_stream": true } }))
+                        .await;
+                    for i in 0..5usize {
+                        let _ = write
+                            .send(serde_json::json!({ "id": id, "result": { "chunk": format!("c{i}") } }))
+                            .await;
+                    }
+                    let _ = write
+                        .send(serde_json::json!({ "id": id, "result": { "done": true } }))
+                        .await;
+                }
+            }
+        });
+
+        let transport = MultiplexedTransport::new(client_stream);
+
+        let start = std::time::Instant::now();
+        for round in 0..rounds {
+            let mut handles = vec![];
+            for i in 0..concurrency {
+                let t = transport.clone();
+                let id = (round * concurrency + i) as u64;
+                handles.push(tokio::spawn(async move {
+                    if id % 2 == 0 {
+                        t.send_recv(Frame {
+                            id,
+                            payload: serde_json::json!({ "id": id }),
+                        })
+                        .await
+                        .unwrap();
+                    } else {
+                        let mut rx = t
+                            .send_stream(Frame {
+                                id,
+                                payload: serde_json::json!({ "id": id }),
+                            })
+                            .await
+                            .unwrap();
+                        // Skip metadata.
+                        let _ = rx.recv().await.unwrap().unwrap();
+                        let mut count = 0usize;
+                        while let Some(Ok(f)) = rx.recv().await {
+                            if f.payload["result"]["done"].as_bool() == Some(true) {
+                                break;
+                            }
+                            count += 1;
+                        }
+                        assert_eq!(count, 5);
+                    }
+                }));
+            }
+            for h in handles {
+                h.await.unwrap();
+            }
+        }
+        let elapsed = start.elapsed();
+        let total = concurrency * rounds;
+        println!(
+            "  {:>5} mixed req in {:>8.1?} → {:>9.0} req/s",
+            total,
+            elapsed,
+            total as f64 / elapsed.as_secs_f64(),
+        );
     }
 }

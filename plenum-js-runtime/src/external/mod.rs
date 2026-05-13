@@ -13,9 +13,11 @@ pub use process::{locate_interceptor, locate_plugin, locate_server_script};
 
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
+use arc_swap::ArcSwap;
 use plenum_ipc::{Frame, MultiplexedTransport, TransportError};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
@@ -35,22 +37,23 @@ struct PluginRequest {
     params: serde_json::Value,
 }
 
-/// Live connection state — replaced atomically on respawn.
-struct RuntimeState {
-    transport: MultiplexedTransport,
+/// Process-level state that changes only on respawn (infrequent). Protected
+/// by an async Mutex so the respawn path can `await` inside the lock.
+struct RespawnState {
     child: tokio::process::Child,
     socket_path: PathBuf,
-    /// Monotonic counter incremented on every successful respawn. Used to
-    /// ensure only one concurrent caller triggers a respawn when the
-    /// connection closes.
-    generation: u64,
 }
 
 /// Handle to an external Node.js plugin process communicating over a Unix domain socket.
 pub struct ExternalRuntime {
-    /// Live runtime state (replaced on respawn). Held only briefly to clone
-    /// the transport; RPC calls run without holding this lock.
-    state: Mutex<RuntimeState>,
+    /// Current transport handle. Swapped atomically on respawn; the hot path
+    /// reads this with `load_full()` — one atomic refcount bump, no mutex.
+    transport: ArcSwap<MultiplexedTransport>,
+    /// Monotonic counter incremented on every successful respawn. Used to
+    /// ensure only one concurrent caller triggers a respawn.
+    generation: AtomicU64,
+    /// Child process and socket path; only locked during respawn.
+    respawn_state: Mutex<RespawnState>,
     next_id: AtomicU64,
     /// Server script path and plugin module path, stored for respawning.
     server_script: PathBuf,
@@ -67,7 +70,7 @@ pub struct ExternalRuntime {
 impl Drop for ExternalRuntime {
     fn drop(&mut self) {
         // Best-effort graceful shutdown: SIGTERM then socket cleanup.
-        if let Ok(mut state) = self.state.try_lock() {
+        if let Ok(mut state) = self.respawn_state.try_lock() {
             let _ = state.child.start_kill();
             let _ = std::fs::remove_file(&state.socket_path);
         }
@@ -143,19 +146,18 @@ impl ExternalRuntime {
             method: method.to_string(),
             params,
         };
-        let payload = serde_json::to_value(&request)
+        // Serialise once up front; re-serialise only on the retry path (cold,
+        // ~100ms respawn latency dominates there anyway).
+        let mut payload = serde_json::to_value(&request)
             .map_err(|e| JsError::ExecutionError(format!("serialize error: {e}")))?;
 
         for attempt in 0..=MAX_RESTARTS {
-            let (transport, generation) = {
-                let state = self.state.lock().await;
-                (state.transport.clone(), state.generation)
-            };
+            // Hot path: one atomic refcount bump — no async mutex.
+            let transport = self.transport.load_full();
+            let generation = self.generation.load(Ordering::Relaxed);
 
-            let frame = Frame {
-                id,
-                payload: payload.clone(),
-            };
+            // Move payload into the frame; rebuild from request on retry.
+            let frame = Frame { id, payload };
 
             match transport.send_recv(frame).await {
                 Ok(response_frame) => return parse_response(response_frame.payload, method),
@@ -172,6 +174,9 @@ impl ExternalRuntime {
                     // spawn_process waits for "ready\n" (~100ms), providing natural
                     // backoff for crash-loops without penalising the common case.
                     self.respawn_and_reinit_if_needed(generation).await?;
+                    // Re-serialise for the next attempt.
+                    payload = serde_json::to_value(&request)
+                        .map_err(|e| JsError::ExecutionError(format!("serialize error: {e}")))?;
                 }
                 Err(e) => {
                     return Err(JsError::ExecutionError(format!("transport error: {e}")));
@@ -189,8 +194,8 @@ impl ExternalRuntime {
     /// still the dead one. If a concurrent caller already respawned (generation
     /// advanced), this is a no-op.
     async fn respawn_and_reinit_if_needed(&self, dead_generation: u64) -> Result<(), JsError> {
-        let mut state = self.state.lock().await;
-        if state.generation > dead_generation {
+        let mut state = self.respawn_state.lock().await;
+        if self.generation.load(Ordering::Relaxed) > dead_generation {
             // Another caller already respawned.
             return Ok(());
         }
@@ -207,12 +212,11 @@ impl ExternalRuntime {
         .await
         .map_err(|e| JsError::ExecutionError(format!("respawn failed: {e}")))?;
 
-        state.transport = MultiplexedTransport::new(new_stream);
+        let new_transport = Arc::new(MultiplexedTransport::new(new_stream));
+        self.transport.store(new_transport.clone());
         state.child = new_child;
         state.socket_path = new_socket_path;
-        state.generation += 1;
-
-        let transport = state.transport.clone();
+        self.generation.fetch_add(1, Ordering::Relaxed);
         drop(state);
 
         // Re-run init on the fresh process (ignore FunctionNotFound — init is optional).
@@ -229,7 +233,7 @@ impl ExternalRuntime {
             payload: init_payload,
         };
 
-        match transport.send_recv(init_frame).await {
+        match new_transport.send_recv(init_frame).await {
             Ok(_) | Err(TransportError::ConnectionClosed) => {}
             Err(e) => {
                 return Err(JsError::ExecutionError(format!(
@@ -242,9 +246,10 @@ impl ExternalRuntime {
     }
 
     pub fn health_check(&self) -> Result<serde_json::Value, JsError> {
-        let state = self.state.try_lock().map_err(|_| {
-            JsError::ExecutionError("state locked (concurrent call in progress)".into())
-        })?;
+        let state = self
+            .respawn_state
+            .try_lock()
+            .map_err(|_| JsError::ExecutionError("respawn in progress".into()))?;
 
         match state.child.id() {
             Some(pid) => Ok(serde_json::json!({
@@ -298,22 +303,23 @@ impl PluginRuntime for ExternalRuntime {
             merge_body_into_arg(&mut arg, b);
         }
 
+        // First attempt: move arg directly — no preemptive clone.
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let request = PluginRequest {
             id,
             method: function_name.to_string(),
-            params: arg.clone(),
+            params: arg,
         };
         let payload = serde_json::to_value(&request)
             .map_err(|e| JsError::ExecutionError(format!("serialize error: {e}")))?;
 
-        let (transport, generation) = {
-            let state = self.state.lock().await;
-            (state.transport.clone(), state.generation)
-        };
+        // Hot path: one atomic refcount bump — no async mutex.
+        let transport = self.transport.load_full();
+        let generation = self.generation.load(Ordering::Relaxed);
 
+        // Move payload directly — no clone needed.
         let result = self
-            .do_call_stream(&transport, id, payload.clone(), function_name, timeout)
+            .do_call_stream(&transport, id, payload, function_name, timeout)
             .await;
 
         match result {
@@ -326,22 +332,20 @@ impl PluginRuntime for ExternalRuntime {
                 );
                 self.respawn_and_reinit_if_needed(generation).await?;
 
-                // Retry once with the new transport.
+                // Retry once with fresh id; clone params from original request
+                // (cold path — ~100ms respawn latency dominates).
                 let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-                let request = PluginRequest {
+                let retry_payload = serde_json::to_value(&PluginRequest {
                     id,
                     method: function_name.to_string(),
-                    params: arg,
-                };
-                let payload = serde_json::to_value(&request)
-                    .map_err(|e| JsError::ExecutionError(format!("serialize error: {e}")))?;
+                    params: request.params,
+                })
+                .map_err(|e| JsError::ExecutionError(format!("serialize error: {e}")))?;
 
-                let transport = {
-                    let state = self.state.lock().await;
-                    state.transport.clone()
-                };
+                // Hot path: one atomic refcount bump — no async mutex.
+                let transport = self.transport.load_full();
 
-                self.do_call_stream(&transport, id, payload, function_name, timeout)
+                self.do_call_stream(&transport, id, retry_payload, function_name, timeout)
                     .await
             }
         }
@@ -429,12 +433,9 @@ pub async fn spawn(
         process::spawn_process(&server_script, plugin_path, &socket_dir, &permissions).await?;
 
     Ok(ExternalRuntime {
-        state: Mutex::new(RuntimeState {
-            transport: MultiplexedTransport::new(stream),
-            child,
-            socket_path,
-            generation: 0,
-        }),
+        transport: ArcSwap::from_pointee(MultiplexedTransport::new(stream)),
+        generation: AtomicU64::new(0),
+        respawn_state: Mutex::new(RespawnState { child, socket_path }),
         next_id: AtomicU64::new(1),
         server_script,
         plugin_path: plugin_path.to_string(),
