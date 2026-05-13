@@ -93,7 +93,11 @@ function handleConnection(conn) {
     processBuffer();
   });
 
-  async function processBuffer() {
+  // Synchronous frame extractor. Runs to completion in a single event-loop
+  // turn so concurrent data events cannot interleave reads of `buffer`.
+  // Each decoded request is handed off to handleRequest() without awaiting,
+  // allowing multiple requests on this connection to run concurrently.
+  function processBuffer() {
     while (buffer.length >= 4) {
       const payloadLen = buffer.readUInt32BE(0);
       if (buffer.length < 4 + payloadLen) break; // incomplete frame
@@ -117,86 +121,94 @@ function handleConnection(conn) {
         continue;
       }
 
-      inflight++;
-      let response;
-      try {
-        const fn_ = plugin[method];
-        if (typeof fn_ !== "function") {
-          response = {
-            id,
-            error: `function '${method}' not found in plugin exports`,
-          };
-        } else {
-          const result = await fn_(params);
+      // Fire and forget — allows concurrent handling of multiple requests on
+      // the same connection (safe because frame writes are each atomic within
+      // a single event-loop turn; the multiplexing id demuxes on the Rust side).
+      handleRequest(conn, id, method, params);
+    }
+  }
 
-          // Check if the result is an async generator (async function*).
-          if (result && typeof result[Symbol.asyncIterator] === "function") {
-            // Streaming path: iterate the generator and send multi-frame response.
-            const iterator = result[Symbol.asyncIterator]();
-            let firstChunk;
-            try {
-              firstChunk = await iterator.next();
-            } catch (e) {
-              const msg = e && e.message ? e.message : String(e);
-              response = { id, error: `stream metadata error: ${msg}` };
-            }
+  // Handles a single decoded request asynchronously. Multiple calls may run
+  // concurrently on the same connection; response frames are routed by id.
+  async function handleRequest(conn, id, method, params) {
+    inflight++;
+    let response;
+    try {
+      const fn_ = plugin[method];
+      if (typeof fn_ !== "function") {
+        response = {
+          id,
+          error: `function '${method}' not found in plugin exports`,
+        };
+      } else {
+        const result = await fn_(params);
 
-            if (response) {
-              // Error occurred getting metadata — fall through to sendResponse.
-            } else if (firstChunk.done) {
-              // Generator yielded nothing — send empty response.
-              response = { id, result: {} };
-            } else {
-              const meta = firstChunk.value;
-              // Send metadata frame with status and headers.
-              sendStreamFrame(conn, id, {
-                status: meta.status ?? 200,
-                headers: meta.headers ?? {},
-                _stream: true,
-              });
-
-              let streamError = null;
-              while (true) {
-                let chunk;
-                try {
-                  chunk = await iterator.next();
-                } catch (e) {
-                  streamError = e && e.message ? e.message : String(e);
-                  break;
-                }
-                if (chunk.done) break;
-
-                const chunkData = chunk.value.body ?? chunk.value;
-                await sendRawFrame(conn, { id, result: { chunk: chunkData } });
-              }
-
-              if (streamError) {
-                // Send error frame then done.
-                sendStreamFrame(conn, id, { error: streamError });
-              }
-
-              // Send done frame.
-              sendStreamFrame(conn, id, { done: true });
-
-              // Suppress the normal sendResponse — we sent everything already.
-              response = null;
-            }
-          } else {
-            response = { id, result: result ?? {} };
+        // Check if the result is an async generator (async function*).
+        if (result && typeof result[Symbol.asyncIterator] === "function") {
+          // Streaming path: iterate the generator and send multi-frame response.
+          const iterator = result[Symbol.asyncIterator]();
+          let firstChunk;
+          try {
+            firstChunk = await iterator.next();
+          } catch (e) {
+            const msg = e && e.message ? e.message : String(e);
+            response = { id, error: `stream metadata error: ${msg}` };
           }
-        }
-      } catch (e) {
-        const stack = e && e.stack ? e.stack : String(e);
-        process.stderr.write(`[plugin:${pluginPath}] Error in '${method}': ${stack}\n`);
-        response = { id, error: e && e.message ? e.message : String(e) };
-      } finally {
-        inflight--;
-        checkShutdown();
-      }
 
-      if (response !== null) {
-        sendResponse(conn, response);
+          if (response) {
+            // Error getting metadata — fall through to sendResponse below.
+          } else if (firstChunk.done) {
+            // Generator yielded nothing — send empty response.
+            response = { id, result: {} };
+          } else {
+            const meta = firstChunk.value;
+            // Send metadata frame with status and headers.
+            sendStreamFrame(conn, id, {
+              status: meta.status ?? 200,
+              headers: meta.headers ?? {},
+              _stream: true,
+            });
+
+            let streamError = null;
+            while (true) {
+              let chunk;
+              try {
+                chunk = await iterator.next();
+              } catch (e) {
+                streamError = e && e.message ? e.message : String(e);
+                break;
+              }
+              if (chunk.done) break;
+
+              const chunkData = chunk.value.body ?? chunk.value;
+              await sendRawFrame(conn, { id, result: { chunk: chunkData } });
+            }
+
+            if (streamError) {
+              sendStreamFrame(conn, id, { error: streamError });
+            }
+
+            // Send done frame.
+            sendStreamFrame(conn, id, { done: true });
+
+            // Streaming path: all frames sent above; suppress normal sendResponse.
+            response = null;
+          }
+        } else {
+          response = { id, result: result ?? {} };
+        }
       }
+    } catch (e) {
+      const stack = e && e.stack ? e.stack : String(e);
+      process.stderr.write(`[plugin:${pluginPath}] Error in '${method}': ${stack}\n`);
+      response = { id, error: e && e.message ? e.message : String(e) };
+    } finally {
+      inflight--;
+      checkShutdown();
+    }
+
+    if (response !== null) {
+      sendResponse(conn, response);
     }
   }
 

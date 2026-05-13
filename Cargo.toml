@@ -5,6 +5,7 @@ members = [
 	"plenum-config",
 	"openapi-overlay",
 	"plenum-js-runtime",
+	"plenum-ipc",
 	"plenum-sandbox",
 	"oas-query"
 ]
