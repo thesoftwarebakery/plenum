@@ -52,6 +52,17 @@ const LARGE_STREAM_FIXTURES = {
   ],
 };
 
+// stream-delay.js reads the per-chunk delay from the path param:
+// /echo/100 → ~300ms total; /echo/0 → instant.
+// Both routes share one plugin process, exercising the multiplexed socket (#172).
+const DELAY_STREAM_FIXTURES = {
+  openapi: "openapi-plugin.yaml",
+  overlays: ["overlay-plugin-gateway.yaml", "overlay-plugin-streaming-delay.yaml"],
+  extraFiles: [
+    { source: "plugins/stream-delay.js", target: "/config/plugins/stream-delay.js" },
+  ],
+};
+
 describe("plugin upstream: streaming responses", () => {
   let network: StartedNetwork;
   let gateway: GatewayContainer;
@@ -250,6 +261,43 @@ describe("plugin upstream: concurrent streaming requests", () => {
       const body = await resp.text();
       expect(body).toEqual("chunk-0\nchunk-1\nchunk-2\nchunk-3\nchunk-4\n");
     }
+  });
+});
+
+// Regression test for #172: a streaming request previously stole the IPC
+// socket, so any request dispatched mid-stream would see stream=None and fail.
+describe("plugin upstream: in-flight stream does not block subsequent requests", () => {
+  let network: StartedNetwork;
+  let gateway: GatewayContainer;
+
+  beforeAll(async () => {
+    network = await new Network().start();
+    gateway = await startGateway({
+      network,
+      fixtures: DELAY_STREAM_FIXTURES,
+    });
+  });
+
+  afterAll(async () => {
+    await gateway?.container.stop();
+    await network?.stop();
+  });
+
+  test("fast request completes while a slow stream is still in progress", async () => {
+    // /echo/100 streams 3 chunks with 100ms between each (~300ms total).
+    // /echo/0 streams 3 chunks with no delay (~instant).
+    // Both share the same plugin process and IPC socket.
+    //
+    // Under the old socket-stealing design the second request would receive
+    // stream=None and fail. With multiplexing both succeed independently.
+    const slow = fetch(`${gateway.baseUrl}/echo/100`);
+    const fast = fetch(`${gateway.baseUrl}/echo/0`);
+
+    const [slowResp, fastResp] = await Promise.all([slow, fast]);
+    expect(slowResp.status).toEqual(200);
+    expect(fastResp.status).toEqual(200);
+    expect(await slowResp.text()).toEqual("chunk-0\nchunk-1\nchunk-2\n");
+    expect(await fastResp.text()).toEqual("chunk-0\nchunk-1\nchunk-2\n");
   });
 });
 

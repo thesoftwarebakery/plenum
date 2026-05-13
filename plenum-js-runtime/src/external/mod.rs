@@ -146,7 +146,6 @@ impl ExternalRuntime {
         let payload = serde_json::to_value(&request)
             .map_err(|e| JsError::ExecutionError(format!("serialize error: {e}")))?;
 
-        let mut delay_ms = 100u64;
         for attempt in 0..=MAX_RESTARTS {
             let (transport, generation) = {
                 let state = self.state.lock().await;
@@ -165,14 +164,13 @@ impl ExternalRuntime {
                         break;
                     }
                     log::warn!(
-                        "plugin process for '{}' connection closed (attempt {}/{}), respawning in {}ms",
+                        "plugin process for '{}' connection closed (attempt {}/{}), respawning",
                         self.plugin_path,
                         attempt + 1,
                         MAX_RESTARTS,
-                        delay_ms,
                     );
-                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-                    delay_ms = (delay_ms * 2).min(5000);
+                    // spawn_process waits for "ready\n" (~100ms), providing natural
+                    // backoff for crash-loops without penalising the common case.
                     self.respawn_and_reinit_if_needed(generation).await?;
                 }
                 Err(e) => {

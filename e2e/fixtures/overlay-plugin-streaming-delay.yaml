@@ -1,0 +1,11 @@
+overlay: 1.1.0
+info:
+  title: Delay-parameterised streaming plugin config (concurrency regression test #172)
+  version: 1.0.0
+actions:
+  - target: $.paths[*]
+    update:
+      x-plenum-upstream:
+        kind: "plugin"
+        plugin: "./plugins/stream-delay.js"
+        streaming: true
